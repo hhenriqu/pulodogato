@@ -79,7 +79,13 @@
       "RN012": "Isolamento por usuário (RLS) - Implementada",
       "RN013": "Planos e limites de uso - Implementada",
       "RN014": "Offline - Implementada",
-      "RN015": "Rotas de cron - Implementada"
+      "RN015": "Rotas de cron - Implementada",
+      "RN016": "Saldo de contas e Resultado do mês - Requisito (fase 4)",
+      "RN017": "O que é Despesa e o que é Receita - Requisito (fases 4 e 6)",
+      "RN018": "Grupo: o fechamento - Requisito (fases 2 e 4)",
+      "RN019": "Acerto que dá baixa - Requisito (fase 3)",
+      "RN020": "Divisão com pessoa - Requisito (fase 5)",
+      "RN021": "MyBank - Requisito (fase 5)"
     },
     "architecture": {
       "stack": "Next.js 14 + Supabase + TypeScript ✅",

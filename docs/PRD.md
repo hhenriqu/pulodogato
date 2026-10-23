@@ -5,8 +5,8 @@
 > **Documento de referência do produto.** Descreve o que o Pulo do Gato é, as
 > regras de negócio que valem, e o que ainda é requisito não implementado.
 
-**Versão:** 2.0
-**Data:** 29 de setembro de 2026
+**Versão:** 2.1
+**Data:** 23 de outubro de 2026
 **Projeto:** Pulo do Gato — gestão financeira familiar
 **Tipo:** Progressive Web App (PWA)
 **Status:** em produção — https://pulodogato.hmoraes.com.br
@@ -19,6 +19,7 @@
 | 1.1 | 23/09/2025 | Perfil avançado + sistema de conexões | Equipe Dev |
 | 1.2 | 23/09/2025 | Finanças pessoais + sistema de divisão de gastos | Equipe Dev |
 | 2.0 | 29/09/2026 | **Reescrita para o produto que existe** (HMO-119) | pendente |
+| 2.1 | 23/10/2026 | **Modelo novo das movimentações** (RN016 a RN021); regras antigas marcadas com a fase em que saem | Helio (decisões D1 a D5) |
 
 > **O que a versão 2.0 corrigiu.** Até aqui esta PRD descrevia um app de carteira
 > de investimentos: o problema era "investidores pessoa física", as personas eram
@@ -153,11 +154,17 @@ Fatura consolidada por ciclo; o **pagamento** da fatura é registrado como
 transferência de duas pernas, para que a despesa original não seja contada
 novamente.
 
+Muda na fase 6 (RN017.4): a fatura total passa a ser a despesa, no mês do
+vencimento, e as compras viram o detalhe dela.
+
 ### Grupos de despesa ✅
 
 Criação de grupo, convites, membros, rateio por lançamento, saldo entre membros,
 acerto de contas, arquivamento e regras de saída. Divisão igual, por percentual e
 proporcional à renda (tabela `group_member_proportions`).
+
+Muda nas fases 2 a 4 (RN018 e RN019): o grupo ganha dia de fechamento, e o
+fechamento gera para cada membro uma conta a pagar ou a receber.
 
 ### Planejamento ✅
 
@@ -207,6 +214,20 @@ fechada.
 As regras marcadas **(banco)** são garantidas por constraint, trigger ou policy —
 a tela não pode contorná-las. As marcadas **(tela)** vivem em TypeScript testado.
 
+> **Modelo novo das movimentações (v2.1).** As RN016 a RN021, no fim desta
+> seção, dizem como cada movimentação entra no Saldo de contas e no Resultado do
+> mês. Elas são requisito (📋) e entram em seis fases, um PR por fase:
+>
+> 1. estas regras;
+> 2. fechamento do grupo;
+> 3. acerto que dá baixa;
+> 4. a leitura nova nos totais;
+> 5. divisão com pessoa e MyBank;
+> 6. cartão pela fatura.
+>
+> Até a fase dela, cada regra antiga continua valendo. As que saem estão
+> marcadas com ↪, com a regra nova e a fase em que são substituídas.
+
 ### RN001 — Cadastro e sessão ✅
 
 - RN001.1 Cadastro por e-mail e senha, via Supabase Auth.
@@ -236,6 +257,9 @@ a tela não pode contorná-las. As marcadas **(tela)** vivem em TypeScript testa
 - RN004.1 As compras do ciclo compõem a fatura.
 - RN004.2 O **pagamento** da fatura é transferência (RN003), não despesa —
   contá-lo como despesa dobraria o gasto do mês.
+  ↪ Substituída pela RN017.4 na fase 6: o pagamento continua com duas pernas
+  para o saldo, mas a fatura total passa a ser a despesa, e as compras deixam
+  de contar sozinhas.
 - RN004.3 Detectar "é fatura" pelo tipo de conta é proibido: isso apagaria a
   despesa de toda assinatura lançada no cartão.
 
@@ -263,8 +287,15 @@ a tela não pode contorná-las. As marcadas **(tela)** vivem em TypeScript testa
 - RN006.6 Conta prevista de grupo que o dono já quitou sai da **Previsão** do
   painel de todos os membros: a parte de cada um já está no Realizado pelo
   rateio. O que o membro ainda deve ao dono continua no «A pagar» da agenda.
+  ↪ Substituída pela RN018 na fase 4: a parte de cada membro deixa de entrar
+  no Realizado pelo rateio, e o que ele deve vira a conta do fechamento.
 
 ### RN007 — Divisão de despesa em grupo ✅ **(banco)**
+
+> ↪ A partir da fase 4, a divisão de cada lançamento (RN007.2 a RN007.5) deixa
+> de ser o que conta no Resultado de cada membro. O que conta é o fechamento do
+> período (RN018). RN007.1, RN007.6, RN007.7 e RN007.9 continuam, e a RN007.8
+> é substituída pela RN020 na fase 5.
 
 - RN007.1 Só **despesa** é divisível.
 - RN007.2 A divisão é feita pelo **banco**, por trigger, no momento do
@@ -281,6 +312,8 @@ a tela não pode contorná-las. As marcadas **(tela)** vivem em TypeScript testa
   "Dividido com você") e entra no realizado dele pelo mesmo caminho da parte de
   grupo (`group_share_entries`, migration 066). Quem pagou segue o critério da
   RN do custo pessoal (HMO-258): conta o valor inteiro.
+  ↪ Substituída pela RN020 na fase 5: a parte do outro vira uma conta a pagar
+  e uma a receber, no lançamento, e a perna de pessoa da 066 sai.
 - RN007.9 Uma despesa nunca entra pelas duas divisões: com `group_id`, só a
   parte de grupo conta.
 
@@ -288,6 +321,9 @@ a tela não pode contorná-las. As marcadas **(tela)** vivem em TypeScript testa
 
 - RN008.1 O saldo entre membros diz quem deve a quem.
 - RN008.2 O acerto é registrado com o sinal correto para cada lado.
+
+↪ Substituída pela RN019 na fase 3: o acerto passa a dar baixa, nos dois lados,
+nas contas que o fechamento gerou.
 
 ### RN009 — Divisão proporcional à renda 🚧
 
@@ -339,6 +375,137 @@ a tela não pode contorná-las. As marcadas **(tela)** vivem em TypeScript testa
 - RN015.2 Execuções ficam registradas em `cron_runs`.
 - RN015.3 No plano Hobby da Vercel o horário tem tolerância de ±59 min: a ordem
   entre dois jobs do mesmo dia **não** é garantida.
+
+### RN016 — Saldo de contas e Resultado do mês 📋 **(tela)** — fase 4
+
+- RN016.1 **Saldo de contas** = saldo inicial da conta + receitas realizadas +
+  despesas realizadas (com o sinal da RN002), somado nas contas que entram nos
+  totais (migration 058). É o `current_balance` mantido por trigger, e não
+  muda.
+- RN016.2 **Resultado do mês** = Total de Receitas − Total de Despesas do mês,
+  com a composição da RN017.
+- RN016.3 Cada movimentação entra no mês da sua data: a data do lançamento
+  quando realizada, a do vencimento quando prevista (a fatura segue a
+  RN017.4). O Resultado tem duas
+  leituras: **realizado** (só o que já foi pago ou recebido) e **previsto** (o
+  realizado mais as contas em aberto do mês).
+- RN016.4 Há uma definição só. Painel, relatórios, Finanças Pessoais e agenda
+  leem o mesmo Resultado. Duas definições em dois lugares foram a origem dos
+  defeitos de outubro de 2026.
+- RN016.5 Transferência entre contas próprias, aporte e resgate de
+  investimento e o principal do MyBank não entram em nenhum dos dois totais
+  (RN003.3, RN021.2).
+- RN016.6 Conta marcada fora dos totais (058) aparece na lista e não soma.
+
+### RN017 — O que é Despesa e o que é Receita 📋 — fases 4 e 6
+
+- RN017.1 **Despesas** = gastos fixos + gastos aleatórios + fatura do cartão +
+  pagamento a grupo + pagamento a pessoa, mais os juros do MyBank de quem pegou
+  o empréstimo (RN021.3).
+- RN017.2 **Gasto fixo** é a despesa que veio de recorrência ou de conta
+  prevista (RN006). **Gasto aleatório** é o resto. Não há marcação manual. Uma
+  conta de grupo paga por mim entra aqui, como fixo ou aleatório, pelo valor
+  inteiro (RN018.1).
+- RN017.3 **Compra no cartão**, à vista ou parcelada, não entra sozinha em
+  Despesas. Ela é uma linha da fatura do ciclo em que cai.
+- RN017.4 **Fatura do cartão**: a fatura total é a despesa, no mês do
+  vencimento (decisão D1). Ela é realizada pelo que foi pago e prevista pelo
+  que falta. O pagamento continua com duas pernas para o saldo (RN003.1). Os
+  relatórios por categoria abrem a fatura nas compras dela, e a soma por
+  categoria fecha com a fatura.
+- RN017.5 **Receitas** = salários (o líquido do contracheque) + a receber de
+  grupos + a receber de pessoas + outras receitas, mais os juros do MyBank de
+  quem emprestou (RN021.3).
+- RN017.6 O que um grupo ou uma pessoa me deve é receita desde que a conta a
+  receber existe (RN018.5, RN020.2): prevista até o acerto, realizada no
+  acerto.
+
+### RN018 — Grupo: o fechamento 📋 **(banco)** — fases 2 e 4
+
+- RN018.1 Qualquer membro ativo lança uma conta no grupo. Ela é despesa de quem
+  pagou, pelo valor inteiro, porque saiu da conta dele.
+- RN018.2 A configuração do grupo guarda o **% de responsabilidade** de cada
+  membro ativo e o **dia de fechamento**, de 1 a 28. Os % somam 100% e podem
+  ser iguais, definidos à mão ou proporcionais à renda (RN009).
+- RN018.3 O período vai do dia seguinte ao fechamento anterior até o dia de
+  fechamento, inclusive. A conta entra no período da sua data; se esse período
+  já fechou, ela entra no próximo fechamento. O primeiro fechamento inclui toda
+  conta do grupo ainda não fechada, inclusive as lançadas antes da fase 2.
+- RN018.4 No fechamento, para cada membro: responsabilidade = total do período
+  × %, e saldo = o que ele pagou no período − a responsabilidade. A soma das
+  responsabilidades é exatamente o total, em centavos (a sobra do
+  arredondamento é distribuída, não descartada), e a soma dos saldos é zero.
+- RN018.5 Saldo negativo gera uma conta prevista **"Pagamento ao grupo"**
+  (despesa). Saldo positivo gera uma **"A receber do grupo"** (receita). As
+  duas vencem no dia do fechamento (decisão D3). Saldo zero não gera conta.
+- RN018.6 Um período fecha uma vez só: o banco impede gerar duas vezes o
+  fechamento do mesmo grupo e período. Período fechado não reabre. Mudar o %
+  ou o dia de fechamento vale a partir do próximo período.
+- RN018.7 Antes do fechamento, o saldo estimado do membro no período aparece
+  como **previsto** no painel, a pagar ou a receber, sem gerar conta (decisão
+  D2).
+- RN018.8 O fechamento roda sozinho, por cron diário, no dia de fechamento de
+  cada grupo (RN015).
+- RN018.9 Membro não conta como despesa a parte de uma conta que não pagou. O
+  que ele deve entra pelo "Pagamento ao grupo" do fechamento.
+- RN018.10 Quando o período não coincide com o mês do calendário, a despesa
+  paga e a conta gerada podem cair em meses diferentes. A soma dos meses fecha
+  na responsabilidade.
+
+Exemplo: grupo Casa, % de 50/30/20, R$ 2.000 de contas no período.
+
+| Membro | % | Pagou | Responsabilidade | Fechamento gera | Resultado |
+| ------ | - | ----- | ---------------- | --------------- | --------- |
+| Helio | 50% | R$ 1.500 | R$ 1.000 | A receber R$ 500 | −R$ 1.000 |
+| Lais | 30% | R$ 500 | R$ 600 | Pagamento R$ 100 | −R$ 600 |
+| Letícia | 20% | R$ 0 | R$ 400 | Pagamento R$ 400 | −R$ 400 |
+
+O Resultado de cada um fecha na responsabilidade, e a soma dá os R$ 2.000.
+
+### RN019 — Acerto 📋 **(banco)** — fase 3
+
+- RN019.1 O acerto (o Pix entre duas pessoas) **quita** contas geradas pelo
+  fechamento do grupo (RN018) ou pela divisão com pessoa (RN020): a conta a
+  pagar de quem pagou e a conta a receber de quem recebeu.
+- RN019.2 Ele não é receita nem despesa nova. O valor acertado é a realização
+  das contas que já existiam.
+- RN019.3 Registrado por um lado, ele dá baixa nos dois, numa operação só do
+  banco (função `SECURITY DEFINER`). A tela nunca grava os dois lados em duas
+  chamadas.
+- RN019.4 Acerto parcial quita o valor acertado, e o resto continua em aberto.
+- RN019.5 No grupo, o acerto é entre dois membros: quem deve paga a quem tem a
+  receber. A tela sugere os pares, como o fechamento mensal de hoje (HMO-245).
+
+### RN020 — Divisão com pessoa 📋 **(banco)** — fase 5
+
+- RN020.1 Uma despesa sem grupo pode ser dividida com uma conexão aceita
+  (RN010.1). Ela funciona como um grupo de duas pessoas, sem período.
+- RN020.2 Ela fecha no lançamento (decisão D4). Quem pagou conta a despesa
+  inteira e ganha uma **"A receber de <pessoa>"** (receita) pela parte do
+  outro. O outro ganha uma **"Pagamento a <pessoa>"** (despesa) do mesmo valor.
+  As duas vencem na data do lançamento.
+- RN020.3 Editar o valor ou a parte refaz as duas contas, e apagar o lançamento
+  remove as duas. Conta já quitada por acerto não é refeita em silêncio.
+- RN020.4 Uma despesa nunca entra pelas duas divisões: com grupo, vale só o
+  fechamento do grupo (RN007.9).
+- RN020.5 Exemplo: a Lais pagou R$ 79,86 e dividiu 90% com o Helio. A Lais fica
+  com despesa de R$ 79,86 e a receber de R$ 71,87, e o Resultado dela é
+  −R$ 7,99. O Helio fica com um pagamento a pessoa de R$ 71,87.
+
+### RN021 — MyBank 📋 — fase 5
+
+- RN021.1 O empréstimo sai de uma conta de investimento, para o próprio
+  usuário ou para uma conexão aceita, com parcelas e juros opcionais
+  (migrations 053 e 062).
+- RN021.2 Emprestar não é gastar, e receber de volta não é ganhar. A saída e o
+  principal de cada parcela são transferência, nos dois lados.
+- RN021.3 Só os **juros** entram no Resultado: receita de quem emprestou e
+  despesa de quem pegou, na data de cada parcela (decisão D5).
+- RN021.4 No empréstimo a si mesmo nada entra no Resultado, nem os juros,
+  porque o dinheiro não sai de casa. Hoje cada parcela aparece em Despesas com
+  o selo MyBank, e isso sai.
+- RN021.5 As parcelas aparecem na agenda: a pagar para quem pegou, a receber
+  para quem emprestou.
 
 ---
 
@@ -484,6 +651,7 @@ planos e limites; modo noturno por token; CI de build, schema, cor e PWA.
 
 ### Próximo
 
+- Implantar o modelo novo das movimentações (RN016 a RN021), nas fases 2 a 6.
 - Zerar o backlog de 142 warnings de lint.
 - Fechar o módulo de investimentos (rentabilidade consolidada).
 - Fechar a experiência multi-moeda.
