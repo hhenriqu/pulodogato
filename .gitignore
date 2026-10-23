@@ -731,3 +731,4 @@ next-env.d.ts
 # nao fonte: um `.tmp-*` fora do .gitignore chega a ser commitado em cima de
 # arquivo de fonte -- ver a entrada do .tmp-parcelamento acima.
 /.tmp-cron-le-zero/
+/.tmp-vinculo-da-prevista/

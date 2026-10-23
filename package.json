@@ -90,6 +90,7 @@
     "test:recorrencia-edicao": "node scripts/compila.mjs lib/recorrencia-edicao.ts --outDir .tmp-recorrencia-edicao/lib --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-recorrencia-edicao.mjs",
     "test:periodo-painel": "node scripts/compila.mjs -p scripts/tsconfig.periodo-painel-test.json && node scripts/resolve-aliases.mjs .tmp-periodo-painel lib && node --test scripts/test-periodo-painel.mjs",
     "test:parte-realizada": "node scripts/compila.mjs -p scripts/tsconfig.parte-realizada-test.json && node scripts/resolve-aliases.mjs .tmp-parte-realizada lib && node --test scripts/test-parte-realizada.mjs",
+    "test:vinculo-da-prevista": "node scripts/compila.mjs -p scripts/tsconfig.vinculo-da-prevista-test.json && node scripts/resolve-aliases.mjs .tmp-vinculo-da-prevista lib && node --test scripts/test-vinculo-da-prevista.mjs",
     "test:moeda": "node scripts/compila.mjs -p scripts/tsconfig.moeda-test.json && node scripts/resolve-aliases.mjs .tmp-moeda lib && node --test scripts/test-moeda.mjs",
     "test:grupos": "node scripts/compila.mjs -p scripts/tsconfig.grupos-test.json && node scripts/resolve-aliases.mjs .tmp-grupos lib && node --test scripts/test-grupos.mjs",
     "test:acerto-em-lancamento": "node scripts/compila.mjs -p scripts/tsconfig.acerto-em-lancamento-test.json && node scripts/resolve-aliases.mjs .tmp-acerto-em-lancamento lib && node --test scripts/test-acerto-em-lancamento.mjs",
