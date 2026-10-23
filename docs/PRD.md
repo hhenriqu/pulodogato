@@ -431,6 +431,8 @@ nas contas que o fechamento gerou.
   fechamento, inclusive. A conta entra no período da sua data; se esse período
   já fechou, ela entra no próximo fechamento. O primeiro fechamento inclui toda
   conta do grupo ainda não fechada, inclusive as lançadas antes da fase 2.
+  Conta prevista do grupo entra quando é paga: o que ainda não saiu do bolso de
+  ninguém no dia do fechamento fica para o fechamento seguinte.
 - RN018.4 No fechamento, para cada membro: responsabilidade = total do período
   × %, e saldo = o que ele pagou no período − a responsabilidade. A soma das
   responsabilidades é exatamente o total, em centavos (a sobra do
@@ -451,6 +453,12 @@ nas contas que o fechamento gerou.
 - RN018.10 Quando o período não coincide com o mês do calendário, a despesa
   paga e a conta gerada podem cair em meses diferentes. A soma dos meses fecha
   na responsabilidade.
+- RN018.11 Acerto registrado sem conta gerada (o acerto de antes da fase 3)
+  entra no fechamento do período dele: soma no que pagou quem mandou o dinheiro
+  e desconta de quem recebeu. Sem isso, um acerto já feito seria cobrado de novo
+  pela conta do fechamento.
+- RN018.12 Conta gerada pelo fechamento não muda de valor, de tipo nem de dono
+  depois de criada. O que muda nela é só a baixa.
 
 Exemplo: grupo Casa, % de 50/30/20, R$ 2.000 de contas no período.
 
