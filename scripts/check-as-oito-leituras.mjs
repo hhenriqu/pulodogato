@@ -97,7 +97,19 @@ const LEITURAS = [
     "o cabecalho «a vencer» / «a pagar»",
     "select",
   ],
-  ["app/api/dashboard/previsao/route.ts", "a previsao do painel", "filtro"],
+  // A PREVISAO DO PAINEL FILTRA AS DUAS COLUNAS, e o quarto campo e o porque.
+  // Ela le `my_status` como as outras E exige `status = 'pending'` do dono: o
+  // Realizado do mesmo painel ja conta a minha parte da conta de grupo que o
+  // dono pagou (`group_share_entries`, HMO-418), e deixa-la no previsto pelo
+  // `my_status` somava a mesma parte duas vezes (R$ 406,73 onde o certo era
+  // R$ 237,81, conta da Lais, 22/10/2026). O guard exige o `status` nela, e
+  // continua recusando-o em todas as outras.
+  [
+    "app/api/dashboard/previsao/route.ts",
+    "a previsao do painel",
+    "filtro",
+    "o realizado do painel ja conta a minha parte da conta de grupo que o dono pagou",
+  ],
   ["app/api/movimentacoes/resumo/route.ts", "as telas de Receitas/Despesas", "select"],
   ["app/api/safe-to-spend/route.ts", "o posso gastar", "filtro"],
   ["app/api/projection/route.ts", "a projecao", "filtro"],
@@ -237,7 +249,7 @@ function cadeiaDaView(fonte) {
 
 let falhas = 0;
 
-for (const [arquivo, apelido, onde] of LEITURAS) {
+for (const [arquivo, apelido, onde, tambemDoDono] of LEITURAS) {
   const fonte = semComentarios(readFileSync(arquivo, "utf8"));
   const cadeia = cadeiaDaView(fonte);
 
@@ -269,8 +281,22 @@ for (const [arquivo, apelido, onde] of LEITURAS) {
 
   const usadas = [...filtradas, ...pedidas];
 
+  // A leitura que filtra TAMBEM pelo dono tem de filtrar `status` -- e so no
+  // filtro: no `select` ele continua proibido, porque ali ninguem o le.
+  if (tambemDoDono && !filtradas.includes("status")) {
+    falhas += 1;
+    console.error(
+      `\n✖ ${arquivo} (${apelido})\n` +
+        "  esta leitura tem de filtrar TAMBEM `status` (o do dono): " +
+        `${tambemDoDono}. Sem o filtro a mesma parte entra no realizado e no previsto.`
+    );
+  }
   for (const proibida of DO_DONO) {
-    if (usadas.includes(proibida)) {
+    const liberada =
+      Boolean(tambemDoDono) &&
+      proibida === "status" &&
+      !pedidas.includes(proibida);
+    if (usadas.includes(proibida) && !liberada) {
       falhas += 1;
       console.error(
         `\n✖ ${arquivo} (${apelido})\n` +

@@ -133,8 +133,14 @@ const FUNCOES_CERTAS = ["dataNaTela", "dataCurtaNaTela"];
  * Entao: tela nova que mostre uma data **sobe este numero**, aqui, com o motivo.
  * Falhar alto nos dois sentidos e o preco de o controle negativo continuar
  * medindo algo.
+ *
+ * DE 6 PARA 8: as duas perguntas do vinculo da prevista ao lancamento
+ * (`components/vinculo/`). A pergunta depois do Salvar mostra o VENCIMENTO de
+ * cada prevista sugerida, e o seletor da agenda mostra a DATA de cada
+ * lancamento -- e a data e o que distingue o aluguel de outubro do de setembro
+ * quando os dois tem o mesmo valor e a mesma descricao.
  */
-const CHAMADAS_ESPERADAS = 6;
+const CHAMADAS_ESPERADAS = 8;
 
 /**
  * `formatDate` de lib/utils.ts, que recebe `settled_on` e `today_rate_date`

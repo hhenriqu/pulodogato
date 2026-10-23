@@ -65,6 +65,7 @@ import {
   AlertCircle,
   CalendarClock,
   Check,
+  Link2,
   Loader2,
   Paperclip,
   Pencil,
@@ -82,6 +83,7 @@ import {
 } from "@/lib/alcance-na-tela";
 import { DialogoDeAlcance } from "@/components/series/DialogoDeAlcance";
 import { DialogoDePagamentoDaFatura } from "@/components/fatura/DialogoDePagamentoDaFatura";
+import { DialogoDeVincularLancamento } from "@/components/vinculo/DialogoDeVincularLancamento";
 import { Receipts } from "@/components/Receipts";
 import { LinhaDaParcelaDoMyBank } from "@/components/mybank/LinhaDaParcelaDoMyBank";
 import {
@@ -276,6 +278,14 @@ export default function BillsPage() {
   // "Confirmar pagamento" materializa antes de dar baixa.
   const [faturaParaPagar, setFaturaParaPagar] =
     useState<LinhaDaAgendaOuFatura | null>(null);
+
+  // A conta prevista que a pessoa diz que JA LANCOU, aguardando a escolha do
+  // lancamento. O "pagar" (`/pay`) criaria OUTRO lancamento e a mesma despesa
+  // entraria duas vezes no realizado; o vinculo aponta para o que ja existe.
+  const [contaParaVincular, setContaParaVincular] = useState<{
+    id: string;
+    description: string | null;
+  } | null>(null);
 
   // A ocorrencia em edicao e o alcance escolhido (HMO-170). O alcance volta para
   // "apenas_esta" a cada abertura: ele e a escolha mais conservadora, e herdar a
@@ -923,6 +933,25 @@ export default function BillsPage() {
                 >
                   <Pencil className="h-4 w-4" />
                 </Button>
+                {/* Fatura e transferencia prevista ficam sem o botao: elas tem
+                    duas pernas e o estorno delas e o do `/pay`. A rota recusa
+                    as duas tambem (lib/vinculo-da-prevista.ts). */}
+                {!ehFatura(conta.notes) && conta.direction !== "transfer" && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() =>
+                      setContaParaVincular({
+                        id: conta.id,
+                        description: conta.description,
+                      })
+                    }
+                    disabled={agindo === chave || !online}
+                    title="Já lancei: vincular a um lançamento"
+                  >
+                    <Link2 className="h-4 w-4" />
+                  </Button>
+                )}
                 <Button
                   size="sm"
                   variant="outline"
@@ -1591,6 +1620,12 @@ export default function BillsPage() {
           clique de Confirmar, que pode ser do dia seguinte. O tipo da prop
           (`() => string`) e o que impede a volta: passar uma data congelada
           aqui deixou de compilar. */}
+      <DialogoDeVincularLancamento
+        prevista={contaParaVincular}
+        aoFechar={() => setContaParaVincular(null)}
+        aoVincular={carregar}
+      />
+
       <DialogoDePagamentoDaFatura
         linha={
           faturaParaPagar

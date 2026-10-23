@@ -5586,6 +5586,23 @@ jobs:
         run: PGURL=postgresql://postgres:postgres@localhost:5432 node scripts/mutantes-patrimonio-fora-dos-totais.mjs
 
       # =====================================================================
+      # 065 -- apagar o lancamento que quitou a prevista devolve a prevista
+      # =====================================================================
+      # Metade de banco do vinculo "ja lancei" (POST .../{id}/vincular). Sem a
+      # 065, o DELETE do lancamento vinculado morre no
+      # `scheduled_transactions_paid_check`. Controle negativo medido: a suite
+      # contra um banco parado na 064 fica VERMELHA na secao 3 com exatamente
+      # esse erro de constraint.
+      - name: 065_vinculo_da_prevista_ao_lancamento
+        run: $PSQL -f database/migrations/065_vinculo_da_prevista_ao_lancamento.sql
+
+      - name: 065 e idempotente
+        run: $PSQL -f database/migrations/065_vinculo_da_prevista_ao_lancamento.sql
+
+      - name: Apagar o lancamento vinculado devolve a prevista para pending
+        run: $PSQL -f database/tests/065_vinculo_da_prevista_ao_lancamento_test.sql
+
+      # =====================================================================
       # 066 -- a parte da divisao com pessoa chega a quem a recebe
       # =====================================================================
       # `group_share_entries` ganha a perna de `expense_splits` (sem grupo),

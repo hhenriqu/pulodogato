@@ -1,0 +1,18 @@
+{
+  "//": "Build so do teste de lib/vinculo-da-prevista.ts. Compila junto lib/recurrence-detector.ts (diasEntre, normalizeMerchant) e lib/chave-da-fatura.ts (ehFatura), que ele importa pelo alias @/ -- o npm script reescreve o alias com resolve-aliases depois do tsc. Ver scripts/test-vinculo-da-prevista.mjs.",
+  "compilerOptions": {
+    "outDir": "../.tmp-vinculo-da-prevista",
+    "rootDir": "../lib",
+    "module": "es2020",
+    "target": "es2020",
+    "moduleResolution": "node",
+    "skipLibCheck": true,
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": [
+    "../lib/vinculo-da-prevista.ts",
+    "../lib/recurrence-detector.ts",
+    "../lib/chave-da-fatura.ts"
+  ]
+}

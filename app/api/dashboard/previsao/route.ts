@@ -239,12 +239,25 @@ export async function GET(request: NextRequest) {
     // linha so sai da previsao de cada um quando AQUELA pessoa resolve a parte
     // dela. Para conta individual nada muda: a 055 define
     // `my_status = status::text` para toda linha de que eu sou o dono.
+    //
+    // E `status` DO DONO TAMBEM TEM DE SER `pending` -- e isto desfaz metade do
+    // paragrafo acima, de proposito. Desde a HMO-418 o Realizado deste painel
+    // (/api/reports/cash-flow) conta a MINHA parte da despesa de grupo que OUTRO
+    // pagou, pelo rateio do lancamento (`group_share_entries`, 033). Entao,
+    // quando o Helio paga o aluguel do grupo, a parte da Lais ja entrou no
+    // realizado dela; deixar a linha no previsto por `my_status` (que fica
+    // `pending` ate ela informar o reembolso) somava a MESMA parte duas vezes.
+    // Medido em producao em 22/10/2026: R$ 406,73 de despesa no painel da Lais
+    // onde o certo era R$ 237,81. O que ela ainda deve ao Helio e acerto, nao
+    // despesa, e continua no «A pagar» da agenda (que segue lendo `my_status`).
+    // Para linha minha nada muda: `status` e `my_status` sao o mesmo valor.
     const { data: previstas, error: erroPrevistas } = await supabase
       .from("scheduled_transactions_effective")
       .select(
         "id, description, notes, amount, due_date, direction, group_id, account:financial_accounts(account_type)"
       )
       .eq("my_status", "pending")
+      .eq("status", "pending")
       .lte("due_date", janela.ate);
 
     if (erroPrevistas) {
