@@ -139,8 +139,14 @@ const FUNCOES_CERTAS = ["dataNaTela", "dataCurtaNaTela"];
  * cada prevista sugerida, e o seletor da agenda mostra a DATA de cada
  * lancamento -- e a data e o que distingue o aluguel de outubro do de setembro
  * quando os dois tem o mesmo valor e a mesma descricao.
+ *
+ * DE 8 PARA 12: o fechamento do grupo por periodo (RN018, fase 2,
+ * `components/grupos/FechamentoDoPeriodo.tsx`). O periodo aberto mostra o
+ * INICIO e o FIM dele, e cada fechamento ja gravado mostra o dele -- o dia do
+ * fechamento e a data que decide em que periodo uma despesa entra, entao a
+ * tela tem de escrever o dia que o banco guardou, nao o da vespera.
  */
-const CHAMADAS_ESPERADAS = 8;
+const CHAMADAS_ESPERADAS = 12;
 
 /**
  * `formatDate` de lib/utils.ts, que recebe `settled_on` e `today_rate_date`
