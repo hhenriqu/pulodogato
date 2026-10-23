@@ -44,6 +44,16 @@ import {
   type CreditoAReceber,
 } from "@/lib/credito-de-grupo";
 import { LinhaDaParteDeGrupo } from "@/components/movimentacoes/LinhaDaParteDeGrupo";
+import { LinhaDaContaDoFechamento } from "@/components/movimentacoes/LinhaDaContaDoFechamento";
+import {
+  COLUNAS_DA_CONTA_DO_FECHAMENTO,
+  VIEW_DA_CONTA_DO_FECHAMENTO,
+  comAsContasDoFechamento,
+  contasDoFechamentoComoRealizadas,
+  type ContaDoFechamentoCrua,
+  type ContaDoFechamentoRealizada,
+} from "@/lib/fechamento-no-resultado";
+import { viewDaParteAusente } from "@/lib/parte-do-grupo-realizada";
 import {
   TAMANHO_DA_PAGINA,
   descreverLista,
@@ -325,6 +335,14 @@ function Lancamentos() {
    *   cabeçalho de lib/parte-de-grupo-na-lista.ts.
    */
   const [partesDeGrupo, setPartesDeGrupo] = useState<LancamentoDeTerceiro[]>([]);
+  /**
+   * As contas do fechamento do grupo ja quitadas no periodo (fase 4, RN017.6):
+   * "Pagamento ao grupo" e "A receber do grupo". Entram nos cartoes e na
+   * lista, sem botao -- ver `carregarContasDoFechamento`.
+   */
+  const [contasDoFechamento, setContasDoFechamento] = useState<
+    ContaDoFechamentoRealizada[]
+  >([]);
   /**
    * A consulta das partes falhou neste período.
    *
@@ -804,6 +822,47 @@ function Lancamentos() {
   };
 
   /**
+   * A CONTA DO FECHAMENTO JA QUITADA (fase 4, RN017.6)
+   *
+   * No grupo com dia de fechamento a minha parte do que outro pagou sai de
+   * `group_share_entries` (069), e o que eu devia dela entra pela conta do
+   * fechamento. Em aberto ela e uma conta prevista e nao e desta lista, que e
+   * do realizado; quitada, ela vira realizado no dia do fechamento, e e
+   * `group_closing_entries` quem a devolve. Sem esta leitura o mes de quem
+   * nao pagou nada no grupo pareceria sem custo nenhum.
+   *
+   * Try/catch PROPRIO, pela razao de `carregarPartesDeGrupo`. E a view que
+   * ainda nao existe (a 069 e colada a mao depois do deploy) e lista vazia,
+   * nao erro: e o comportamento de antes dela.
+   */
+  const carregarContasDoFechamento = async (userId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from(VIEW_DA_CONTA_DO_FECHAMENTO)
+        .select(COLUNAS_DA_CONTA_DO_FECHAMENTO)
+        .eq("user_id", userId)
+        .gte("transaction_date", periodo.de)
+        .lte("transaction_date", periodo.ate)
+        .order("transaction_date", { ascending: false });
+
+      if (error && viewDaParteAusente(error)) {
+        setContasDoFechamento([]);
+        return;
+      }
+      if (error) throw error;
+
+      setContasDoFechamento(
+        contasDoFechamentoComoRealizadas(
+          (data ?? []) as unknown as ContaDoFechamentoCrua[]
+        )
+      );
+    } catch (erro) {
+      console.error("Erro ao carregar as contas do fechamento do grupo:", erro);
+      setContasDoFechamento([]);
+    }
+  };
+
+  /**
    * Uma pagina de lancamentos DO PERIODO ESCOLHIDO.
    *
    * O `.limit(50)` que estava aqui nao tinha recorte de data nenhum: trazia as
@@ -921,6 +980,7 @@ function Lancamentos() {
     // eliminar, agora pela outra fonte.
     setPartesDeGrupo([]);
     setPartesFalharam(false);
+    setContasDoFechamento([]);
 
     try {
       const { data: dadosDeAuth, error: erroDeAuth } =
@@ -1016,6 +1076,7 @@ function Lancamentos() {
 
       await carregarGrupos();
       await carregarPartesDeGrupo(user.id);
+      await carregarContasDoFechamento(user.id);
       await carregarCreditoDeGrupo();
 
       // Carregar contas financeiras.
@@ -1093,7 +1154,12 @@ function Lancamentos() {
   // cartoes se contradizendo sob a legenda "Receitas - Despesas". Ver o
   // cabecalho daquela funcao.
   const calculateBalance = () => {
-    const resumo = resumoComPartesDeGrupo(transactions, partesDeGrupo);
+    // A conta do fechamento quitada entra como linha minha nos totais: ela e
+    // receita ou despesa inteira, nao uma fracao (fase 4, RN017.6).
+    const resumo = resumoComPartesDeGrupo(
+      [...transactions, ...contasDoFechamento],
+      partesDeGrupo
+    );
 
     return {
       income: resumo.receitas,
@@ -1136,7 +1202,13 @@ function Lancamentos() {
   // a minha parte das despesas de grupo que outra pessoa pagou, em ordem de
   // data -- coladas sem reordenar, as partes de setembro cairiam no fim, abaixo
   // das minhas de marco.
-  const visiveis = linhasDaLista(transactions, partesDeGrupo, "todos");
+  //
+  // E A CONTA DO FECHAMENTO QUITADA (fase 4) e a terceira fonte, com `kind`
+  // proprio: ela nao e linha minha e nao tem botao.
+  const visiveis = comAsContasDoFechamento(
+    linhasDaLista(transactions, partesDeGrupo, "todos"),
+    contasDoFechamento
+  );
 
   // O elo entre as duas pernas de cada transferencia, montado uma vez por
   // render em vez de por linha: `destinoDoLancamento` precisa achar a
@@ -1173,7 +1245,8 @@ function Lancamentos() {
   //
   // `temMais` continua saindo so da paginacao das MINHAS linhas, e esta certo:
   // as partes de grupo vem todas de uma vez, nao ha pagina seguinte delas.
-  const carregados = transactions.length + partesDeGrupo.length;
+  const carregados =
+    transactions.length + partesDeGrupo.length + contasDoFechamento.length;
 
   // O que a lista diz sobre si mesma: quantas linhas, DE QUE PERIODO, e se
   // falta alguma. A regra esta em lib/lista-de-lancamentos.ts, com teste, e nao
@@ -1831,6 +1904,15 @@ function Lancamentos() {
                           key={linha.parte.id}
                           parte={linha.parte}
                           nomeDoGrupo={nomeDoGrupo}
+                        />
+                      );
+                    }
+
+                    if (linha.kind === "fechamento") {
+                      return (
+                        <LinhaDaContaDoFechamento
+                          key={linha.conta.id}
+                          conta={linha.conta}
                         />
                       );
                     }

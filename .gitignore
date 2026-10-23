@@ -317,6 +317,7 @@ next-env.d.ts
 /.tmp-fechamento-do-grupo/
 /.tmp-fechamento-por-periodo/
 /.tmp-acerto-do-fechamento/
+/.tmp-fechamento-no-resultado/
 
 # Build do `npm run test:telas-de-movimentacao` (HMO-246, as tres telas de
 # movimentacao). Leva movimentacoes.js e destino-do-lancamento.js junto porque a

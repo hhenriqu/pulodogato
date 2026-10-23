@@ -116,6 +116,7 @@ import {
   ultimoDiaDoMes,
 } from "@/lib/periodo-do-painel";
 import { lerPreferenciaDeMoeda, separarSeriePorMoeda } from "@/lib/moeda";
+import { lerContasDoFechamentoRealizadas } from "@/lib/services/fechamento-no-resultado";
 import {
   COLUNAS_DA_PARTE_DE_GRUPO,
   partesComoTransacoes,
@@ -415,6 +416,32 @@ export async function GET(request: NextRequest) {
         }
 
         for (const linha of partesComoTransacoes(partes)) linhas.push(linha);
+
+        // A CONTA DO FECHAMENTO DO GRUPO JA QUITADA (069, RN017.6).
+        //
+        // No grupo com dia de fechamento a parte de quem nao pagou saiu de
+        // `group_share_entries` (RN018.9), e o que ele deve -- ou tem a
+        // receber -- entra pela conta que o fechamento gerou: em Despesas o
+        // "Pagamento ao grupo", em Receitas o "A receber do grupo". Em aberto
+        // ela e previsao; quitada, ela e realizado, no mes do fechamento.
+        //
+        // `partesComoTransacoes` serve sem mudanca: a view entrega `amount`
+        // POSITIVO e o sinal em `transaction_type`, e os agregadores leem os
+        // dois -- inclusive `income`, que a parte de grupo nunca teve.
+        const doFechamento = await lerContasDoFechamentoRealizadas(
+          supabase,
+          user.id,
+          periodo.de,
+          periodo.ate
+        );
+        if (!doFechamento.ok) {
+          console.error("Erro na conta do fechamento do intervalo:", doFechamento.erro);
+          return NextResponse.json(
+            { error: "Não foi possível montar o relatório" },
+            { status: 500 }
+          );
+        }
+        for (const linha of partesComoTransacoes(doFechamento.contas)) linhas.push(linha);
       }
 
       // O CARTAO PASSA A CONTAR PELA FATURA (HMO-265).

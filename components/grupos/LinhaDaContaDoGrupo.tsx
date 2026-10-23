@@ -36,6 +36,7 @@ import {
   FALTA_O_DONO_CONFIRMAR,
   ROTULO_DESFAZER,
   ROTULO_JA_AVISADO,
+  ROTULO_NO_FECHAMENTO,
   ROTULO_PARA_AVISAR,
   type LinhaComDono,
 } from "@/lib/conta-de-grupo-na-agenda";
@@ -48,7 +49,7 @@ export interface ContaDeGrupoNaAgenda extends LinhaComDono {
   days_until_due?: number | null;
   my_effective_status?: string | null;
   /** O nome do grupo, quando o embed veio. */
-  group?: { name?: string | null } | null;
+  group?: { name?: string | null; closing_day?: number | null } | null;
 }
 
 export function LinhaDaContaDoGrupo({
@@ -72,6 +73,9 @@ export function LinhaDaContaDoGrupo({
   const vencida = conta.my_effective_status === "overdue";
   const dias = conta.days_until_due ?? 0;
   const estado = estadoDaMinhaParte(conta);
+  // No grupo que fecha nao ha aviso por membro (fase 4): a rota recusaria.
+  const doGrupoQueFecha =
+    conta.group?.closing_day !== null && conta.group?.closing_day !== undefined;
 
   async function chamar(method: "POST" | "DELETE", caiuBem: string) {
     setAgindo(true);
@@ -137,7 +141,14 @@ export function LinhaDaContaDoGrupo({
             </Badge>
           </div>
 
-          {estado === "pendente" ? (
+          {doGrupoQueFecha ? (
+            <span
+              data-parte-no-fechamento={conta.id}
+              className="text-xs text-muted-foreground"
+            >
+              {ROTULO_NO_FECHAMENTO}
+            </span>
+          ) : estado === "pendente" ? (
             <Button
               size="sm"
               variant="outline"

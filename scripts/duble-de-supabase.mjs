@@ -212,6 +212,13 @@ function avaliarRamo(ramo, linha) {
       if (valor === "true") return celula === true;
       if (valor === "false") return celula === false;
       throw new Error(`duble-de-supabase: \`is.${valor}\` nao e um valor de IS.`);
+    case "not":
+      // `coluna.not.op.valor` -- a negacao do PostgREST. O resto ja e um ramo
+      // inteiro (`is.null`, `eq.x`), e o operador dele passa pela mesma
+      // avaliacao: um operador desconhecido depois do `not` continua estourando.
+      // E a forma do filtro da agenda da tela de movimentacao
+      // (`user_id.eq.<eu>,group_id.not.is.null`).
+      return !avaliarRamo(`${coluna}.${bruto}`, linha);
     case "like":
     case "ilike": {
       // `%` e o curinga do LIKE; o resto do termo e literal. O `i` de `ilike`

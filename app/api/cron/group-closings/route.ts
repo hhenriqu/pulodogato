@@ -6,12 +6,14 @@
 // chama `fecharOGrupo` (lib/services/fechamento-dos-grupos.ts) em cada um; a
 // decisao de "e hoje?" e a aritmetica moram la e em lib/fechamento-por-periodo.ts.
 //
-// AINDA NAO ESTA NO vercel.json, DE PROPOSITO
-// -------------------------------------------
-// Ate a fase 4 do modelo novo, a parte de cada membro continua contando no
-// realizado pelo rateio (033/046). Gerar "Pagamento ao grupo" antes disso conta
-// a divida DUAS vezes para quem deve. A rota existe e responde; o agendamento
-// entra junto com a leitura nova, na fase 4.
+// AGENDADO NA FASE 4, E ESPERA A 069
+// ----------------------------------
+// Ate a leitura nova (069), a parte de cada membro contava no realizado pelo
+// rateio (033/046), e gerar "Pagamento ao grupo" contaria a divida DUAS vezes
+// para quem deve. Por isso o agendamento (vercel.json) entrou junto com a
+// leitura nova, e por isso a rota confere que a 069 esta no banco antes de
+// fechar qualquer grupo: o deploy chega antes da colagem da migration, e na
+// janela entre os dois a rota responde 503 sem gerar conta nenhuma.
 //
 // POR QUE PRECISA DA service_role
 // -------------------------------
@@ -30,6 +32,8 @@ import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 import { today } from "@/lib/recurrence";
 import { comRegistro } from "@/lib/services/cron-ledger";
+import { VIEW_DA_CONTA_DO_FECHAMENTO } from "@/lib/fechamento-no-resultado";
+import { viewDaParteAusente } from "@/lib/parte-do-grupo-realizada";
 import { fecharOGrupo, type DesfechoDoGrupo } from "@/lib/services/fechamento-dos-grupos";
 
 export const dynamic = "force-dynamic";
@@ -73,6 +77,27 @@ export async function GET(request: NextRequest) {
     // O dia em Sao Paulo, nao o do servidor: a Vercel roda em UTC, e das 21:00
     // em diante o servidor ja esta no dia seguinte.
     const hoje = today();
+
+    // A 069 E PRE-REQUISITO -- ver o cabecalho. A view que ela cria e a
+    // marca: sem ela, a parte de quem nao pagou ainda conta pelo rateio.
+    const { error: erroDaLeitura } = await admin
+      .from(VIEW_DA_CONTA_DO_FECHAMENTO)
+      .select("id")
+      .limit(1);
+
+    if (erroDaLeitura && viewDaParteAusente(erroDaLeitura)) {
+      return {
+        status: 503,
+        body: {
+          error:
+            "Fechamento suspenso: a migration 069 ainda não foi aplicada no banco.",
+        },
+      };
+    }
+    if (erroDaLeitura) {
+      console.error("Cron group-closings: erro ao conferir a 069:", erroDaLeitura);
+      return { status: 500, body: { error: "Falha ao conferir a leitura do fechamento" } };
+    }
 
     const { data: grupos, error: erroGrupos } = await admin
       .from("expense_groups")

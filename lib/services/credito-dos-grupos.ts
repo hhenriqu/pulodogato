@@ -153,7 +153,7 @@ export async function lerCreditoDosGrupos(
 
   const { data: grupos, error: erroGrupos } = await supabase
     .from("expense_groups")
-    .select("id, name, default_split_type")
+    .select("id, name, default_split_type, closing_day")
     .in("id", meusIds)
     .eq("is_active", true);
 
@@ -162,7 +162,18 @@ export async function lerCreditoDosGrupos(
     return { ok: false, mensagem: "Não foi possível carregar os seus grupos" };
   }
 
-  const ativos = grupos ?? [];
+  // O GRUPO QUE FECHA NAO TEM CREDITO AQUI (fase 4, RN017). O que os outros
+  // me devem nele vira UMA conta "A receber do grupo" no dia do fechamento, e
+  // antes disso a estimativa do periodo (lib/services/fechamento-no-resultado.ts).
+  // Somar o credito daqui tambem seria cobrar a mesma divida duas vezes no
+  // «Previsto» de Receitas. E a conta prevista desse grupo ja entra pela minha
+  // parte na aba Despesas (`previstasNoGrupoQueFecha`), entao nao ha reembolso
+  // a contrapor.
+  //
+  // O filtro e pela PRESENCA do dia, como a 069 decide no banco.
+  const ativos = (grupos ?? []).filter(
+    (g) => g.closing_day === null || g.closing_day === undefined
+  );
   if (ativos.length === 0) return { ok: true, credito: CREDITO_VAZIO };
 
   const groupIds = ativos.map((g) => g.id);

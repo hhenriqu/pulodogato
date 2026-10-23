@@ -54,6 +54,13 @@ export const ROTULO_JA_AVISADO = "Você avisou que pagou";
 /** A frase que completa o estado `avisado`: falta alguem, e a tela diz quem. */
 export const FALTA_O_DONO_CONFIRMAR = "falta quem criou a conta confirmar";
 
+/**
+ * O que aparece no lugar do botao na conta de um grupo que FECHA (fase 4): ali
+ * nao ha aviso por membro, e a parte de cada um vai para o fechamento. Ver
+ * `RECUSA_NO_GRUPO_QUE_FECHA`.
+ */
+export const ROTULO_NO_FECHAMENTO = "Sua parte entra no fechamento do grupo";
+
 /** O rotulo do desfazer. */
 export const ROTULO_DESFAZER = "Desfazer";
 
@@ -89,6 +96,17 @@ export const ROTULO_DESFAZER = "Desfazer";
  */
 export const RECUSA_DA_CONTA_PROPRIA =
   "Esta conta prevista é sua: use o botão de dar baixa, que registra o pagamento de verdade.";
+
+/**
+ * A recusa do aviso na conta de um grupo que FECHA (fase 4, RN018).
+ *
+ * Nesse grupo ninguem paga a parte para quem lancou a conta: quem paga a conta
+ * paga ela inteira, e o que cada um deve dela entra no fechamento do periodo,
+ * como "Pagamento ao grupo". Um aviso aqui nao teria quem confirmar, e se
+ * confirmado contaria a mesma divida duas vezes.
+ */
+export const RECUSA_NO_GRUPO_QUE_FECHA =
+  "Este grupo tem dia de fechamento: a sua parte desta conta entra no fechamento do período, e você acerta com o grupo.";
 
 /** A frase de quem ja avisou. Nao e erro -- e estado. */
 export const JA_AVISADO = "Você já avisou que pagou a sua parte.";

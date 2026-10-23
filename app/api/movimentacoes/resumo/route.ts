@@ -113,6 +113,17 @@ import {
   type ParticipantesPorGrupo,
 } from "@/lib/parte-do-grupo";
 import { previstasPelaRegraDoPagador } from "@/lib/regra-do-pagador";
+import {
+  contasDoFechamentoComoRealizadas,
+  estimativasComoPrevistas,
+  previstasNoGrupoQueFecha,
+  separarPeloFechamento,
+} from "@/lib/fechamento-no-resultado";
+import {
+  lerContasDoFechamentoRealizadas,
+  lerEstimativasDoFechamento,
+  lerGruposQueFecham,
+} from "@/lib/services/fechamento-no-resultado";
 import { chaveDoAcerto } from "@/lib/acerto-em-lancamento";
 import {
   acertosNaAbaReceitas,
@@ -487,14 +498,41 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const agendaPelaRegraDoPagador = previstasPelaRegraDoPagador(
+    // O GRUPO QUE FECHA SAI DA REGRA DO PAGADOR (fase 4, RN018). A conta
+    // prevista dele entra pela parte de cada membro, inclusive a de quem a
+    // lancou, e nao ha reembolso por conta: o que cada um deve ou recebe vem do
+    // fechamento. O porque inteiro esta em `previstasNoGrupoQueFecha`
+    // (lib/fechamento-no-resultado.ts).
+    //
+    // FALHAR AQUI NAO DERRUBA A LEITURA: sem saber quais grupos fecham, toda
+    // conta de grupo segue pela regra do pagador, que e a leitura de antes da
+    // fase 4 -- erra para cima, como a falha dos pesos logo acima.
+    let gruposQueFecham: ReadonlySet<string> = new Set();
+
+    if (gruposEnvolvidos.length > 0) {
+      const leitura = await lerGruposQueFecham(supabase, gruposEnvolvidos);
+      if (!leitura.ok) {
+        console.error(
+          "A tela de movimentação seguiu sem saber quais grupos fecham:",
+          leitura.mensagem
+        );
+      } else {
+        gruposQueFecham = leitura.ids;
+      }
+    }
+
+    const { doGrupoQueFecha, demais } = separarPeloFechamento(
       agenda as (PrevistaCrua & {
         group_id?: string | null;
         user_id?: string | null;
       })[],
-      pesosPorGrupo,
-      user.id
+      gruposQueFecham
     );
+
+    const agendaPelaRegraDoPagador = [
+      ...previstasPelaRegraDoPagador(demais, pesosPorGrupo, user.id),
+      ...previstasNoGrupoQueFecha(doGrupoQueFecha, pesosPorGrupo, user.id),
+    ];
 
     // ----------------------------------------------------------------
     // 3c. O REEMBOLSO PREVISTO DO GRUPO -- HMO-364, fase F3 da HMO-360
@@ -1011,6 +1049,64 @@ export async function GET(request: NextRequest) {
     }
 
     // ----------------------------------------------------------------
+    // 3e. O FECHAMENTO DO GRUPO -- fase 4, RN017 e RN018.7
+    // ----------------------------------------------------------------
+    // Duas leituras, uma de cada lado:
+    //
+    //   * a conta do fechamento JA QUITADA ("Pagamento ao grupo" em Despesas,
+    //     "A receber do grupo" em Receitas) entra no REALIZADO. Em aberto ela e
+    //     uma conta prevista minha e ja chega pela agenda; quitada, o status
+    //     dela vira `paid` sem transacao nenhuma (068), e e
+    //     `group_closing_entries` (069) que a devolve. Falhar aqui e 500, como
+    //     o realizado do passo 2: um realizado menor sem aviso e o pior dos
+    //     dois;
+    //   * a ESTIMATIVA do periodo aberto entra no PREVISTO, no mes em que o
+    //     fechamento vai gerar a conta (decisao D2). Falhar aqui nao derruba a
+    //     leitura, pela razao do reembolso no passo 3c.
+    //
+    // As duas so falam de Receitas e Despesas: em Transferencias a peneira de
+    // tipo de `linhasDaTela` as descartaria depois de cinco consultas.
+    let contasDoFechamento: ReturnType<typeof contasDoFechamentoComoRealizadas> = [];
+    let estimativasDoFechamento: ReturnType<typeof estimativasComoPrevistas> = [];
+
+    if (tela.tipo !== "transfer") {
+      const quitadas = await lerContasDoFechamentoRealizadas(
+        supabase,
+        user.id,
+        periodo.de,
+        periodo.ate
+      );
+
+      if (!quitadas.ok) {
+        console.error(
+          "Erro ao ler as contas do fechamento da tela de movimentação:",
+          quitadas.erro
+        );
+        return NextResponse.json(
+          { error: "Não foi possível carregar os lançamentos do período" },
+          { status: 500 }
+        );
+      }
+
+      contasDoFechamento = contasDoFechamentoComoRealizadas(quitadas.contas);
+
+      const estimativas = await lerEstimativasDoFechamento(supabase, user.id, hoje);
+
+      if (!estimativas.ok) {
+        console.error(
+          "A tela de movimentação seguiu sem a estimativa do fechamento:",
+          estimativas.mensagem
+        );
+      } else {
+        estimativasDoFechamento = estimativasComoPrevistas(
+          estimativas.estimativas.filter(
+            (e) => e.vencimento >= periodo.de && e.vencimento <= periodo.ate
+          )
+        );
+      }
+    }
+
+    // ----------------------------------------------------------------
     // 4. Os tres numeros e a lista
     // ----------------------------------------------------------------
     const previstas: PrevistaCrua[] = [
@@ -1036,10 +1132,17 @@ export async function GET(request: NextRequest) {
       // chave vira `mybank:<id>` (nunca um uuid que `/api/scheduled-transactions`
       // aceitaria), `gravada` sai `false` e nenhum botao aparece.
       ...(parcelasDevidas as unknown as PrevistaCrua[]),
+      // A estimativa do fechamento (3e) tambem fica fora da regra do pagador:
+      // ela ja e a MINHA posicao no grupo, e nasce com `group_id` nulo para nao
+      // ser dividida de novo.
+      ...(estimativasDoFechamento as PrevistaCrua[]),
     ];
 
     const linhas = linhasDaTela(
-      (realizadasCruas ?? []) as unknown as RealizadaCrua[],
+      [
+        ...(realizadasCruas ?? []),
+        ...contasDoFechamento,
+      ] as unknown as RealizadaCrua[],
       previstas,
       tela.tipo,
       idsDeFixa,

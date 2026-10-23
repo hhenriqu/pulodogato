@@ -88,6 +88,7 @@ import {
   JA_AVISADO,
   JA_CONFIRMADO,
   RECUSA_DA_CONTA_PROPRIA,
+  RECUSA_NO_GRUPO_QUE_FECHA,
 } from "@/lib/conta-de-grupo-na-agenda";
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
@@ -194,6 +195,31 @@ export async function POST(
       return NextResponse.json(
         { error: "Conta prevista não encontrada" },
         { status: 404 }
+      );
+    }
+
+    // NO GRUPO QUE FECHA NAO HA AVISO POR MEMBRO (fase 4, RN018): a parte de
+    // cada um entra no fechamento, e a 069 tira a conta da previsao de todos
+    // quando alguem a paga. Ver `RECUSA_NO_GRUPO_QUE_FECHA`.
+    const { data: grupo, error: erroGrupo } = await supabase
+      .from("expense_groups")
+      .select("closing_day")
+      .eq("id", conta.group_id)
+      .maybeSingle();
+
+    if (erroGrupo) {
+      console.error("Erro ao ler o grupo da conta prevista:", erroGrupo);
+      return NextResponse.json(
+        { error: "Não foi possível registrar o aviso" },
+        { status: 500 }
+      );
+    }
+
+    const diaDoGrupo = (grupo as { closing_day?: number | null } | null)?.closing_day;
+    if (diaDoGrupo !== null && diaDoGrupo !== undefined) {
+      return NextResponse.json(
+        { error: RECUSA_NO_GRUPO_QUE_FECHA },
+        { status: 409 }
       );
     }
 
