@@ -449,16 +449,16 @@ const MUTACOES_DO_CONVERSOR = [
     // mutante em vez de tres, os dois lados leem o mesmo miolo truncado
     // (`a === b`), e so a contagem do texto final tem como acusar.
     nome: "o recorte do miolo trunca depois da PRIMEIRA entrada",
-    de: "let miolo = fonte.slice(constantes[0].index, fimDaLista(fonte, mLista.index));",
+    de: "let miolo = fonte.slice(todasAsConstantes[0].index, fimDaLista(fonte, mLista.index));",
     para:
-      "let miolo = fonte.slice(constantes[0].index, " +
+      "let miolo = fonte.slice(todasAsConstantes[0].index, " +
       'fonte.indexOf("\\n    ],", mLista.index) + 7) + "\\n];";',
     espera: new RegExp(`${QUANTOS_4} mutantes antes, 1 depois`),
   },
   {
     tipo: "vacuo",
     nome: "o recorte do miolo comeca DEPOIS das constantes de arquivo",
-    de: "let miolo = fonte.slice(constantes[0].index, fimDaLista(fonte, mLista.index));",
+    de: "let miolo = fonte.slice(todasAsConstantes[0].index, fimDaLista(fonte, mLista.index));",
     para: "let miolo = fonte.slice(mLista.index, fimDaLista(fonte, mLista.index));",
     espera: /nao achei o miolo|miolo diferente/,
   },
