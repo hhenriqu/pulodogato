@@ -44,6 +44,7 @@ import {
   AlertCircle,
   CheckCircle,
   Clock,
+  CalendarCheck,
 } from "lucide-react";
 import SplitSuggestions, {
   type SplitSuggestion,
@@ -66,6 +67,7 @@ import {
   type MembroDaDivisao,
 } from "@/components/grupos/DivisaoDoGrupo";
 import { FechamentoDoMes } from "@/components/grupos/FechamentoDoMes";
+import { FechamentoDoPeriodo } from "@/components/grupos/FechamentoDoPeriodo";
 import { today } from "@/lib/recurrence";
 import { dataNaTela } from "@/lib/data-na-tela";
 import {
@@ -2439,6 +2441,31 @@ export default function GroupDetailPage() {
                   ehAdmin={souAdmin}
                   aoGravar={loadGroup}
                 />
+              </CardContent>
+            </Card>
+          )}
+
+          {/*
+            O fechamento por periodo (RN018, fase 2 do modelo novo): o dia de
+            fechamento, a previa do periodo aberto e os fechamentos feitos.
+            Logo abaixo da divisao porque o fechamento usa as duas
+            configuracoes -- o % de cada um e o dia --, e quem mexe numa precisa
+            ver a outra. Montado so com a aba ativa, pelo mesmo motivo da
+            divisao: quem veio ver a lista de despesas nao paga esta chamada.
+          */}
+          {activeTab === "members" && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <CalendarCheck className="h-5 w-5" />
+                  Fechamento do grupo
+                </CardTitle>
+                <CardDescription>
+                  O período fecha num dia do mês, e o saldo de cada um vira uma conta.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <FechamentoDoPeriodo groupId={groupId} ehAdmin={souAdmin} />
               </CardContent>
             </Card>
           )}

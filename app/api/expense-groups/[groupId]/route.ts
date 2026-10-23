@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { saldoEmAbertoNoGrupo } from "@/lib/services/expense-groups";
 import { moedaDoGrupoParaGravar } from "@/lib/moeda-do-grupo";
 import { conferirEscrita } from "@/lib/escrita-conferida";
+import { diaDeFechamento } from "@/lib/fechamento-por-periodo";
 
 // `user` e embed de UM perfil (FK many-to-one), por isso objeto e nao lista --
 // e `| null` porque a RLS de `profiles` pode esconder a linha, caso em que o
@@ -53,6 +54,7 @@ export async function GET(
         group_code,
         group_type,
         default_split_type,
+        closing_day,
         currency,
         photo_url,
         created_at,
@@ -251,6 +253,24 @@ export async function PUT(
       mudancas.default_split_type = body.default_split_type;
     }
 
+    // O dia de fechamento (RN018, 067). `null` explicito desliga o fechamento;
+    // ausente nao mexe. Fora de 1..28 e recusado, e nao corrigido: um dia 31
+    // virando 28 fecharia o periodo antes do que o admin escolheu.
+    if (body.closing_day !== undefined) {
+      if (body.closing_day === null || body.closing_day === "") {
+        mudancas.closing_day = null;
+      } else {
+        const dia = diaDeFechamento(body.closing_day);
+        if (dia === null) {
+          return NextResponse.json(
+            { error: "O dia de fechamento tem que ser de 1 a 28" },
+            { status: 400 }
+          );
+        }
+        mudancas.closing_day = dia;
+      }
+    }
+
     // A moeda so entra quando veio no corpo. `moedaDoGrupoParaGravar` devolve
     // BRL para campo ausente, e usar isso aqui faria toda edicao de NOME zerar a
     // moeda de uma viagem em dolar -- de longe o pior desfecho possivel desta
@@ -278,7 +298,7 @@ export async function PUT(
       .update(mudancas)
       .eq("id", groupId)
       .select(
-        "id, name, description, group_code, group_type, default_split_type, currency, photo_url, created_at"
+        "id, name, description, group_code, group_type, default_split_type, closing_day, currency, photo_url, created_at"
       )
       .single();
 

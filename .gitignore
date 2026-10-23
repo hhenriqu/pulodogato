@@ -315,6 +315,7 @@ next-env.d.ts
 # grupo, e nao uma copia. Mesmo motivo das entradas acima para estar aqui: um
 # `.tmp-*` fora do .gitignore chega a ser commitado em cima de arquivo de fonte.
 /.tmp-fechamento-do-grupo/
+/.tmp-fechamento-por-periodo/
 
 # Build do `npm run test:telas-de-movimentacao` (HMO-246, as tres telas de
 # movimentacao). Leva movimentacoes.js e destino-do-lancamento.js junto porque a

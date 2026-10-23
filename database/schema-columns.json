@@ -188,6 +188,7 @@
   "expense_groups": [
     "archived_at",
     "archived_by",
+    "closing_day",
     "created_at",
     "created_by",
     "currency",
@@ -330,6 +331,28 @@
     "status",
     "updated_at",
     "user_id"
+  ],
+  "group_closing_items": [
+    "amount",
+    "closing_id",
+    "description",
+    "from_user_id",
+    "group_id",
+    "id",
+    "item_date",
+    "kind",
+    "settlement_id",
+    "to_user_id",
+    "transaction_id"
+  ],
+  "group_closings": [
+    "created_at",
+    "group_id",
+    "id",
+    "members",
+    "period_end",
+    "period_start",
+    "total"
   ],
   "group_expense_splits": [
     "amount",
@@ -681,6 +704,7 @@
     "description",
     "destination_account_id",
     "due_date",
+    "group_closing_id",
     "group_id",
     "id",
     "notes",
