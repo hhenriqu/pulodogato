@@ -625,8 +625,23 @@ export async function POST(
       );
     }
 
+    // A BAIXA DA 068 (RN019). O trigger do acerto ja quitou, no mesmo INSERT,
+    // as contas do fechamento que este Pix paga. Quanto foi e lido aqui so
+    // para a tela dizer -- "Acerto registrado" sozinho nao conta que a conta a
+    // pagar sumiu. A baixa e do mesmo valor dos dois lados; basta o de quem
+    // pagou. Falhar esta leitura nao desfaz nada: a baixa ja esta gravada.
+    const { data: baixas } = await supabase
+      .from("group_settlement_allocations")
+      .select("amount")
+      .eq("settlement_id", settlement.id)
+      .eq("user_id", fromUserId);
+
+    const baixa =
+      (baixas ?? []).reduce((s, b) => s + Math.round(Number(b.amount) * 100), 0) / 100;
+
     return NextResponse.json({
       success: true,
+      baixa,
       // O que entrou em `financial_transactions`. A tela usa para dizer em QUAL
       // conta o dinheiro mexeu: "Acerto registrado" sozinho nao distingue o
       // comportamento novo do antigo, que era registrar e nao lancar nada.

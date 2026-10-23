@@ -31,6 +31,10 @@ import {
   type LancamentoParaVinculo,
   type PrevistaParaVinculo,
 } from "@/lib/vinculo-da-prevista";
+import {
+  ehContaDoFechamento,
+  MENSAGEM_DA_CONTA_DO_FECHAMENTO,
+} from "@/lib/conta-do-fechamento";
 
 const COLUNAS_DA_PREVISTA =
   "id, user_id, status, amount, due_date, direction, category_id, description, notes";
@@ -65,6 +69,21 @@ export async function GET(
       return NextResponse.json(
         { error: "Conta prevista não encontrada" },
         { status: 404 }
+      );
+    }
+
+    // A view nao traz `group_closing_id`; a tabela traz. A conta do fechamento
+    // do grupo se quita pelo acerto, nao por vinculo (068, RN019).
+    const { data: origem } = await supabase
+      .from("scheduled_transactions")
+      .select("group_closing_id")
+      .eq("id", params.id)
+      .maybeSingle<{ group_closing_id: string | null }>();
+
+    if (ehContaDoFechamento(origem)) {
+      return NextResponse.json(
+        { error: MENSAGEM_DA_CONTA_DO_FECHAMENTO },
+        { status: 409 }
       );
     }
 
@@ -146,6 +165,21 @@ export async function POST(
       return NextResponse.json(
         { error: "Conta prevista não encontrada" },
         { status: 404 }
+      );
+    }
+
+    // A view nao traz `group_closing_id`; a tabela traz. A conta do fechamento
+    // do grupo se quita pelo acerto, nao por vinculo (068, RN019).
+    const { data: origem } = await supabase
+      .from("scheduled_transactions")
+      .select("group_closing_id")
+      .eq("id", params.id)
+      .maybeSingle<{ group_closing_id: string | null }>();
+
+    if (ehContaDoFechamento(origem)) {
+      return NextResponse.json(
+        { error: MENSAGEM_DA_CONTA_DO_FECHAMENTO },
+        { status: 409 }
       );
     }
 
