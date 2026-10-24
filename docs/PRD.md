@@ -26,7 +26,8 @@
 | 2.5 | 24/10/2026 | Fase 6: o cartão pela fatura (RN017.3 e RN017.4). A fatura paga conta no mês do vencimento, pelo total das compras, e a compra e o estorno no cartão saem do Resultado. Conclui o modelo novo | Helio (decisões D1 a D5) |
 | 2.6 | 24/10/2026 | RN004.4 nova: o cartão só recebe dinheiro pelo pagamento da fatura. A transferência avulsa ou mensal para um cartão é recusada | Helio |
 | 2.7 | 24/10/2026 | RN018.7 e RN018.13 reescritas, RN018.15 e RN019.6 novas: a conta do grupo que fecha aparece para os outros membros só na estimativa, no mês do fechamento; a aba Despesas mostra "Despesas do Grupo {nome}" com o detalhe por despesa, e os Pix do acerto com copia e cola | Helio |
-| 2.8 | 24/10/2026 | RN004.5 e RN004.6 novas: a conta prevista no cartão (a despesa fixa e a avulsa) é uma cobrança. Cai na fatura pelo fechamento, soma como prevista antes do dia e vira compra sozinha no dia. Apagar a compra que o app lançou pula a cobrança | Helio |
+| 2.8 | 24/10/2026 | RN022 nova: o "Apagar tudo" deixa o que envolve outra pessoa (grupo, divisão com pessoa, MyBank) e a conta de banco onde isso mora, e a tela diz o que fica antes do clique | Helio |
+| 2.9 | 24/10/2026 | RN004.5 e RN004.6 novas: a conta prevista no cartão (a despesa fixa e a avulsa) é uma cobrança. Cai na fatura pelo fechamento, soma como prevista antes do dia e vira compra sozinha no dia. Apagar a compra que o app lançou pula a cobrança | Helio |
 
 > **O que a versão 2.0 corrigiu.** Até aqui esta PRD descrevia um app de carteira
 > de investimentos: o problema era "investidores pessoa física", as personas eram
@@ -619,6 +620,38 @@ O Resultado de cada um fecha na responsabilidade, e a soma dá os R$ 2.000.
   quem pegou mostra só o juro ("Juros: Moto (3/24)"), e a aba Receitas de quem
   emprestou soma só o juro a receber.
 
+### RN022 — Apagar tudo e começar do zero ✅ **(tela)**
+
+- RN022.1 Configurações > Conta apaga os dados financeiros de quem clica:
+  lançamentos, contas e cartões, contas previstas, recorrências, orçamentos,
+  metas e aportes, investimentos, holerites, extratos, regras de categorização,
+  comprovantes com os arquivos, avisos e a ordem do painel. A pessoa digita
+  APAGAR TUDO para confirmar.
+- RN022.2 Fica o acesso, o perfil (moeda, fuso, chave Pix), o plano, as
+  conexões e as categorias criadas.
+- RN022.3 Fica tudo o que envolve outra pessoa: "grupos e MyBank de fato não
+  podem ser apagados". São eles:
+  - **grupo:** o lançamento, a conta prevista e a recorrência de grupo, o
+    orçamento e a meta de grupo, o aporte em meta de grupo, a conta do
+    fechamento e o comprovante de acerto;
+  - **divisão com pessoa:** o lançamento dividido e as contas "Pagamento a" e
+    "A receber de";
+  - **MyBank:** o empréstimo, as parcelas, e os lançamentos e as contas
+    previstas com o elo `mybank:`;
+  - **o lançamento que pagou uma conta que ficou**, que sem ele voltaria a
+    aparecer em aberto;
+  - **a conta de banco** onde algo disso mora. O saldo dela passa a contar só
+    o que ficou.
+
+  Para os outros membros nada muda. Quem está num grupo continua recebendo as
+  despesas que os outros lançam, como "Despesas do Grupo {nome}".
+- RN022.4 A tela diz o que vai embora e o que fica antes do clique. O relatório
+  depois do clique mostra, por passo, quantas linhas saíram, quantas ficaram e
+  por quê.
+- RN022.5 Uma linha que o banco recusa apagar fora dessas regras não derruba o
+  passo: o passo é refeito em lotes, só ela fica, e o relatório diz o motivo e
+  marca o apagamento como incompleto. Clicar de novo é seguro.
+
 ---
 
 ## Arquitetura técnica
@@ -728,7 +761,8 @@ migration é passo manual no SQL Editor do Supabase.
   dentro do handler. Nada de segredo no bundle do cliente.
 - **Comprovantes** em bucket privado.
 - **LGPD** dados do próprio usuário; o painel de configurações permite zerar a
-  conta, e o plano de apagamento respeita a ordem das dependências.
+  conta (RN022), e o plano de apagamento respeita a ordem das dependências e
+  não apaga o que é de outra pessoa.
 
 ---
 

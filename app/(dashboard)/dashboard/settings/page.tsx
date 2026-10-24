@@ -92,6 +92,8 @@ import {
 interface RespostaDeReset {
   ok: boolean;
   total_apagado: number;
+  /** O que ficou de proposito: grupo, divisao com pessoa, MyBank. */
+  total_mantido?: number;
   passos: ResultadoDePasso[];
   grupos_restantes: number;
 }
@@ -198,7 +200,11 @@ export default function ConfiguracoesPage() {
       setLayoutSalvo(layoutPadrao());
 
       if (d.ok) {
-        toast.success("Tudo apagado. A conta está como nova.");
+        toast.success(
+          (d.total_mantido ?? 0) > 0
+            ? "Pronto. Ficou só o que envolve outras pessoas."
+            : "Tudo apagado. A conta está como nova."
+        );
       } else {
         toast.error(
           "O apagamento terminou pela metade — veja o detalhe abaixo"
@@ -458,38 +464,88 @@ export default function ConfiguracoesPage() {
               <CardDescription>
                 Remove os seus dados financeiros e deixa a conta no estado de
                 quem acabou de se cadastrar. Você continua logado, com o mesmo
-                e-mail e o mesmo plano.
+                e-mail e o mesmo plano. O que envolve outra pessoa fica.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
+              {/* O QUE FICA, ESCRITO ANTES DO CLIQUE (24/10/2026). A Leticia
+                  apagou tudo e a aba Despesas continuou com R$ 78 do grupo
+                  Casa: o reset tinha feito o certo, e a tela nao tinha dito.
+                  A lista e a de lib/account-reset.ts ("O QUE FICA"). */}
               <div className="grid gap-3 sm:grid-cols-2 text-sm">
                 <div className="rounded-lg border p-3 space-y-1">
                   <p className="font-medium">Vai embora</p>
                   <p className="text-muted-foreground">
-                    Lançamentos, contas e cartões, parcelamentos, contas
-                    previstas, recorrências, orçamentos, metas e aportes,
-                    holerites, extratos importados, regras de categorização,
-                    comprovantes (inclusive os arquivos) e os avisos.
+                    Os seus lançamentos, contas e cartões, parcelamentos,
+                    contas previstas, recorrências, orçamentos, metas e
+                    aportes, investimentos, holerites, extratos importados,
+                    regras de categorização, comprovantes (inclusive os
+                    arquivos), os avisos e a ordem dos blocos do painel.
                   </p>
                 </div>
                 <div className="rounded-lg border p-3 space-y-1">
                   <p className="font-medium">Fica</p>
                   <p className="text-muted-foreground">
-                    O seu acesso, o perfil, o plano — e os grupos de despesa,
-                    que têm outras pessoas dentro.
+                    O seu acesso, o perfil (com moeda, fuso e chave Pix), o
+                    plano, as conexões e as categorias que você criou. E tudo o
+                    que envolve outra pessoa, logo abaixo.
                   </p>
                 </div>
               </div>
 
-              {/* A consequencia que nao e obvia, e que so aparece depois. Sem
-                  esta linha, o usuario descobre pelo susto do outro membro. */}
+              <div
+                className="rounded-lg border p-3 space-y-2 text-sm"
+                data-o-que-fica="outras-pessoas"
+              >
+                <p className="font-medium flex items-center gap-2">
+                  <Users className="h-4 w-4" />
+                  Fica também, porque outra pessoa vê
+                </p>
+                <ul className="list-disc pl-5 space-y-1 text-muted-foreground">
+                  <li>
+                    <span className="text-foreground">Grupos de despesa.</span>{" "}
+                    Você continua em cada um, e fica o que é do grupo: os
+                    lançamentos e as contas previstas de grupo, as recorrências,
+                    os orçamentos e as metas de grupo com os seus aportes, o
+                    Pagamento ao grupo e o A receber do grupo de cada
+                    fechamento, e os comprovantes de acerto.
+                  </li>
+                  <li>
+                    <span className="text-foreground">Divisão com pessoa.</span>{" "}
+                    O lançamento dividido, e as contas Pagamento a e A receber
+                    de que nasceram dele.
+                  </li>
+                  <li>
+                    <span className="text-foreground">MyBank.</span> Os
+                    empréstimos, as parcelas e os lançamentos e as contas
+                    previstas deles.
+                  </li>
+                  <li>
+                    <span className="text-foreground">
+                      O pagamento de uma conta que ficou.
+                    </span>{" "}
+                    Sem ele, a conta voltaria a aparecer em aberto.
+                  </li>
+                  <li>
+                    <span className="text-foreground">
+                      As contas e os cartões onde algo disso mora.
+                    </span>{" "}
+                    O saldo deles passa a contar só o que ficou.
+                  </li>
+                </ul>
+              </div>
+
+              {/* A consequencia que se ve depois do clique. Sem esta linha, a
+                  despesa do grupo na conta "nova" parece dado que nao saiu. */}
               <Alert>
                 <Users className="h-4 w-4" />
                 <AlertDescription>
-                  Se você participa de algum grupo de despesa, continua nele —
-                  mas os seus lançamentos compartilhados vão junto, e isso muda
-                  o saldo do grupo para os outros membros. Para sair de um
-                  grupo, use a{" "}
+                  Para os outros membros e para quem dividiu com você nada
+                  muda: o saldo dos grupos, as divisões e os empréstimos
+                  continuam iguais. Por isso as despesas que os outros membros
+                  lançam no grupo continuam chegando para você: na aba
+                  Despesas, como &ldquo;Despesas do Grupo&rdquo;, pela sua
+                  parte. Para sair de um grupo, use a{" "}
                   <Link
                     href="/dashboard/expense-groups"
                     className="underline underline-offset-2"
@@ -531,15 +587,24 @@ export default function ConfiguracoesPage() {
             <Card>
               <CardHeader>
                 <CardTitle className="text-lg">
-                  {resultado.ok
-                    ? "Pronto — a conta está como nova"
-                    : "O apagamento terminou pela metade"}
+                  {!resultado.ok
+                    ? "O apagamento terminou pela metade"
+                    : (resultado.total_mantido ?? 0) > 0
+                      ? "Pronto — ficou só o que envolve outras pessoas"
+                      : "Pronto — a conta está como nova"}
                 </CardTitle>
                 <CardDescription>
                   {resultado.total_apagado}{" "}
                   {resultado.total_apagado === 1
                     ? "registro apagado"
                     : "registros apagados"}
+                  {(resultado.total_mantido ?? 0) > 0 && (
+                    <>
+                      {" · "}
+                      {resultado.total_mantido}{" "}
+                      {resultado.total_mantido === 1 ? "ficou" : "ficaram"}
+                    </>
+                  )}
                   {resultado.grupos_restantes > 0 && (
                     <>
                       {" · "}
@@ -564,20 +629,46 @@ export default function ConfiguracoesPage() {
                 {resultado.passos.map((passo) => (
                   <div
                     key={passo.tabela}
-                    className="flex items-center justify-between text-sm py-1 border-b last:border-0 gap-3"
+                    className="text-sm py-1 border-b last:border-0"
+                    data-passo-do-reset={passo.tabela}
                   >
-                    <span className="truncate">{passo.rotulo}</span>
-                    {passo.apagadas === null ? (
-                      <span
-                        className="text-destructive shrink-0 truncate max-w-[50%]"
-                        title={passo.erro}
-                      >
-                        falhou
-                      </span>
-                    ) : (
-                      <span className="text-muted-foreground shrink-0">
-                        {passo.apagadas}
-                      </span>
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="truncate">{passo.rotulo}</span>
+                      {passo.apagadas === null ? (
+                        <span
+                          className="text-destructive shrink-0 truncate max-w-[50%]"
+                          title={passo.erro}
+                        >
+                          falhou
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground shrink-0">
+                          {passo.apagadas}
+                          {(passo.mantidas ?? 0) > 0 &&
+                            ` · ${passo.mantidas} ${
+                              passo.mantidas === 1 ? "ficou" : "ficaram"
+                            }`}
+                        </span>
+                      )}
+                    </div>
+                    {/* Por que ficou: a mesma lista do cartao de cima, so com
+                        o que este passo segurou. */}
+                    {(passo.mantidas ?? 0) > 0 && passo.motivos && (
+                      <p className="text-xs text-muted-foreground">
+                        {passo.motivos.join("; ")}
+                      </p>
+                    )}
+                    {(passo.recusadas ?? 0) > 0 && (
+                      <p className="text-xs text-destructive">
+                        {passo.recusadas}{" "}
+                        {passo.recusadas === 1
+                          ? "não saiu, recusado pelo banco"
+                          : "não saíram, recusados pelo banco"}
+                        : {passo.motivoDaRecusa}
+                      </p>
+                    )}
+                    {passo.apagadas !== null && passo.erro && (
+                      <p className="text-xs text-destructive">{passo.erro}</p>
                     )}
                   </div>
                 ))}
@@ -595,7 +686,8 @@ export default function ConfiguracoesPage() {
           <DialogHeader>
             <DialogTitle>Apagar tudo?</DialogTitle>
             <DialogDescription>
-              Isto apaga os seus dados financeiros de forma definitiva. Para
+              Isto apaga os seus dados financeiros de forma definitiva. O que
+              envolve outra pessoa (grupos, divisões e MyBank) fica. Para
               confirmar, digite{" "}
               <span className="font-mono font-semibold">
                 {FRASE_DE_CONFIRMACAO}
