@@ -4183,10 +4183,15 @@ jobs:
       # ele sair 0 e deixar a arvore suja, porque os steps seguintes deste mesmo
       # job -- inclusive a comparacao de schema-columns.json -- passariam a medir
       # o arquivo errado. O step companheiro abaixo e quem prende isso.
-      - name: As duas pernas da transferencia sabem falhar (12 mutantes)
+      #
+      # 24/10/2026: 13 mutantes. O cartao deixou de valer como destino (ele so
+      # recebe pelo pagamento da fatura), e o mutante "cartao passa a ser
+      # recusado tambem como DESTINO" virou o inverso, "cartao volta a servir de
+      # destino". Entrou um, `contasDeDestino` voltando a oferecer o cartao.
+      - name: As duas pernas da transferencia sabem falhar (13 mutantes)
         run: node scripts/mutantes-transferencia.mjs
 
-      - name: 'A arvore voltou ao lugar depois de "As duas pernas da transferencia sabem falhar (12 mutantes)"'
+      - name: 'A arvore voltou ao lugar depois de "As duas pernas da transferencia sabem falhar (13 mutantes)"'
         run: |
           # O .tmp-* compilado guarda o mutante mesmo DEPOIS de o .ts voltar, e
           # ele e ignorado pelo git -- entao o `git diff` abaixo nao o veria.
@@ -4252,10 +4257,14 @@ jobs:
       # deste mesmo job -- inclusive a comparacao de schema-columns.json --
       # passariam a medir o arquivo errado. O step companheiro abaixo e quem
       # prende isso.
-      - name: A transferencia recorrente sabe falhar (22 mutantes)
+      #
+      # 24/10/2026: 23 mutantes. Entrou "baixa aceita a transferencia prevista
+      # para o cartao": a regra mensal antiga para um cartao nao pode mais ter
+      # baixa, porque o cartao so recebe pelo pagamento da fatura.
+      - name: A transferencia recorrente sabe falhar (23 mutantes)
         run: node scripts/mutantes-transferencia-recorrente-app.mjs
 
-      - name: 'A arvore voltou ao lugar depois de "A transferencia recorrente sabe falhar (22 mutantes)"'
+      - name: 'A arvore voltou ao lugar depois de "A transferencia recorrente sabe falhar (23 mutantes)"'
         run: git diff --exit-code -- lib/transferencia.ts lib/services/scheduled.ts
 
       # O cambio do dia da compra (HMO-182). A 026 pos um CHECK que CRUZA duas

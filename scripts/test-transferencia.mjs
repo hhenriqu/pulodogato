@@ -30,6 +30,11 @@
 //     outra roupa: o numero fecha e o fato nao aconteceu.
 //   - cartao de credito como ORIGEM. Criaria divida sem compra por tras, e essa
 //     linha entraria na fatura cobrando algo que ninguem comprou.
+//   - cartao de credito como DESTINO (24/10/2026). Era o pagamento por fora:
+//     a divida do cartao baixava e a fatura continuava em aberto, com as
+//     compras dela fora do Realizado para sempre. O cartao so recebe dinheiro
+//     pelo pagamento da fatura -- na transferencia avulsa, na regra mensal e na
+//     baixa de uma ocorrencia que ja estava na agenda.
 //   - a generalizacao mudar o pagamento da fatura. `pernasDoPagamentoDeFatura`
 //     agora e uma casca sobre `pernasDaTransferencia`, e a traducao
 //     cartao/pagadora -> destino/origem e invertivel sem o compilador notar:
@@ -46,6 +51,8 @@ const {
   validarTransferencia,
   valoresIniciaisDeTransferencia,
   contasDeOrigem,
+  contasDeDestino,
+  MENSAGEM_DO_CARTAO_SO_PELA_FATURA,
   NOME_DA_CATEGORIA_DE_TRANSFERENCIA,
   ROTA_DA_TRANSFERENCIA,
   camposDaTransferencia,
@@ -245,11 +252,36 @@ test("cartao de credito nao pode ser a origem", () => {
   );
 });
 
-test("cartao de credito PODE ser o destino", () => {
-  // Adiantar dinheiro para o cartao e quitar divida, e e um fato que acontece.
-  // Recusar aqui deixaria a pessoa sem caminho para registrar o que fez.
+test("cartao de credito NAO pode ser o destino: ele so recebe pela fatura", () => {
+  // "Contas que sao de uma fatura de cartao nao podem ser pagas avulsas,
+  // apenas com pagamento da fatura do cartao." Ate 24/10/2026 este teste dizia
+  // o contrario ("adiantar dinheiro para o cartao e quitar divida"), e era o
+  // caminho do pagamento por fora: a divida baixava e a fatura ficava em aberto.
+  // Adiantar continua possivel pelo «Pagar» da fatura aberta.
   assert.equal(
     validarContasDaTransferencia(conta(CORRENTE, "checking"), conta(CARTAO, "credit_card")),
+    "destino_e_cartao"
+  );
+  // Uma conta de investimento ou uma poupanca continuam servindo de destino:
+  // a recusa e do cartao, nao de "conta que nao e corrente".
+  assert.equal(
+    validarContasDaTransferencia(conta(CORRENTE, "checking"), conta(POUPANCA, "savings")),
+    null
+  );
+});
+
+test("a mensagem do destino cartao diz onde fica o caminho que sobrou", () => {
+  const msg = mensagemDaTransferencia("destino_e_cartao");
+  assert.equal(msg, MENSAGEM_DO_CARTAO_SO_PELA_FATURA);
+  assert.match(msg, /pagamento da fatura/);
+  assert.match(msg, /«Pagar» da fatura/);
+});
+
+test("debit_card e conta comum: serve como DESTINO tambem", () => {
+  // A mesma armadilha do teste da origem, do outro lado: um filtro pelo NOME
+  // do tipo ("card") tiraria o cartao de debito do destino.
+  assert.equal(
+    validarContasDaTransferencia(conta(CORRENTE, "checking"), conta("d", "debit_card")),
     null
   );
 });
@@ -303,6 +335,7 @@ test("todo motivo tem mensagem, e nenhuma e vazia", () => {
     "destino_nao_encontrado",
     "mesma_conta",
     "origem_e_cartao",
+    "destino_e_cartao",
   ];
 
   const vistas = new Set();
@@ -388,6 +421,17 @@ test("cartao escolhido como origem, recusa na tela", () => {
   assert.equal(r.mensagem, mensagemDaTransferencia("origem_e_cartao"));
 });
 
+test("cartao escolhido como destino, recusa na tela", () => {
+  // O seletor de destino tambem deixou de oferecer o cartao, e pela mesma
+  // razao do teste acima a tela confere de novo antes do POST.
+  const r = validarTransferencia(
+    { ...valoresValidos(), destinoId: CARTAO },
+    contasDaTela
+  );
+  assert.equal(r.ok, false);
+  assert.equal(r.mensagem, mensagemDaTransferencia("destino_e_cartao"));
+});
+
 test("valor zero e valor negativo sao recusados", () => {
   for (const valor of ["0", "-5", "", "abc"]) {
     const r = validarTransferencia(
@@ -433,6 +477,16 @@ test("contasDeOrigem mantem conta sem tipo declarado", () => {
   // branco deixaria a pessoa sem conseguir transferir dela, sem explicacao.
   const origens = contasDeOrigem([{ id: "x", name: "Antiga" }]);
   assert.equal(origens.length, 1);
+});
+
+test("contasDeDestino tambem tira o cartao de credito", () => {
+  // Ate 24/10/2026 o destino era a lista inteira. Com o cartao no seletor a
+  // pessoa escolheria, enviaria, e so entao leria a recusa.
+  assert.deepEqual(
+    contasDeDestino(contasDaTela).map((c) => c.id),
+    [CORRENTE, POUPANCA]
+  );
+  assert.equal(contasDeDestino([{ id: "x", name: "Antiga" }]).length, 1);
 });
 
 // ---------------------------------------------------------------------------
@@ -799,11 +853,34 @@ test("a baixa ACEITA a transferencia prevista completa", () => {
   // CONTROLE POSITIVO: uma guarda que recusasse tudo passaria nas duas acima e
   // quebraria toda baixa de transferencia no app.
   assert.equal(validarBaixaDeTransferencia(PREVISTA), null);
+  assert.equal(validarBaixaDeTransferencia(PREVISTA, "savings"), null);
+});
+
+test("a baixa recusa a transferencia prevista que vai para um cartao", () => {
+  // A regra mensal criada antes de 24/10/2026 continua pondo ocorrencias na
+  // agenda. Confirmar uma delas seria o pagamento por fora do mesmo jeito.
+  assert.equal(
+    validarBaixaDeTransferencia(PREVISTA, "credit_card"),
+    "destino_e_cartao"
+  );
+  // As recusas de linha incompleta vem antes: elas se consertam editando, e a
+  // do cartao manda excluir.
+  assert.equal(
+    validarBaixaDeTransferencia({ account_id: CORRENTE }, "credit_card"),
+    "sem_destino"
+  );
+});
+
+test("a baixa segue quando nao deu para ler o tipo do destino", () => {
+  // `null` e "nao sei", e a regra do cartao ja e conferida na criacao. Recusar
+  // no "nao sei" travaria uma transferencia legitima sem dizer por que.
+  assert.equal(validarBaixaDeTransferencia(PREVISTA, null), null);
+  assert.equal(validarBaixaDeTransferencia(PREVISTA, undefined), null);
 });
 
 test("cada recusa da baixa tem mensagem propria e nao manda procurar campo", () => {
   const vistas = new Set();
-  for (const problema of ["sem_origem", "sem_destino", "mesma_conta"]) {
+  for (const problema of ["sem_origem", "sem_destino", "mesma_conta", "destino_e_cartao"]) {
     const msg = mensagemDaBaixaDeTransferencia(problema);
     assert.ok(msg.trim().length > 0);
     // A pessoa aqui clicou "confirmar" numa conta prevista, nao esta preenchendo
@@ -812,9 +889,13 @@ test("cada recusa da baixa tem mensagem propria e nao manda procurar campo", () 
     assert.ok(!/^Escolha /.test(msg), `mensagem de ${problema} manda escolher`);
     vistas.add(msg);
   }
-  // Tres estados, tres frases: uma mensagem unica para dois estados faz o
+  // Quatro estados, quatro frases: uma mensagem unica para dois estados faz o
   // usuario repetir a mentira de volta.
-  assert.equal(vistas.size, 3);
+  assert.equal(vistas.size, 4);
+  assert.match(
+    mensagemDaBaixaDeTransferencia("destino_e_cartao"),
+    /«Pagar» da fatura/
+  );
 });
 
 // ---------------------------------------------------------------------------

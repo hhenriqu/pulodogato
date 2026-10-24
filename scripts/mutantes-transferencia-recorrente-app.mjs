@@ -9,7 +9,7 @@
 // VERMELHA. Uma mutacao que sobrevive nao diz que o codigo esta certo: diz que
 // o teste nao olha para aquela linha.
 //
-// Separado de `mutantes-transferencia.mjs` (HMO-164, 12/12) porque sao duas
+// Separado de `mutantes-transferencia.mjs` (HMO-164, hoje 13/13) porque sao duas
 // perguntas diferentes: aquele cobre as pernas e a validacao das contas; este
 // cobre a RECORRENCIA -- a regra, os campos da tela, a baixa em duas pernas e a
 // materializacao. Juntar os dois faria uma rodada de 25 mutacoes vezes duas
@@ -189,6 +189,15 @@ const MUTANTES = [
     alvo: TRANSFERENCIA,
     suite: "test:transferencia",
     de: '  if (conta.account_id === conta.destination_account_id) return "mesma_conta";',
+    para: "",
+  },
+  {
+    nome: "baixa aceita a transferencia prevista para o cartao",
+    porque:
+      "a regra mensal antiga para o cartao segue dando baixa: a divida do cartao cai, a fatura fica em aberto e as compras dela nunca entram no Realizado -- o pagamento por fora, todo mes",
+    alvo: TRANSFERENCIA,
+    suite: "test:transferencia",
+    de: '  if (tipoDoDestino === "credit_card") return "destino_e_cartao";',
     para: "",
   },
   {
