@@ -1921,3 +1921,86 @@ test("a compra COMUM continua com o botao quando ha um ajuste na fatura", () => 
     `a compra comum perdeu o botao por causa do ajuste: ${html.slice(0, 600)}`
   );
 });
+
+// ---------------------------------------------------------------------------
+// AS COBRANCAS PREVISTAS DENTRO DA FATURA (24/10/2026)
+// ---------------------------------------------------------------------------
+// "Despesas fixas no cartao tem que ser possivel. basicamente ele se repete em
+// toda fatura." Antes do dia, a cobranca aparece NA fatura como prevista e soma
+// no total previsto -- e o total de cima continua sendo so o que foi lancado,
+// porque e ele que tem de bater com a fatura do banco.
+
+const COBRANCA = {
+  id: "aaaaaaaa-0000-4000-8000-000000000003",
+  account_id: MEU_CARTAO,
+  account_name: "Nubank",
+  description: "Streaming mensal",
+  amount: 39.9,
+  direction: "expense",
+  due_date: "2026-10-04",
+  invoice_month: "2026-10-01",
+  recurring_rule_id: "regra-1",
+};
+
+const comCobrancas = (cobrancas, extra = {}) =>
+  render({
+    fatura: {
+      ...FATURA,
+      scheduled_pending: [],
+      cobrancas_previstas: cobrancas,
+      total_previsto: 320 + cobrancas.reduce((s, c) => s + c.amount, 0),
+    },
+    ...extra,
+  });
+
+test("a cobranca prevista aparece DENTRO da fatura, com o selo e o total previsto", () => {
+  const t = texto(comCobrancas([COBRANCA]));
+
+  assert.ok(t.includes("1 cobrança prevista nesta fatura"), `falta o bloco: ${t}`);
+  assert.ok(t.includes("Streaming mensal prevista"), `falta o selo: ${t}`);
+  assert.ok(t.includes("cobrança em 04/10 · fixa"), `falta o dia: ${t}`);
+  assert.ok(t.includes("R$ 39,90"), `falta o valor: ${t}`);
+  assert.ok(
+    t.includes("Com as cobranças previstas: R$ 359,90"),
+    `falta o total previsto: ${t}`
+  );
+  // O total de cima continua sendo o lancado.
+  assert.ok(t.includes("Gastos de outubro de 2026 R$ 320,00"), `o total mudou: ${t}`);
+});
+
+test("sem cobranca prevista nao ha bloco nem total previsto", () => {
+  const t = texto(comCobrancas([]));
+
+  assert.ok(!t.includes("cobrança prevista nesta fatura"), `bloco a mais: ${t}`);
+  assert.ok(!t.includes("Com as cobranças previstas"), `total previsto a mais: ${t}`);
+  assert.ok(!t.includes("Não foi possível conferir as cobranças"), `aviso a mais: ${t}`);
+});
+
+test("a cobranca que a rota nao conseguiu ler NAO vira silencio", () => {
+  // `cobrancas_previstas` ausente e a consulta que falhou. Calar seria a tela
+  // afirmando que a fatura nao tem cobranca prevista -- e mostrando um total
+  // menor do que o que vai chegar.
+  const t = texto(render({ fatura: { ...FATURA, scheduled_pending: [] } }));
+
+  assert.ok(
+    t.includes("Não foi possível conferir as cobranças previstas desta fatura"),
+    `a tela calou: ${t}`
+  );
+  assert.ok(!t.includes("Com as cobranças previstas"), `total previsto sem leitura: ${t}`);
+});
+
+test("sem leitura boa a cobranca prevista nao imprime numero", () => {
+  const t = texto(comCobrancas([COBRANCA], { estado: "sem-rede" }));
+
+  assert.ok(!t.includes("R$ 39,90"), `valor impresso sem leitura: ${t}`);
+  assert.ok(!t.includes("Com as cobranças previstas"), `total previsto sem leitura: ${t}`);
+});
+
+test("o bloco das cobrancas cadastradas diz que elas entram na fatura", () => {
+  // A frase antiga dizia que elas "nao entram no total da fatura" -- era o
+  // defeito. Agora o bloco e onde a cobranca se MUDA.
+  const t = texto(render({ fatura: { ...FATURA, scheduled_pending: [PREVISAO] } }));
+
+  assert.ok(t.includes("vira compra sozinha no dia"), `falta a regra: ${t}`);
+  assert.ok(!t.includes("não entram no total da fatura"), `a frase antiga voltou: ${t}`);
+});

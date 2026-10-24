@@ -43,6 +43,12 @@ import {
   type SinteseDaFatura,
 } from "@/lib/agenda-do-cartao";
 import { chaveFatura } from "@/lib/card-invoice";
+import { linhaDaCobrancaNaFatura } from "@/lib/cobranca-no-cartao";
+import {
+  cobrancasPendentesNosCartoes,
+  lancarCobrancasDoCartao,
+  vencimentosDasFaturas,
+} from "@/lib/services/cobranca-no-cartao";
 
 /** 'AAAA-MM-DD' -> 'AAAA-MM-01' com N meses somados (N pode ser negativo). */
 function mesDeslocado(data: string, meses: number): string {
@@ -82,6 +88,12 @@ export async function faturasPrevistasDaJanela(
   const mesInicial = mesDeslocado(janela.de, -1);
   const mesFinal = mesDeslocado(janela.ate, 0);
 
+  // A COBRANCA QUE VENCEU VIRA COMPRA ANTES DA LEITURA (24/10/2026). Antes, e
+  // nao depois: lida primeiro, a compra lancada agora ficaria de fora da soma
+  // e a conta prevista dela -- ja paga -- tambem, e a fatura sairia MENOR por
+  // uma leitura. Nao lanca erro; ver `lancarCobrancasDoCartao`.
+  await lancarCobrancasDoCartao(supabase, userId, janela.hoje);
+
   // `user_id` E OBRIGATORIO AQUI, e a RLS nao substitui. A policy de
   // `financial_transactions` (002) tem um OR para membro de grupo, entao a
   // view devolve tambem a compra de grupo lancada no cartao de OUTRA pessoa --
@@ -101,7 +113,16 @@ export async function faturasPrevistasDaJanela(
     return vazio;
   }
 
-  const abertas = (linhas ?? []) as LinhaDeFaturaAberta[];
+  const lancadas = (linhas ?? []) as LinhaDeFaturaAberta[];
+
+  // AS COBRANCAS QUE AINDA VAO CAIR NA FATURA (24/10/2026). Entram como linhas
+  // da MESMA soma: a regra e que elas sao compras que ainda nao aconteceram, e
+  // e por esta soma que a fatura aberta chega a Contas a Pagar, ao Previsto da
+  // aba Despesas e a previsao do painel. Uma leitura que falha nao derruba a
+  // fatura -- ela sai so com o que ja foi lancado, que e o que saia antes.
+  const previstas = await linhasDasCobrancas(supabase, userId, lancadas, janela.ate);
+
+  const abertas = [...lancadas, ...previstas];
   if (abertas.length === 0) return vazio;
 
   // As chaves candidatas, uma por cartao+mes que apareceu na view.
@@ -142,4 +163,49 @@ export async function faturasPrevistasDaJanela(
     ate: janela.ate,
     hoje: janela.hoje,
   });
+}
+
+/**
+ * As cobrancas pendentes nos cartoes como linhas da fatura aberta.
+ *
+ * O VENCIMENTO: a fatura que ja tem compra lancada traz o dela na propria
+ * linha da view, e e esse que vale -- o mesmo que a fatura mostra. So a fatura
+ * que por enquanto so tem cobranca prevista pergunta ao banco
+ * (`vencimentosDasFaturas`). A que nao deu para calcular fica de fora: sem
+ * vencimento conhecido nao ha dia para pôr na agenda, e o aviso de "cartao sem
+ * vencimento" seria falso para um cartao que tem `due_day`.
+ */
+async function linhasDasCobrancas(
+  supabase: SupabaseClient,
+  userId: string,
+  lancadas: LinhaDeFaturaAberta[],
+  ate: string
+): Promise<LinhaDeFaturaAberta[]> {
+  const lidas = await cobrancasPendentesNosCartoes(supabase, userId, { ate });
+  if (!lidas || lidas.cobrancas.length === 0) return [];
+
+  const conhecidos = new Map<string, string>();
+  for (const l of lancadas) {
+    if (l.account_id && l.invoice_month && l.invoice_due_date) {
+      conhecidos.set(`${l.account_id}|${l.invoice_month}`, l.invoice_due_date);
+    }
+  }
+
+  const faltam = lidas.cobrancas.filter(
+    (c) => !conhecidos.has(`${c.account_id}|${c.invoice_month}`)
+  );
+  const perguntados = faltam.length
+    ? await vencimentosDasFaturas(supabase, faltam, lidas.cartoes)
+    : new Map<string, string | null>();
+
+  const linhas: LinhaDeFaturaAberta[] = [];
+  for (const c of lidas.cobrancas) {
+    const chave = `${c.account_id}|${c.invoice_month}`;
+    const vencimento = conhecidos.has(chave)
+      ? (conhecidos.get(chave) as string)
+      : perguntados.get(chave);
+    if (vencimento === undefined) continue;
+    linhas.push(linhaDaCobrancaNaFatura(c, vencimento));
+  }
+  return linhas;
 }
