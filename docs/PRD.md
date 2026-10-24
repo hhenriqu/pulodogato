@@ -5,7 +5,7 @@
 > **Documento de referência do produto.** Descreve o que o Pulo do Gato é, as
 > regras de negócio que valem, e o que ainda é requisito não implementado.
 
-**Versão:** 2.3
+**Versão:** 2.4
 **Data:** 23 de outubro de 2026
 **Projeto:** Pulo do Gato — gestão financeira familiar
 **Tipo:** Progressive Web App (PWA)
@@ -22,6 +22,7 @@
 | 2.1 | 23/10/2026 | **Modelo novo das movimentações** (RN016 a RN021); regras antigas marcadas com a fase em que saem | Helio (decisões D1 a D5) |
 | 2.2 | 23/10/2026 | Fases 2 a 4 implantadas: fechamento do grupo, acerto que dá baixa e a leitura nova nos totais (RN018.13 e RN018.14 novas) | Helio (decisões D1 a D5) |
 | 2.3 | 23/10/2026 | Fase 5, primeira parte: divisão com pessoa pelo lançamento (RN020, com RN020.6 e RN020.7 novas). O acerto da RN019 fica só para o grupo | Helio (decisões D1 a D5) |
+| 2.4 | 23/10/2026 | Fase 5, segunda parte: MyBank (RN021, com RN021.6 nova). Só os juros entram no Resultado, e o empréstimo a si mesmo sai de Despesas | Helio (decisões D1 a D5) |
 
 > **O que a versão 2.0 corrigiu.** Até aqui esta PRD descrevia um app de carteira
 > de investimentos: o problema era "investidores pessoa física", as personas eram
@@ -405,8 +406,8 @@ nas contas que o fechamento gerou.
 ### RN017 — O que é Despesa e o que é Receita 🚧 — fases 4 a 6
 
 Na fase 4 entraram o pagamento a grupo e o a receber de grupos, e na fase 5 o
-pagamento a pessoa e o a receber de pessoas (RN020). Falta o MyBank, que é a
-segunda parte da fase 5, e a fatura do cartão, na fase 6.
+pagamento a pessoa e o a receber de pessoas (RN020) e os juros do MyBank
+(RN021). Falta a fatura do cartão, na fase 6.
 
 - RN017.1 **Despesas** = gastos fixos + gastos aleatórios + fatura do cartão +
   pagamento a grupo + pagamento a pessoa, mais os juros do MyBank de quem pegou
@@ -530,7 +531,7 @@ O Resultado de cada um fecha na responsabilidade, e a soma dá os R$ 2.000.
 - RN020.7 Despesa em outra moeda divide pelo valor convertido na cotação do
   lançamento, e as duas contas são em reais.
 
-### RN021 — MyBank 📋 — fase 5
+### RN021 — MyBank ✅ **(banco)** — fase 5
 
 - RN021.1 O empréstimo sai de uma conta de investimento, para o próprio
   usuário ou para uma conexão aceita, com parcelas e juros opcionais
@@ -538,12 +539,20 @@ O Resultado de cada um fecha na responsabilidade, e a soma dá os R$ 2.000.
 - RN021.2 Emprestar não é gastar, e receber de volta não é ganhar. A saída e o
   principal de cada parcela são transferência, nos dois lados.
 - RN021.3 Só os **juros** entram no Resultado: receita de quem emprestou e
-  despesa de quem pegou, na data de cada parcela (decisão D5).
+  despesa de quem pegou (decisão D5). O juro de cada parcela sai do rateio da
+  série inteira, o mesmo que a confirmação usa para gravar a perna de juro de
+  quem emprestou. Em aberto, ele é previsto no vencimento da parcela. Pago, ele
+  é realizado na data do pagamento, com o valor gravado na baixa: ajustar uma
+  parcela depois não muda o juro de uma que já foi paga (migration 071).
 - RN021.4 No empréstimo a si mesmo nada entra no Resultado, nem os juros,
-  porque o dinheiro não sai de casa. Hoje cada parcela aparece em Despesas com
-  o selo MyBank, e isso sai.
+  porque o dinheiro não sai de casa. A parcela fica só em Transferências, com o
+  selo MyBank, prevista e paga.
 - RN021.5 As parcelas aparecem na agenda: a pagar para quem pegou, a receber
   para quem emprestou.
+- RN021.6 Contas a Pagar e o "Quanto ainda posso gastar" continuam com a
+  parcela cheia, porque lá a pergunta é quanto sai da conta. A aba Despesas de
+  quem pegou mostra só o juro ("Juros: Moto (3/24)"), e a aba Receitas de quem
+  emprestou soma só o juro a receber.
 
 ---
 
@@ -689,8 +698,8 @@ planos e limites; modo noturno por token; CI de build, schema, cor e PWA.
 
 ### Próximo
 
-- Implantar o modelo novo das movimentações (RN016 a RN021): faltam o MyBank
-  (RN021, segunda parte da fase 5) e a fase 6 (cartão pela fatura).
+- Implantar o modelo novo das movimentações (RN016 a RN021): falta a fase 6
+  (cartão pela fatura).
 - Zerar o backlog de 142 warnings de lint.
 - Fechar o módulo de investimentos (rentabilidade consolidada).
 - Fechar a experiência multi-moeda.

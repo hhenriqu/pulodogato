@@ -148,10 +148,12 @@ import {
 } from "@/lib/telas-de-movimentacao";
 import {
   lerAReceberDoMyBank,
-  lerDividaDoMyBank,
+  lerJurosDevidosDoMyBank,
+  lerJurosPagosDoMyBank,
 } from "@/lib/services/divida-do-mybank";
 import {
   comODonoDaLeitura,
+  jurosPagosComoRealizados,
   type AReceberDoMyBank,
   type ParcelaDevidaNaAgenda,
 } from "@/lib/leituras-do-mybank";
@@ -654,9 +656,13 @@ export async function GET(request: NextRequest) {
     // ----------------------------------------------------------------
     // A simetria com o reembolso de grupo logo acima e exata: o que a conexao
     // ainda me deve e PROMESSA, vai para o «Previsto» de Receitas e nunca para o
-    // Realizado -- quando ela paga, a perna e `transfer` e nao `income`, porque
-    // principal voltando move dinheiro de lugar e nao e receita nova (ver
-    // `pernaDeEntradaDoPagamento` em lib/emprestimo-do-mybank.ts).
+    // Realizado.
+    //
+    // SO O JURO, desde a fase 5 (RN021.3). O principal voltando move dinheiro
+    // de lugar e nao e receita nova: quando a conexao paga, a perna do
+    // principal e `transfer`, e so a do juro e `income` (ver
+    // `pernaDeEntradaDoPagamento` em lib/emprestimo-do-mybank.ts). E o juro
+    // pago ja chega no Realizado por ela, como transacao minha.
     //
     // SO NA ABA RECEITAS, pela mesma razao do reembolso: nas outras duas o valor
     // seria descartado depois de duas consultas.
@@ -929,48 +935,36 @@ export async function GET(request: NextRequest) {
         : { previstas: [], semVencimento: [] };
 
     // ----------------------------------------------------------------
-    // 3f. A PARCELA QUE EU DEVO NO MYBANK -- HMO-377
+    // 3f. O JURO QUE EU DEVO NO MYBANK -- HMO-377 e fase 5 (RN021.3)
     // ----------------------------------------------------------------
-    // A QUINTA leitura de `lerDividaDoMyBank`, e a que faltava. A HMO-372 ligou
-    // o lado do devedor a Contas a Pagar (leitura 1) e ao safe-to-spend (leitura
-    // 3) e deixou esta aba de fora de proposito -- a tabela das sete leituras
-    // daquela issue nao a listava, e alargar o escopo ali seria decidir sozinho
-    // que a aba Despesas ganha uma linha. MEDIDO na main 40c7b01, do lado da
-    // devedora: Contas a Pagar somava R$ 1.200,00 e esta aba respondia
-    // R$ 200,00 no MESMO periodo, pela MESMA divida.
+    // A HMO-377 trouxe para esta aba a parcela que eu devo a uma conexao, que
+    // Contas a Pagar e o safe-to-spend ja somavam. Desde a fase 5 a aba Despesas
+    // e a metade de Despesas do Resultado do mes, e da parcela so o JURO entra
+    // nela: o principal volta para quem emprestou, e isso e transferencia. A
+    // linha e "Juros: Moto (3/24)", com o juro da parcela pelo rateio da serie
+    // (`jurosDevidosNaAgenda`). Contas a Pagar e o safe-to-spend continuam com
+    // a parcela cheia.
     //
     // SO NA ABA DESPESAS, e por construcao e nao por economia: a linha chega
     // `direction: "expense"` (`parcelasDevidasNaAgenda`), entao em Receitas e em
     // Transferencias ela seria descartada pela peneira de tipo de `linhasDaTela`
-    // depois de uma consulta. E ficar fora de Transferencias e a resposta CERTA:
-    // o dinheiro sai da minha conta para a conta de OUTRA PESSOA, e aquela aba
-    // afirma que ele andou entre contas minhas. Ver o cabecalho de
-    // `ehParcelaDevidaDoMyBank`.
+    // depois de uma consulta.
     //
-    // O AUTO-EMPRESTIMO NAO VEM POR AQUI, E E ISSO QUE IMPEDE A LINHA REPETIDA:
-    // a view tem `borrower_user_id IS DISTINCT FROM lender_user_id` (053), e a
-    // parcela do Caso A ja esta na consulta do passo 3 -- uma
-    // `scheduled_transaction` com `direction: 'transfer'` que
-    // `ehParcelaDoAutoEmprestimo` traz para esta aba. As duas fontes sao
-    // DISJUNTAS no banco, e nao de-duplicadas aqui; a mesma decisao, com o mesmo
-    // comentario, esta em /api/scheduled-transactions.
+    // O AUTO-EMPRESTIMO NAO VEM POR AQUI: o juro que eu pago a mim mesmo nao e
+    // despesa, e `jurosDevidosNaAgenda` o descarta pelo `lender_user_id`.
     //
     // AS DUAS PONTAS DA JANELA, ao contrario do safe-to-spend, que passa
-    // `de: null`. Lá a pergunta e "quanto vai sair da minha conta", e a parcela
-    // que venceu no mes passado e nao foi paga continua sendo dinheiro que vai
-    // sair; aqui a pergunta e "o que este PERIODO compromete", e uma parcela de
-    // fevereiro numa tela de marco seria a linha no mes errado
+    // `de: null`: aqui a pergunta e "o que este PERIODO compromete", e uma
+    // parcela de fevereiro numa tela de marco seria a linha no mes errado
     // (`leitura-sem-recorte-de-data-soma-o-horizonte`).
     //
     // FALHAR AQUI NAO DERRUBA A LEITURA -- mesma decisao de 3b, 3c, 3c-bis e 3d:
-    // a lista fica vazia, a aba volta a ser a de antes desta issue e os numeros
-    // ficam MENORES, que e a direcao que a pessoa percebe quando paga a parcela
-    // e a conta nao fecha. O `console.error` fica porque "a parcela desapareceu"
-    // e um sintoma que ninguem reporta.
+    // a lista fica vazia e os numeros ficam MENORES. O `console.error` fica
+    // porque "o juro desapareceu" e um sintoma que ninguem reporta.
     let parcelasDevidas: ParcelaDevidaNaAgenda[] = [];
 
     if (tela.tipo === "expense") {
-      const leitura = await lerDividaDoMyBank(supabase, user.id, {
+      const leitura = await lerJurosDevidosDoMyBank(supabase, user.id, {
         de: periodo.de,
         ate: periodo.ate,
         hoje,
@@ -978,20 +972,17 @@ export async function GET(request: NextRequest) {
 
       if (!leitura.ok) {
         console.error(
-          "A tela de movimentação seguiu sem a dívida do MyBank:",
+          "A tela de movimentação seguiu sem os juros do MyBank:",
           leitura.mensagem
         );
       } else {
         // `comODonoDaLeitura` E OBRIGATORIO, e o campo que ele preenche nao e
-        // enfeite: a view devolve `borrower_user_id` como `user_id` mas
-        // `ParcelaDevidaNaAgenda` nasce com `user_id: ""`, e `posso_editar` sai
-        // de `ehMinha(crua.user_id, meuUserId)`. Sem esta linha a parcela
-        // chegaria a tela marcada como linha de OUTRA PESSOA. Hoje isso nao
-        // muda botao nenhum (`gravada: false` ja os recusa todos -- ver a regra
-        // 3 de lib/acoes-da-linha.ts), e e justamente por isso que ela tem de
-        // estar escrita: o dia em que a linha ganhar o botao de avisar que
-        // pagou, o campo ja esta certo em vez de ser um `false` silencioso. E a
-        // licao da HMO-311 na fatura sintetizada.
+        // enfeite: `ParcelaDevidaNaAgenda` nasce com `user_id: ""`, e
+        // `posso_editar` sai de `ehMinha(crua.user_id, meuUserId)`. Sem esta
+        // linha o juro chegaria a tela marcado como linha de OUTRA PESSOA. Hoje
+        // isso nao muda botao nenhum (`gravada: false` ja os recusa todos -- ver
+        // a regra 3 de lib/acoes-da-linha.ts), e e justamente por isso que ela
+        // tem de estar escrita. E a licao da HMO-311 na fatura sintetizada.
         parcelasDevidas = comODonoDaLeitura(leitura.linhas, user.id);
       }
     }
@@ -1021,6 +1012,7 @@ export async function GET(request: NextRequest) {
     // tipo de `linhasDaTela` as descartaria depois de cinco consultas.
     let contasDoFechamento: ReturnType<typeof contasDoFechamentoComoRealizadas> = [];
     let estimativasDoFechamento: ReturnType<typeof estimativasComoPrevistas> = [];
+    let jurosPagos: ReturnType<typeof jurosPagosComoRealizados> = [];
 
     if (tela.tipo !== "transfer") {
       const quitadas = await lerContasDoFechamentoRealizadas(
@@ -1042,6 +1034,33 @@ export async function GET(request: NextRequest) {
       }
 
       contasDoFechamento = contasDoFechamentoComoRealizadas(quitadas.contas);
+
+      // O JURO QUE EU JA PAGUEI NO MYBANK (fase 5, RN021.3), no Realizado de
+      // Despesas, na data do pagamento. Quem pegou nao grava transacao nenhuma
+      // quando quem emprestou confirma; e `mybank_interest_entries` (071) que o
+      // devolve. Falhar aqui e 500, pela razao da conta do fechamento logo
+      // acima: um realizado menor sem aviso e o pior dos dois.
+      if (tela.tipo === "expense") {
+        const pagos = await lerJurosPagosDoMyBank(
+          supabase,
+          user.id,
+          periodo.de,
+          periodo.ate
+        );
+
+        if (!pagos.ok) {
+          console.error(
+            "Erro ao ler os juros pagos do MyBank da tela de movimentação:",
+            pagos.erro
+          );
+          return NextResponse.json(
+            { error: "Não foi possível carregar os lançamentos do período" },
+            { status: 500 }
+          );
+        }
+
+        jurosPagos = jurosPagosComoRealizados(pagos.juros);
+      }
 
       const estimativas = await lerEstimativasDoFechamento(supabase, user.id, hoje);
 
@@ -1120,7 +1139,8 @@ export async function GET(request: NextRequest) {
       // nasce com `group_id` ausente (fatura de cartao nao e de grupo) e a
       // funcao a devolveria intacta. Deixa-la fora do `map` diz isso no codigo.
       ...(fatura.previstas as PrevistaCrua[]),
-      // E A PARCELA DO MYBANK ENTRA PELO MESMO CAMINHO DA FATURA -- HMO-377.
+      // E O JURO DA PARCELA DO MYBANK (3f) ENTRA PELO MESMO CAMINHO DA FATURA --
+      // HMO-377.
       //
       // Ela tambem fica FORA de `previstasPelaRegraDoPagador`, e pela mesma
       // razao: `group_id` e `null` em `ParcelaDevidaNaAgenda` (divida de MyBank
@@ -1147,6 +1167,7 @@ export async function GET(request: NextRequest) {
       [
         ...(realizadasCruas ?? []),
         ...contasDoFechamento,
+        ...jurosPagos,
       ] as unknown as RealizadaCrua[],
       previstas,
       tela.tipo,

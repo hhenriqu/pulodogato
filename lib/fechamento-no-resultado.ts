@@ -97,6 +97,13 @@ export interface ContaDoFechamentoRealizada {
   transaction_type: "expense" | "income";
   currency: string;
   category: { name: string; is_expense: boolean };
+  /**
+   * O juro pago do MyBank (fase 5) usa esta mesma forma, com a chave
+   * `mybank:<id>` aqui e o selo que a lista mostra no lugar de "Fechamento do
+   * grupo" (`jurosPagosComoRealizados`, lib/leituras-do-mybank.ts).
+   */
+  notes?: string;
+  selo?: string;
 }
 
 export function contasDoFechamentoComoRealizadas(

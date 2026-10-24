@@ -43,6 +43,7 @@ const TELAS = "lib/telas-de-movimentacao.ts";
 const LISTA = "app/api/scheduled-transactions/route.ts";
 const CABECALHO = "app/api/scheduled-transactions/summary/route.ts";
 const POSSO_GASTAR = "app/api/safe-to-spend/route.ts";
+const MOVIMENTACAO = "app/api/movimentacoes/resumo/route.ts";
 
 /** [alvo, rotulo, de, para] */
 const mutantes = [
@@ -124,23 +125,26 @@ const mutantes = [
   // =========================================================================
   // LEITURA 2 -- as abas Despesas e Receitas
   // =========================================================================
+  // O AUTO-EMPRESTIMO SAIU DE DESPESAS NA FASE 5 (RN021.4): a aba e a metade
+  // de Despesas do Resultado do mes, e o emprestimo a si mesmo e
+  // transferencia. O primeiro mutante poe a excecao da HMO-372 de volta.
   [
     TELAS,
-    "A ABA DESPESAS PERDE O AUTO-EMPRESTIMO (a decisao 1 da HMO-368 some: a pessoa abre Despesas no dia 9 e conclui que o MyBank nao cobrou)",
-    "      if (tipo === \"expense\" || linha.tipo === tipo) {",
-    "      if (linha.tipo === tipo) {",
+    "O AUTO-EMPRESTIMO VOLTA PARA DESPESAS (o Resultado do mes desce por dinheiro que so mudou de conta)",
+    '      if (linha.tipo === tipo) linhas.push({ ...linha, natureza: "mybank" });',
+    '      if (tipo === "expense" || linha.tipo === tipo) linhas.push({ ...linha, tipo, natureza: "mybank" });',
   ],
   [
     TELAS,
     "a parcela SAI da aba Transferencias (uma transferencia de verdade deixa de ser listada onde ela mora)",
-    "      if (tipo === \"expense\" || linha.tipo === tipo) {",
-    "      if (tipo === \"expense\") {",
+    '      if (linha.tipo === tipo) linhas.push({ ...linha, natureza: "mybank" });',
+    '      if (false) linhas.push({ ...linha, natureza: "mybank" });',
   ],
   [
     TELAS,
-    "o SELO desaparece: a parcela se le como gasto comum e quem conferir o extrato procura R$ 1.000 que nao existem",
-    '        linhas.push({ ...linha, tipo, natureza: "mybank" });',
-    '        linhas.push({ ...linha, tipo, natureza: "despesa" });',
+    "o SELO desaparece: a parcela se le como uma transferencia comum, e nao como a do MyBank",
+    '      if (linha.tipo === tipo) linhas.push({ ...linha, natureza: "mybank" });',
+    '      if (linha.tipo === tipo) linhas.push({ ...linha, natureza: "despesa" });',
   ],
   [
     TELAS,
@@ -179,9 +183,76 @@ const mutantes = [
   ],
   [
     LEITURAS,
-    "O AUTO-EMPRESTIMO VIRA «A RECEBER» DE MIM MESMO (o mesmo dinheiro nos dois lados do mes: o resultado previsto fecha em zero)",
-    "    return parcela.borrower_user_id !== meuUserId;",
+    "O AUTO-EMPRESTIMO VIRA «A RECEBER» DE MIM MESMO (o juro que eu pago a mim mesmo entra como receita)",
+    "    if (parcela.borrower_user_id === meuUserId) return false;",
+    "    if (false) return false;",
+  ],
+  // O JURO E NAO A PARCELA (fase 5, RN021.3). Os dois lados do mesmo emprestimo.
+  [
+    LEITURAS,
+    "O «A RECEBER» SOMA A PARCELA CHEIA (o principal que volta vira receita do mes)",
+    "    emAberto.reduce((soma, parcela) => soma + juroDaParcela(parcela), 0)",
+    "    emAberto.reduce((soma, parcela) => soma + valorDaParcela(parcela), 0)",
+  ],
+  [
+    LEITURAS,
+    "a parcela SEM juro conta no «a receber» (a frase diz 2 parcelas e 2 emprestimos onde so 1 tem juro)",
+    "    return juroDaParcela(parcela) > 0;",
     "    return true;",
+  ],
+  [
+    LEITURAS,
+    "O JURO DEVIDO VIRA A PARCELA CHEIA (a aba Despesas de quem pegou volta a somar o principal)",
+    "      amount: juro,",
+    "      amount: parcela.amount,",
+  ],
+  [
+    LEITURAS,
+    "o juro devido inclui o AUTO-EMPRESTIMO (o juro que eu pago a mim mesmo vira despesa)",
+    "    if (parcela.lender_user_id === meuUserId) continue;",
+    "    if (false) continue;",
+  ],
+  [
+    LEITURAS,
+    "o juro devido de quem EMPRESTOU entra nas Despesas dele (a mesma linha dos dois lados do emprestimo)",
+    "    if (parcela.borrower_user_id !== meuUserId) continue;",
+    "    if (false) continue;",
+  ],
+  [
+    LEITURAS,
+    "o juro devido de emprestimo QUITADO continua na aba (a divida que acabou volta a ser prevista)",
+    '    if (parcela.loan_status !== "active") continue;',
+    "    if (false) continue;",
+  ],
+  [
+    LEITURAS,
+    "o juro devido perde a descricao (a linha prevista e a paga mudam de nome no dia da baixa)",
+    "      description: descricaoDoJuro(parcela),",
+    "      description: parcela.description,",
+  ],
+  [
+    LEITURAS,
+    "O JURO PAGO ENTRA POSITIVO (a despesa de quem pegou vira receita no Realizado)",
+    "      amount: -valor,",
+    "      amount: valor,",
+  ],
+  [
+    LEITURAS,
+    "o juro pago perde a chave (`ehJuroPagoDoMyBank` nao o reconhece e o selo some)",
+    "      notes: chaveDaParcelaDoMyBank(juro.id),",
+    '      notes: "",',
+  ],
+  [
+    MOVIMENTACAO,
+    "O JURO PAGO FICA FORA DO REALIZADO (quem pegou paga o juro e o mes dele nao muda)",
+    "        ...contasDoFechamento,\n        ...jurosPagos,\n",
+    "        ...contasDoFechamento,\n",
+  ],
+  [
+    MOVIMENTACAO,
+    "O JURO DEVIDO SOME DA ABA DESPESAS (a leitura e feita e descartada)",
+    "        parcelasDevidas = comODonoDaLeitura(leitura.linhas, user.id);",
+    "        parcelasDevidas = comODonoDaLeitura([], user.id);",
   ],
   [
     LEITURAS,

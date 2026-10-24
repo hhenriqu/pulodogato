@@ -44,17 +44,25 @@
 //
 // O CASO, EM REAIS
 // ----------------
-// Dois lados da mesma moto de R$ 24.000 em 24x de R$ 1.000:
+// Dois lados da mesma moto em 24x de R$ 1.000, cada parcela com R$ 950 de
+// principal e R$ 50 de juro:
 //
 //   * CASO A -- eu pego emprestado da MINHA conta de investimento. A parcela e
 //     uma transferencia prevista em `scheduled_transactions` (R$ 1.000, dia 10),
 //     e ela tem de aparecer UMA vez em Contas a Pagar, UMA vez no «A vencer»,
-//     UMA vez no «Previsto» da aba Despesas, e descontar R$ 1.000 do
-//     safe-to-spend;
+//     UMA vez na aba Transferencias (e NENHUMA em Despesas, desde a fase 5), e
+//     descontar R$ 1.000 do safe-to-spend;
 //   * CASO B -- eu emprestei para a Lais. No MEU lado: nada em tabela de
-//     dinheiro, R$ 1.000 no «Previsto» de Receitas (decisao 2) e ZERO de
-//     desconto no safe-to-spend. No lado DELA: R$ 1.000 em Contas a Pagar pela
-//     view, e R$ 1.000 descontados do safe-to-spend dela.
+//     dinheiro, R$ 50 de juro no «Previsto» de Receitas e ZERO de desconto no
+//     safe-to-spend. No lado DELA: R$ 1.000 em Contas a Pagar pela view, R$ 1.000
+//     descontados do safe-to-spend dela, e R$ 50 de juro na aba Despesas.
+//
+// SO O JURO NAS ABAS RECEITAS E DESPESAS (fase 5, RN021.3): elas sao as duas
+// metades do Resultado do mes, e o principal do emprestimo e transferencia. O
+// juro de cada parcela sai da view `mybank_installment_interest` (071), que o
+// fixture modela como a saida da view, pela mesma razao de `mybank_due_entries`:
+// o rateio e a RLS sao provados contra um Postgres de verdade em
+// database/tests/071_juros_do_mybank_no_resultado_test.sql.
 // =====================================================
 
 import test, { after, before, mock } from "node:test";
@@ -218,6 +226,28 @@ const DIVIDA_DA_LAIS = {
   reported_at: null,
 };
 
+/**
+ * O JURO DA PARCELA 3/24, COMO `mybank_installment_interest` (071) A DEVOLVE.
+ *
+ * A view e dos DOIS lados: a mesma linha chega para quem emprestou (eu) e para
+ * quem pegou (a Lais), e quem le filtra o lado.
+ */
+const JURO_DA_PARCELA = {
+  id: PARCELA_3_DE_24,
+  loan_id: EMPRESTIMO_DA_MOTO,
+  lender_user_id: EU,
+  borrower_user_id: A_LAIS,
+  loan_status: "active",
+  description: "Moto elétrica",
+  installment_number: 3,
+  installment_total: 24,
+  amount: "1000.00",
+  due_date: VENCE_DIA_10,
+  status: "pending",
+  // STRING, como o PostgREST entrega `numeric(15,2)`.
+  interest_amount: "50.00",
+};
+
 /** Monta o duble com um conjunto de tabelas, sobre a sessao de quem olha. */
 function duble(quemOlha, tabelas) {
   return criarDuble({ user: { id: quemOlha }, tabelas });
@@ -292,6 +322,9 @@ const SEM_MYBANK = {
   mybank_due_entries: [],
   mybank_loans: [],
   mybank_installments: [],
+  // As duas views da 071 (fase 5).
+  mybank_installment_interest: [],
+  mybank_interest_entries: [],
 };
 
 test("controle negativo 1/4: Contas a Pagar da conta sem MyBank lista UMA linha, a de luz", async () => {
@@ -344,6 +377,12 @@ test("controle negativo 3/4: o «Previsto» de Receitas da conta sem MyBank nao 
   // mudar numero nenhum, e a tela escreveria "R$ 0,00 a receber no MyBank" para
   // quem nunca abriu o MyBank -- ruido que parece recurso quebrado.
   assert.equal(corpo.resumo.a_receber_do_mybank, null);
+
+  // A rota CONSULTOU a view do juro e recebeu vazio.
+  assert.ok(
+    d.lidas.some((l) => l.tabela === "mybank_installment_interest"),
+    "a aba Receitas tem de consultar mybank_installment_interest mesmo na conta sem MyBank"
+  );
 });
 
 test("controle negativo 4/4: o «Previsto» de Despesas da conta sem MyBank continua R$ 200,00", async () => {
@@ -355,9 +394,18 @@ test("controle negativo 4/4: o «Previsto» de Despesas da conta sem MyBank cont
   );
 
   assert.equal(corpo.resumo.previsto, 200);
+  assert.equal(corpo.resumo.realizado, 0);
   assert.equal(corpo.linhas.length, 1);
   assert.equal(corpo.linhas[0].natureza, "despesa");
   assert.equal(corpo.resumo.a_receber_do_mybank, null);
+
+  // As duas views do juro foram consultadas e voltaram vazias.
+  for (const view of ["mybank_installment_interest", "mybank_interest_entries"]) {
+    assert.ok(
+      d.lidas.some((l) => l.tabela === view),
+      `a aba Despesas tem de consultar ${view} mesmo na conta sem MyBank`
+    );
+  }
 });
 
 // =====================================================
@@ -536,11 +584,11 @@ test("leitura 1: `?status=paid` nao devolve a parcela pendente do MyBank", async
 // LEITURA 2 -- as abas Despesas e Receitas
 // =====================================================
 
-test("leitura 2: o auto-emprestimo entra no «Previsto» de DESPESAS, com o selo", async () => {
-  // A decisao 1 da HMO-368: a parcela e `transfer` na coluna (e so assim o
-  // «Total de contas» fica certo) e APARECE em Despesas (porque no dia 10 saem
-  // R$ 1.000 da conta corrente). Sem `ehParcelaDoAutoEmprestimo` a peneira
-  // `linha.tipo === tipo` a manda so para a aba Transferencias.
+test("leitura 2: o auto-emprestimo NAO entra no «Previsto» de Despesas -- fica R$ 200 (RN021.4)", async () => {
+  // Da HMO-372 ate a fase 4 a parcela do Caso A entrava tambem em Despesas
+  // ("quanto sai da sua conta"). Desde a fase 5 a aba Despesas e a metade de
+  // Despesas do Resultado do mes, e o emprestimo a si mesmo e transferencia: o
+  // dinheiro volta para a minha conta de investimento.
   const d = duble(EU, {
     ...SEM_MYBANK,
     scheduled_transactions_effective: [CONTA_DE_LUZ, PARCELA_DO_AUTO_EMPRESTIMO],
@@ -552,20 +600,20 @@ test("leitura 2: o auto-emprestimo entra no «Previsto» de DESPESAS, com o selo
     `http://t/api/movimentacoes/resumo?tipo=expense&de=${HOJE}&ate=${FIM_DO_MES}`
   );
 
-  // R$ 1.200,00 contra os R$ 200,00 do retrato.
-  assert.equal(corpo.resumo.previsto, 1200);
-
-  const doMyBank = corpo.linhas.filter((l) => l.natureza === "mybank");
-  assert.equal(doMyBank.length, 1, "uma linha, nao duas");
-  assert.equal(doMyBank[0].valor, 1000);
-  assert.equal(doMyBank[0].tipo, "expense");
-  assert.equal(doMyBank[0].gravada, true, "ela e uma previsao de verdade, e clicavel");
+  // O retrato da conta sem MyBank, e nao R$ 1.200,00.
+  assert.equal(corpo.resumo.previsto, 200);
+  assert.equal(corpo.linhas.length, 1);
+  assert.equal(corpo.linhas[0].descricao, "Luz");
+  assert.equal(
+    corpo.linhas.filter((l) => l.natureza === "mybank").length,
+    0,
+    "a parcela do auto-emprestimo nao pode estar em Despesas"
+  );
 });
 
-test("leitura 2: a MESMA parcela continua na aba Transferencias", async () => {
-  // Tira-la de Transferencias esconderia uma transferencia de verdade, que e o
-  // que aquela aba existe para listar. O «Total» de cada aba e o da propria
-  // aba, entao nao ha numero em que ela entre duas vezes.
+test("leitura 2: a parcela do auto-emprestimo esta na aba Transferencias, com o selo", async () => {
+  // E o CONTROLE do caso de cima: a parcela existe e e lida, so que na aba em
+  // que ela mora.
   const d = duble(EU, {
     ...SEM_MYBANK,
     scheduled_transactions_effective: [CONTA_DE_LUZ, PARCELA_DO_AUTO_EMPRESTIMO],
@@ -599,20 +647,27 @@ test("leitura 2: a parcela do auto-emprestimo NAO aparece na aba Receitas", asyn
   assert.equal(corpo.resumo.previsto, 0);
 });
 
-test("leitura 2: o «a receber» da conexao entra no «Previsto» de RECEITAS, em campo proprio", async () => {
+/**
+ * O emprestimo da GELADEIRA, sem juro: a parcela de R$ 300 e toda principal.
+ * Ele esta no fixture para a frase contar so as parcelas e os emprestimos que
+ * tem juro.
+ */
+const GELADEIRA_SEM_JURO = {
+  ...JURO_DA_PARCELA,
+  id: "cccccccc-0000-0000-0000-0000000000a1",
+  loan_id: "bbbbbbbb-0000-0000-0000-0000000000a1",
+  description: "Geladeira",
+  installment_number: 1,
+  installment_total: 2,
+  amount: "300.00",
+  interest_amount: "0.00",
+};
+
+test("leitura 2: o JURO a receber da conexao entra no «Previsto» de RECEITAS, em campo proprio", async () => {
   const d = duble(EU, {
     ...SEM_MYBANK,
     scheduled_transactions_effective: [],
-    mybank_loans: [{ id: EMPRESTIMO_DA_MOTO, borrower_user_id: A_LAIS, lender_user_id: EU, status: "active" }],
-    mybank_installments: [
-      {
-        id: PARCELA_3_DE_24,
-        loan_id: EMPRESTIMO_DA_MOTO,
-        amount: "1000.00",
-        due_date: VENCE_DIA_10,
-        status: "pending",
-      },
-    ],
+    mybank_installment_interest: [JURO_DA_PARCELA, GELADEIRA_SEM_JURO],
   });
 
   const { corpo } = await chamar(
@@ -621,13 +676,16 @@ test("leitura 2: o «a receber» da conexao entra no «Previsto» de RECEITAS, e
     `http://t/api/movimentacoes/resumo?tipo=income&de=${HOJE}&ate=${FIM_DO_MES}`
   );
 
-  assert.equal(corpo.resumo.previsto, 1000);
-  assert.equal(corpo.resumo.total, 1000);
+  // R$ 50 de juro, e nao os R$ 1.300 das duas parcelas: o principal que volta e
+  // transferencia (RN021.3).
+  assert.equal(corpo.resumo.previsto, 50);
+  assert.equal(corpo.resumo.total, 50);
   // CAMPO PROPRIO, e nao somado dentro de `reembolso_previsto`: somar os dois
   // no mesmo campo apagaria a medicao do credito de grupo e tiraria da tela a
-  // frase que diz de onde vem cada parte.
+  // frase que diz de onde vem cada parte. E a geladeira, sem juro, nao conta
+  // nem como parcela nem como emprestimo.
   assert.deepEqual(corpo.resumo.a_receber_do_mybank, {
-    total: 1000,
+    total: 50,
     parcelas: 1,
     devedores: 1,
     emprestimos: 1,
@@ -640,23 +698,34 @@ test("leitura 2: o «a receber» da conexao entra no «Previsto» de RECEITAS, e
   assert.equal(corpo.resumo.realizado, 0, "promessa nunca entra no Realizado");
 });
 
-test("leitura 2: o AUTO-emprestimo nao vira «a receber» de mim mesmo", async () => {
-  // O auto-emprestimo ja esta no «Previsto» de DESPESAS. Devolve-lo aqui poria o
-  // mesmo dinheiro nos dois lados do mesmo mes: o resultado previsto fecharia
-  // em zero e nenhuma das duas linhas estaria errada sozinha.
+test("leitura 2: o juro que EU devo nao vira «a receber» -- a view e dos dois lados", async () => {
+  // A Lais me emprestou. A linha da view e a mesma que ela le como credora, e
+  // o `lender_user_id = eu` da consulta e o que a deixa fora daqui.
   const d = duble(EU, {
     ...SEM_MYBANK,
     scheduled_transactions_effective: [],
-    mybank_loans: [{ id: EMPRESTIMO_DA_MOTO, borrower_user_id: EU, lender_user_id: EU, status: "active" }],
-    mybank_installments: [
-      {
-        id: PARCELA_3_DE_24,
-        loan_id: EMPRESTIMO_DA_MOTO,
-        amount: "1000.00",
-        due_date: VENCE_DIA_10,
-        status: "pending",
-      },
+    mybank_installment_interest: [
+      { ...JURO_DA_PARCELA, lender_user_id: A_LAIS, borrower_user_id: EU },
     ],
+  });
+
+  const { corpo } = await chamar(
+    MOVIMENTACAO.GET,
+    d,
+    `http://t/api/movimentacoes/resumo?tipo=income&de=${HOJE}&ate=${FIM_DO_MES}`
+  );
+
+  assert.equal(corpo.resumo.a_receber_do_mybank, null);
+  assert.equal(corpo.resumo.previsto, 0);
+});
+
+test("leitura 2: o AUTO-emprestimo nao vira «a receber» de mim mesmo", async () => {
+  // O juro que eu pago a mim mesmo nao e receita: o dinheiro volta para a minha
+  // conta de investimento.
+  const d = duble(EU, {
+    ...SEM_MYBANK,
+    scheduled_transactions_effective: [],
+    mybank_installment_interest: [{ ...JURO_DA_PARCELA, borrower_user_id: EU }],
   });
 
   const { corpo } = await chamar(
@@ -674,10 +743,7 @@ test("leitura 2: a parcela `paid` nao conta como a receber, a `reported` conta",
     const d = duble(EU, {
       ...SEM_MYBANK,
       scheduled_transactions_effective: [],
-      mybank_loans: [{ id: EMPRESTIMO_DA_MOTO, borrower_user_id: A_LAIS, lender_user_id: EU, status: "active" }],
-      mybank_installments: [
-        { id: PARCELA_3_DE_24, loan_id: EMPRESTIMO_DA_MOTO, amount: "1000.00", due_date: VENCE_DIA_10, status },
-      ],
+      mybank_installment_interest: [{ ...JURO_DA_PARCELA, status }],
     });
     const { corpo } = await chamar(
       MOVIMENTACAO.GET,
@@ -690,26 +756,50 @@ test("leitura 2: a parcela `paid` nao conta como a receber, a `reported` conta",
   // `reported` CONTINUA contando: o devedor avisou e eu ainda nao confirmei --
   // o dinheiro ainda nao esta na minha conta de investimento. A convencao e a
   // da HMO-366.
-  assert.equal((await comStatus("reported")).total, 1000);
+  assert.equal((await comStatus("reported")).total, 50);
   assert.equal(await comStatus("paid"), null);
   assert.equal(await comStatus("cancelled"), null);
+
+  // A REGRA e da funcao pura, e nao so do filtro da consulta: o juro pago ja e
+  // receita realizada de quem emprestou (a perna `income` da confirmacao).
+  assert.equal(
+    LEITURAS.aReceberDoMyBank([{ ...JURO_DA_PARCELA, status: "paid" }], EU),
+    null
+  );
+  assert.equal(
+    LEITURAS.aReceberDoMyBank([{ ...JURO_DA_PARCELA, status: "reported" }], EU).total,
+    50
+  );
+});
+
+test("leitura 2: a parcela sem juro conhecido nao entra no «a receber»", () => {
+  // `interest_amount` nulo e a serie cuja ultima parcela nao cabe a sobra (a
+  // confirmacao tambem recusa ratear). Nulo, zero e negativo sao a mesma
+  // resposta: nao ha juro para somar.
+  for (const interest_amount of [null, "0.00", "-5.00"]) {
+    assert.equal(
+      LEITURAS.aReceberDoMyBank([{ ...JURO_DA_PARCELA, interest_amount }], EU),
+      null,
+      `interest_amount ${interest_amount}`
+    );
+  }
 });
 
 // =====================================================
-// LEITURA 4 -- a aba Despesas do DEVEDOR (HMO-377)
+// LEITURA 4 -- a aba Despesas do DEVEDOR (HMO-377 e fase 5)
 // =====================================================
-// A leitura que a HMO-372 deixou de fora de proposito, e que esta issue liga.
-//
-// O NUMERO MEDIDO NA main 40c7b01, do lado da Lais, no MESMO periodo:
+// A HMO-377 trouxe para esta aba a parcela que Contas a Pagar ja somava. Desde
+// a fase 5 (RN021.3) a aba e a metade de Despesas do Resultado do mes, e da
+// parcela so o JURO entra nela: o principal volta para quem emprestou, e isso
+// e transferencia. Contas a Pagar continua com a parcela cheia (leitura 1b):
 //
 //   * Contas a Pagar  ....... R$ 1.200,00  (R$ 200 de luz + a parcela de R$ 1.000)
-//   * aba Despesas .......... R$   200,00  (uma linha so, a de luz)
+//   * aba Despesas .......... R$   250,00  (R$ 200 de luz + R$ 50 de juro)
 //
-// Duas telas do mesmo app, dois numeros para a MESMA divida, e nada na tela
-// dizendo por que -- a familia `despesa-de-grupo-tem-tres-convencoes`. Depois
-// desta issue as duas dizem R$ 1.200,00.
+// As duas telas respondem perguntas diferentes, e cada uma diz a sua: "quanto
+// sai da conta" e "quanto o mes custou".
 //
-// O que a devedora tem: a conta de luz DELA (R$ 200) e a parcela pela view.
+// O que a devedora tem: a conta de luz DELA (R$ 200) e o juro pela view.
 
 /** O retrato da Lais: a luz e dela, e nao ha previsao de MyBank nenhuma. */
 const COMO_A_LAIS_VE = {
@@ -718,10 +808,10 @@ const COMO_A_LAIS_VE = {
   scheduled_transactions_effective: [{ ...CONTA_DE_LUZ, user_id: A_LAIS }],
 };
 
-test("leitura 4: a parcela que a devedora DEVE aparece na aba Despesas -- R$ 200 vira R$ 1.200", async () => {
+test("leitura 4: o JURO da parcela que a devedora deve aparece na aba Despesas -- R$ 200 vira R$ 250", async () => {
   const d = duble(A_LAIS, {
     ...COMO_A_LAIS_VE,
-    mybank_due_entries: [DIVIDA_DA_LAIS],
+    mybank_installment_interest: [JURO_DA_PARCELA],
   });
 
   const { status, corpo } = await chamar(
@@ -732,63 +822,53 @@ test("leitura 4: a parcela que a devedora DEVE aparece na aba Despesas -- R$ 200
 
   assert.equal(status, 200);
 
-  // O NUMERO. R$ 1.200,00 contra os R$ 200,00 que esta mesma aba respondia
-  // antes -- e os R$ 1.200,00 com que Contas a Pagar ja concordava (leitura 1b).
-  assert.equal(corpo.resumo.previsto, 1200);
-  assert.equal(corpo.resumo.total, 1200);
-  assert.equal(corpo.resumo.realizado, 0, "nada foi pago: a parcela e promessa");
+  // O NUMERO. R$ 250,00: a luz e o juro, e nao os R$ 1.200,00 de Contas a Pagar.
+  assert.equal(corpo.resumo.previsto, 250);
+  assert.equal(corpo.resumo.total, 250);
+  assert.equal(corpo.resumo.realizado, 0, "nada foi pago: o juro e promessa");
 
   // E A CONTAGEM SOBE JUNTO, ao contrario do reembolso de grupo e do «a
-  // receber» do MyBank: ali a promessa NAO vira linha e `quantidadePrevista`
-  // nao podia subir (a frase "N lançamento(s)" prometeria uma linha que a lista
-  // nao tem). Aqui ela VIRA linha, entao o contador e a lista concordam.
+  // receber» do MyBank: aqui a promessa VIRA linha, entao o contador e a lista
+  // concordam.
   assert.equal(corpo.resumo.quantidadePrevista, 2);
   assert.equal(corpo.linhas.length, 2);
 
-  const parcela = corpo.linhas.find((l) => l.natureza === "mybank");
-  assert.ok(parcela, "a parcela devida tem de estar na lista, com o selo");
-  assert.equal(parcela.valor, 1000, "a string numeric(15,2) tem de virar numero");
-  assert.equal(parcela.tipo, "expense");
-  assert.equal(parcela.origem, "previsto");
-  assert.equal(parcela.descricao, "Moto elétrica");
-  assert.equal(parcela.data, VENCE_DIA_10);
-  assert.equal(parcela.situacao, "pending");
+  const juro = corpo.linhas.find((l) => l.natureza === "mybank");
+  assert.ok(juro, "o juro devido tem de estar na lista, com o selo");
+  assert.equal(juro.valor, 50, "a string numeric(15,2) tem de virar numero");
+  assert.equal(juro.tipo, "expense");
+  assert.equal(juro.origem, "previsto");
+  // O MESMO nome que `mybank_interest_entries` da ao juro pago: a linha nao
+  // muda de nome no dia da baixa.
+  assert.equal(juro.descricao, "Juros: Moto elétrica (3/24)");
+  assert.equal(juro.data, VENCE_DIA_10);
+  assert.equal(juro.situacao, "pending");
 
   // A CHAVE NAO E UM UUID, e isso e o que impede a acao de ir para a rota
   // errada: `mybank:<id>` nao passa por um `/api/scheduled-transactions/<uuid>`
   // plausivel. A linha tambem nao e `gravada`, e e isso que faz
-  // `lib/acoes-da-linha.ts` recusar os tres botoes (regra 3) -- a assercao sobre
-  // a recusa em si mora em scripts/test-acoes-da-linha.mjs, que e quem compila
-  // aquele modulo.
-  assert.equal(parcela.gravada, false);
-  assert.equal(parcela.id, `mybank:${PARCELA_3_DE_24}`);
+  // `lib/acoes-da-linha.ts` recusar os tres botoes (regra 3).
+  assert.equal(juro.gravada, false);
+  assert.equal(juro.id, `mybank:${PARCELA_3_DE_24}`);
   assert.ok(
-    !/^[0-9a-f-]{36}$/.test(parcela.id),
+    !/^[0-9a-f-]{36}$/.test(juro.id),
     "a chave da linha nao pode ser um uuid nu: ela viraria uma URL de scheduled-transactions"
   );
 
-  // E A LUZ NAO SE MEXEU. Sem esta assercao, um defeito que trocasse a conta de
-  // luz pela parcela (em vez de acrescenta-la) daria os mesmos R$ 1.200 se os
-  // valores coincidissem -- e daria 1 linha, nao 2.
+  // E A LUZ NAO SE MEXEU.
   const luz = corpo.linhas.find((l) => l.descricao === "Luz");
   assert.ok(luz, "a conta de luz da devedora continua na lista");
   assert.equal(luz.valor, 200);
   assert.equal(luz.natureza, "despesa");
 });
 
-test("leitura 4: a parcela entra UMA vez -- nao ha linha repetida nem valor dobrado", async () => {
-  // O CONTROLE QUE IMPORTA, dito pela issue: "a parcela nao pode passar a ser
-  // contada DUAS vezes". Ha dois jeitos de ela dobrar, e os dois estao medidos:
-  //
-  //   * a MESMA fonte entrando duas vezes na lista (duas linhas de R$ 1.000);
-  //   * as DUAS fontes casando na mesma parcela -- a view E uma previsao em
-  //     `scheduled_transactions` com a mesma chave `mybank:<id>`. E esse o
-  //     cenario deste caso: o fixture poe as DUAS, que e o estado que a view
-  //     impede no banco (`borrower IS DISTINCT FROM lender`, 053) e que um
-  //     `CREATE OR REPLACE VIEW` descuidado reabriria.
+test("leitura 4: o juro entra UMA vez -- nao ha linha repetida nem valor dobrado", async () => {
   const d = duble(A_LAIS, {
     ...COMO_A_LAIS_VE,
+    // A divida cheia tambem esta no fixture: Contas a Pagar a le, e a aba
+    // Despesas nao pode soma-la junto do juro.
     mybank_due_entries: [DIVIDA_DA_LAIS],
+    mybank_installment_interest: [JURO_DA_PARCELA],
   });
 
   const { corpo } = await chamar(
@@ -801,27 +881,24 @@ test("leitura 4: a parcela entra UMA vez -- nao ha linha repetida nem valor dobr
     String(l.id ?? "").startsWith("mybank:")
   );
   assert.equal(comAChave.length, 1, "uma linha por parcela, nunca duas");
-
-  // A SOMA E O SEGUNDO LADO DA MESMA PERGUNTA, e ela nao e redundante com a
-  // contagem: `csv-nao-agrega-filtro-perdido-vira-linha-repetida` -- o total
-  // pode fechar com a lista dobrada se a soma vier de outro lugar, e a lista
-  // pode dobrar com o total certo. As duas assercoes juntas fecham os dois.
-  assert.equal(corpo.resumo.previsto, 1200);
+  assert.equal(corpo.resumo.previsto, 250);
+  assert.ok(
+    !d.lidas.some((l) => l.tabela === "mybank_due_entries"),
+    "a aba Despesas nao le mais a divida cheia"
+  );
 });
 
-test("leitura 4: a parcela da devedora NAO vaza para Transferencias nem para Receitas", async () => {
-  // A DIFERENCA COM O CASO A, e ela e deliberada. A parcela do auto-emprestimo
-  // aparece nas DUAS abas (Despesas e Transferencias) porque ela E uma
-  // transferencia: o dinheiro vai da minha corrente para a MINHA conta de
-  // investimento. Esta aqui sai da conta da devedora para a conta de OUTRA
-  // PESSOA -- dizer "andou entre as suas contas" sobre ela seria uma frase
-  // falsa na tela. `direction: 'expense'` em `parcelasDevidasNaAgenda` e o que
-  // decide, e nenhuma excecao de aba e aberta para ela.
+test("leitura 4: o juro da devedora NAO vaza para Transferencias nem para Receitas", async () => {
+  // O dinheiro sai da conta da devedora para a conta de OUTRA PESSOA -- dizer
+  // "andou entre as suas contas" sobre ele seria uma frase falsa na tela.
+  // `direction: 'expense'` em `parcelasDevidasNaAgenda` e o que decide. Em
+  // Receitas a view tambem e lida (o lado de quem emprestou), e a linha da
+  // devedora fica fora pelo `lender_user_id`.
   for (const tipo of ["transfer", "income"]) {
     const d = duble(A_LAIS, {
       ...COMO_A_LAIS_VE,
       scheduled_transactions_effective: [],
-      mybank_due_entries: [DIVIDA_DA_LAIS],
+      mybank_installment_interest: [JURO_DA_PARCELA],
     });
 
     const { corpo } = await chamar(
@@ -830,31 +907,31 @@ test("leitura 4: a parcela da devedora NAO vaza para Transferencias nem para Rec
       `http://t/api/movimentacoes/resumo?tipo=${tipo}&de=${HOJE}&ate=${FIM_DO_MES}`
     );
 
-    assert.equal(corpo.linhas.length, 0, `a parcela nao pode aparecer em ${tipo}`);
+    assert.equal(corpo.linhas.length, 0, `o juro nao pode aparecer em ${tipo}`);
     assert.equal(corpo.resumo.previsto, 0, `nem somar no previsto de ${tipo}`);
-
-    // E A ROTA NEM CONSULTOU A VIEW nessas duas abas: a leitura e guardada por
-    // `tela.tipo === "expense"`. Sem esta assercao, uma versao que consultasse
-    // sempre e descartasse depois passaria igual -- e gastaria uma consulta por
-    // leitura de Receitas em toda sessao do app.
-    assert.ok(
-      !d.lidas.some((l) => l.tabela === "mybank_due_entries"),
-      `a aba ${tipo} nao tem o que fazer com a divida do MyBank: nao deve consultar a view`
-    );
+    assert.equal(corpo.resumo.a_receber_do_mybank, null);
   }
+
+  // Em Transferencias a rota nem consulta a view.
+  const d = duble(A_LAIS, { ...COMO_A_LAIS_VE, mybank_installment_interest: [JURO_DA_PARCELA] });
+  await chamar(
+    MOVIMENTACAO.GET,
+    d,
+    `http://t/api/movimentacoes/resumo?tipo=transfer&de=${HOJE}&ate=${FIM_DO_MES}`
+  );
+  assert.ok(
+    !d.lidas.some((l) => l.tabela === "mybank_installment_interest"),
+    "a aba Transferencias nao tem o que fazer com o juro do MyBank"
+  );
 });
 
-test("leitura 4: o RECORTE DE DATA vale -- a parcela de abril nao entra na aba de marco", async () => {
-  // `leitura-sem-recorte-de-data-soma-o-horizonte`: a view e a divida INTEIRA
-  // (24 parcelas de R$ 1.000). Sem o recorte, o «Previsto» de marco somaria os
-  // R$ 24.000 do emprestimo todo. As DUAS pontas da janela vao na chamada --
-  // diferente do safe-to-spend, que passa `de: null` de proposito.
+test("leitura 4: o RECORTE DE DATA vale -- o juro de abril nao entra na aba de marco", async () => {
   const d = duble(A_LAIS, {
     ...COMO_A_LAIS_VE,
-    mybank_due_entries: [
-      DIVIDA_DA_LAIS,
-      { ...DIVIDA_DA_LAIS, id: "parcela-de-abril", due_date: "2026-04-10" },
-      { ...DIVIDA_DA_LAIS, id: "parcela-de-fevereiro", due_date: "2026-02-10" },
+    mybank_installment_interest: [
+      JURO_DA_PARCELA,
+      { ...JURO_DA_PARCELA, id: "parcela-de-abril", due_date: "2026-04-10" },
+      { ...JURO_DA_PARCELA, id: "parcela-de-fevereiro", due_date: "2026-02-10" },
     ],
   });
 
@@ -864,22 +941,15 @@ test("leitura 4: o RECORTE DE DATA vale -- a parcela de abril nao entra na aba d
     `http://t/api/movimentacoes/resumo?tipo=expense&de=${HOJE}&ate=${FIM_DO_MES}`
   );
 
-  assert.equal(corpo.resumo.previsto, 1200, "uma parcela so entra na janela");
-  assert.equal(
-    corpo.linhas.filter((l) => l.natureza === "mybank").length,
-    1
-  );
+  assert.equal(corpo.resumo.previsto, 250, "um juro so entra na janela");
+  assert.equal(corpo.linhas.filter((l) => l.natureza === "mybank").length, 1);
 });
 
-test("leitura 4: a parcela VENCIDA da devedora cai em «vencido», na aba Despesas", async () => {
-  // O mesmo `CASE` da 027 chegando ate a tela: `pending` com vencimento antes
-  // de hoje e `overdue`, e `previstoVencido` e quem separa os dois baldes. Sem
-  // isso a parcela atrasada ficaria em "ainda vai vencer" -- e a aba Despesas e
-  // onde a pessoa abre para ver o que esta atrasado.
+test("leitura 4: o juro VENCIDO da devedora cai em «vencido», na aba Despesas", async () => {
   const d = duble(A_LAIS, {
     ...COMO_A_LAIS_VE,
     scheduled_transactions_effective: [],
-    mybank_due_entries: [{ ...DIVIDA_DA_LAIS, due_date: "2026-03-01" }],
+    mybank_installment_interest: [{ ...JURO_DA_PARCELA, due_date: "2026-03-01" }],
   });
 
   const { corpo } = await chamar(
@@ -888,46 +958,199 @@ test("leitura 4: a parcela VENCIDA da devedora cai em «vencido», na aba Despes
     `http://t/api/movimentacoes/resumo?tipo=expense&de=2026-03-01&ate=${FIM_DO_MES}`
   );
 
-  assert.equal(corpo.vencido.total, 1000);
+  assert.equal(corpo.vencido.total, 50);
   assert.equal(corpo.vencido.quantidade, 1);
   assert.equal(corpo.linhas[0].situacao, "overdue");
 });
 
-test("leitura 4: a parcela `paid` nao aparece na aba Despesas", async () => {
-  // A view so devolve `pending`/`reported` (053), entao o fixture modela isso: a
-  // parcela paga simplesmente NAO vem. O caso existe porque a direcao do erro
-  // importa -- uma parcela paga na lista de "o que ainda vence" e uma divida
-  // cobrada duas vezes.
-  //
+test("leitura 4: o juro da parcela `paid` sai do previsto, o da `reported` fica", async () => {
   // `reported` CONTINUA APARECENDO, e isso e a convencao da HMO-366: "eu avisei
-  // que paguei e o credor ainda nao confirmou" ainda e divida. Mapear `reported`
-  // para fora faria o «Previsto» descer no clique do devedor -- um botao que
-  // paga a conta.
-  const paga = duble(A_LAIS, { ...COMO_A_LAIS_VE, mybank_due_entries: [] });
-  const avisada = duble(A_LAIS, {
+  // que paguei e o credor ainda nao confirmou" ainda e divida.
+  const comStatus = async (status) => {
+    const d = duble(A_LAIS, {
+      ...COMO_A_LAIS_VE,
+      mybank_installment_interest: [{ ...JURO_DA_PARCELA, status }],
+    });
+    const { corpo } = await chamar(
+      MOVIMENTACAO.GET,
+      d,
+      `http://t/api/movimentacoes/resumo?tipo=expense&de=${HOJE}&ate=${FIM_DO_MES}`
+    );
+    return corpo;
+  };
+
+  assert.equal((await comStatus("paid")).resumo.previsto, 200, "paga: volta ao retrato");
+  const avisada = await comStatus("reported");
+  assert.equal(avisada.resumo.previsto, 250, "reported: continua divida");
+  assert.equal(avisada.linhas.find((l) => l.natureza === "mybank").valor, 50);
+});
+
+test("leitura 4: a regra do juro devido -- so o meu lado, sem auto-emprestimo, ativo e com juro", () => {
+  // A funcao pura, porque a consulta da rota ja filtra o lado e o status: o
+  // filtro de la e tamanho de payload, e o daqui e a regra.
+  const valida = { ...JURO_DA_PARCELA, id: "valida" };
+  const linhas = LEITURAS.jurosDevidosNaAgenda(
+    [
+      valida,
+      // O lado de quem emprestou: a mesma parcela, lida por mim como credor.
+      { ...JURO_DA_PARCELA, id: "sou-o-credor", lender_user_id: A_LAIS, borrower_user_id: EU },
+      // Um emprestimo entre duas outras pessoas. A RLS nao o entrega, e a regra
+      // tambem nao o soma: a divida nao e minha.
+      {
+        ...JURO_DA_PARCELA,
+        id: "de-terceiros",
+        borrower_user_id: "33333333-3333-3333-3333-333333333333",
+      },
+      // O auto-emprestimo da Lais.
+      { ...JURO_DA_PARCELA, id: "auto", lender_user_id: A_LAIS },
+      // Emprestimo quitado.
+      { ...JURO_DA_PARCELA, id: "quitado", loan_status: "settled" },
+      // Parcela paga: o juro dela ja esta no realizado.
+      { ...JURO_DA_PARCELA, id: "paga", status: "paid" },
+      // Sem juro conhecido, ou sem juro.
+      { ...JURO_DA_PARCELA, id: "nulo", interest_amount: null },
+      { ...JURO_DA_PARCELA, id: "zero", interest_amount: "0.00" },
+    ],
+    A_LAIS,
+    { de: HOJE, ate: FIM_DO_MES },
+    HOJE
+  );
+
+  assert.deepEqual(
+    linhas.map((l) => l.mybank_installment_id),
+    ["valida"]
+  );
+  assert.equal(linhas[0].amount, 50);
+  assert.equal(linhas[0].description, "Juros: Moto elétrica (3/24)");
+  assert.equal(linhas[0].notes, `mybank:valida`);
+  assert.equal(linhas[0].direction, "expense");
+});
+
+// =====================================================
+// LEITURA 5 -- o juro PAGO no Realizado de quem pegou (fase 5)
+// =====================================================
+// Quem pegou nao grava transacao nenhuma quando quem emprestou confirma: as
+// duas pernas sao de quem emprestou. O juro pago chega pela view
+// `mybank_interest_entries` (071), na data do pagamento.
+
+const PARCELA_2_DE_24 = "cccccccc-0000-0000-0000-000000000002";
+
+/** O que `mybank_interest_entries` devolve para a Lais: o juro da 2/24, pago dia 4. */
+const JURO_PAGO_DA_LAIS = {
+  id: PARCELA_2_DE_24,
+  user_id: A_LAIS,
+  amount: "50.00",
+  transaction_type: "expense",
+  currency: "BRL",
+  category_id: "6d9b6e69-43bc-485c-9bbb-d343286d1172",
+  transaction_date: "2026-03-04",
+  descricao: "Juros: Moto elétrica (2/24)",
+};
+
+test("leitura 5: o juro PAGO entra no Realizado de Despesas da devedora, com o selo", async () => {
+  const d = duble(A_LAIS, {
     ...COMO_A_LAIS_VE,
-    mybank_due_entries: [
-      { ...DIVIDA_DA_LAIS, status: "reported", reported_at: "2026-03-06" },
+    mybank_interest_entries: [
+      JURO_PAGO_DA_LAIS,
+      // Fora da janela: pago em fevereiro.
+      { ...JURO_PAGO_DA_LAIS, id: "pago-em-fevereiro", transaction_date: "2026-02-04" },
     ],
   });
 
-  const comPaga = await chamar(
+  const { status, corpo } = await chamar(
     MOVIMENTACAO.GET,
-    paga,
-    `http://t/api/movimentacoes/resumo?tipo=expense&de=${HOJE}&ate=${FIM_DO_MES}`
-  );
-  const comAvisada = await chamar(
-    MOVIMENTACAO.GET,
-    avisada,
-    `http://t/api/movimentacoes/resumo?tipo=expense&de=${HOJE}&ate=${FIM_DO_MES}`
+    d,
+    `http://t/api/movimentacoes/resumo?tipo=expense&de=2026-03-01&ate=${FIM_DO_MES}`
   );
 
-  assert.equal(comPaga.corpo.resumo.previsto, 200, "paga: volta ao retrato");
-  assert.equal(comAvisada.corpo.resumo.previsto, 1200, "reported: continua divida");
-  assert.equal(
-    comAvisada.corpo.linhas.find((l) => l.natureza === "mybank").valor,
-    1000
+  assert.equal(status, 200);
+  assert.equal(corpo.resumo.realizado, 50);
+  assert.equal(corpo.resumo.previsto, 200);
+
+  const juro = corpo.linhas.find((l) => l.origem === "realizado");
+  assert.ok(juro, "o juro pago tem de estar na lista");
+  assert.equal(juro.valor, 50);
+  assert.equal(juro.descricao, "Juros: Moto elétrica (2/24)");
+  assert.equal(juro.data, "2026-03-04");
+  assert.equal(juro.natureza, "mybank");
+  assert.equal(juro.id, `juros-do-mybank:${PARCELA_2_DE_24}`);
+  // Sem botao: o juro pago nao e transacao da devedora.
+  assert.equal(juro.posso_editar, false);
+});
+
+test("leitura 5: o juro pago so entra em Despesas", async () => {
+  for (const tipo of ["income", "transfer"]) {
+    const d = duble(A_LAIS, {
+      ...COMO_A_LAIS_VE,
+      scheduled_transactions_effective: [],
+      mybank_interest_entries: [JURO_PAGO_DA_LAIS],
+    });
+    const { corpo } = await chamar(
+      MOVIMENTACAO.GET,
+      d,
+      `http://t/api/movimentacoes/resumo?tipo=${tipo}&de=2026-03-01&ate=${FIM_DO_MES}`
+    );
+    assert.equal(corpo.resumo.realizado, 0, `o juro pago nao pertence a aba ${tipo}`);
+    assert.equal(corpo.linhas.length, 0);
+  }
+});
+
+test("leitura 5: erro de verdade no juro pago e 500; a view que ainda nao existe segue sem ele", async () => {
+  const comErro = async (erro) => {
+    const d = criarDuble({
+      user: { id: A_LAIS },
+      tabelas: { ...COMO_A_LAIS_VE },
+      erros: { mybank_interest_entries: erro },
+    });
+    return chamar(
+      MOVIMENTACAO.GET,
+      d,
+      `http://t/api/movimentacoes/resumo?tipo=expense&de=${HOJE}&ate=${FIM_DO_MES}`
+    );
+  };
+
+  // Um realizado menor sem aviso e o pior dos dois.
+  assert.equal((await comErro({ code: "XX000", message: "falhou" })).status, 500);
+
+  // A janela entre o deploy e a colagem da 071: o comportamento de antes.
+  for (const code of ["42P01", "PGRST205"]) {
+    const { status, corpo } = await comErro({ code, message: "nao existe" });
+    assert.equal(status, 200, code);
+    assert.equal(corpo.resumo.previsto, 200, code);
+    assert.equal(corpo.resumo.realizado, 0, code);
+  }
+});
+
+test("leitura 5: a view do juro devido que ainda nao existe deixa a aba como antes", async () => {
+  const d = criarDuble({
+    user: { id: A_LAIS },
+    tabelas: { ...COMO_A_LAIS_VE },
+    erros: { mybank_installment_interest: { code: "42P01", message: "nao existe" } },
+  });
+  const { status, corpo } = await chamar(
+    MOVIMENTACAO.GET,
+    d,
+    `http://t/api/movimentacoes/resumo?tipo=expense&de=${HOJE}&ate=${FIM_DO_MES}`
   );
+  assert.equal(status, 200);
+  assert.equal(corpo.resumo.previsto, 200);
+});
+
+test("leitura 5: jurosPagosComoRealizados poe o sinal de despesa e a chave do selo", () => {
+  const [linha, ...resto] = LEITURAS.jurosPagosComoRealizados([
+    JURO_PAGO_DA_LAIS,
+    // So `expense` vira linha, e valor zero nao.
+    { ...JURO_PAGO_DA_LAIS, id: "receita", transaction_type: "income" },
+    { ...JURO_PAGO_DA_LAIS, id: "zero", amount: "0.00" },
+  ]);
+
+  assert.equal(resto.length, 0);
+  assert.equal(linha.amount, -50);
+  assert.equal(linha.transaction_type, "expense");
+  assert.equal(linha.notes, `mybank:${PARCELA_2_DE_24}`);
+  assert.equal(linha.selo, "MyBank");
+  assert.equal(linha.category.name, "Juros do MyBank");
+  assert.equal(linha.id, `juros-do-mybank:${PARCELA_2_DE_24}`);
 });
 
 // =====================================================

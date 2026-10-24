@@ -489,7 +489,9 @@ const MUTANTES = [
     de:
       "    natureza: faturaPaga\n" +
       '      ? "fatura"\n' +
-      "      : ehEntradaSoltaDoMyBank(crua) || saidaDoAutoEmprestimo\n" +
+      "      : ehEntradaSoltaDoMyBank(crua) ||\n" +
+      "          saidaDoAutoEmprestimo ||\n" +
+      "          ehJuroPagoDoMyBank(crua)\n" +
       '        ? "mybank"\n' +
       "        : idsDeFixa.has(crua.id)\n" +
       '          ? "fixa"\n' +
@@ -497,7 +499,9 @@ const MUTANTES = [
     para:
       "    natureza: faturaPaga\n" +
       '      ? "fatura"\n' +
-      "      : ehEntradaSoltaDoMyBank(crua) || saidaDoAutoEmprestimo\n" +
+      "      : ehEntradaSoltaDoMyBank(crua) ||\n" +
+      "          saidaDoAutoEmprestimo ||\n" +
+      "          ehJuroPagoDoMyBank(crua)\n" +
       '        ? "mybank"\n' +
       '        : "despesa",',
   },
@@ -509,7 +513,9 @@ const MUTANTES = [
     de:
       "    natureza: faturaPaga\n" +
       '      ? "fatura"\n' +
-      "      : ehEntradaSoltaDoMyBank(crua) || saidaDoAutoEmprestimo\n" +
+      "      : ehEntradaSoltaDoMyBank(crua) ||\n" +
+      "          saidaDoAutoEmprestimo ||\n" +
+      "          ehJuroPagoDoMyBank(crua)\n" +
       '        ? "mybank"\n' +
       "        : idsDeFixa.has(crua.id)\n" +
       '          ? "fixa"\n' +
@@ -620,16 +626,12 @@ const MUTANTES = [
       "em que alguem repetisse aquela peneira do lado realizado",
     de:
       "    tipo:\n" +
-      '      (faturaPaga || saidaDoAutoEmprestimo) && tela === "expense"\n' +
+      '      faturaPaga && tela === "expense"\n' +
       '        ? "expense"\n' +
       "        : classificarMovimentacao(crua),",
-    // O `para` PRESERVA O RAMO DA PARCELA PAGA (HMO-385): a condicao passou a
-    // ter dois operandos, e quem mede o meu e
-    // `parcela_paga_e_transfer_em_despesas`. Apagar os dois aqui deixaria cada
-    // um deles sem medida propria
-    // (`variar-um-lado-da-igualdade-deixa-a-guarda-sem-medida`).
-    para:
-      '    tipo: saidaDoAutoEmprestimo && tela === "expense" ? "expense" : classificarMovimentacao(crua),',
+    // A CONDICAO VOLTOU A TER UM OPERANDO NA FASE 5 (RN021.4): o da parcela
+    // paga do auto-emprestimo saiu junto com a excecao dela.
+    para: "    tipo: classificarMovimentacao(crua),",
   },
   {
     nome: "fatura_paga_sempre_expense",
@@ -640,15 +642,10 @@ const MUTANTES = [
       "medida",
     de:
       "    tipo:\n" +
-      '      (faturaPaga || saidaDoAutoEmprestimo) && tela === "expense"\n' +
+      '      faturaPaga && tela === "expense"\n' +
       '        ? "expense"\n' +
       "        : classificarMovimentacao(crua),",
-    // O `tela` E COMPARTILHADO pelos dois ramos desde a HMO-385, entao apagar a
-    // guarda apaga a decisao por tela das DUAS linhas que aparecem em duas abas
-    // -- e e isso que este mutante mede. Os dois operandos ficam no `para` de
-    // proposito: quem varia cada um deles e o seu mutante proprio.
-    para:
-      '    tipo: (faturaPaga || saidaDoAutoEmprestimo) ? "expense" : classificarMovimentacao(crua),',
+    para: '    tipo: faturaPaga ? "expense" : classificarMovimentacao(crua),',
   },
   {
     nome: "fatura_paga_nao_se_apresenta_como_fatura",
@@ -665,13 +662,15 @@ const MUTANTES = [
     de:
       "    natureza: faturaPaga\n" +
       '      ? "fatura"\n' +
-      "      : ehEntradaSoltaDoMyBank(crua) || saidaDoAutoEmprestimo\n" +
+      "      : ehEntradaSoltaDoMyBank(crua) ||\n" +
+      "          saidaDoAutoEmprestimo ||\n" +
+      "          ehJuroPagoDoMyBank(crua)\n" +
       '        ? "mybank"\n' +
       "        : idsDeFixa.has(crua.id)\n" +
       '          ? "fixa"\n' +
       '          : "despesa",',
     para:
-      "    natureza: ehEntradaSoltaDoMyBank(crua) || saidaDoAutoEmprestimo\n" +
+      "    natureza: ehEntradaSoltaDoMyBank(crua) || saidaDoAutoEmprestimo || ehJuroPagoDoMyBank(crua)\n" +
       '      ? "mybank"\n' +
       "      : idsDeFixa.has(crua.id)\n" +
       '        ? "fixa"\n' +
@@ -686,7 +685,9 @@ const MUTANTES = [
     de:
       "    natureza: faturaPaga\n" +
       '      ? "fatura"\n' +
-      "      : ehEntradaSoltaDoMyBank(crua) || saidaDoAutoEmprestimo\n" +
+      "      : ehEntradaSoltaDoMyBank(crua) ||\n" +
+      "          saidaDoAutoEmprestimo ||\n" +
+      "          ehJuroPagoDoMyBank(crua)\n" +
       '        ? "mybank"\n' +
       "        : idsDeFixa.has(crua.id)\n" +
       '          ? "fixa"\n' +
@@ -696,7 +697,7 @@ const MUTANTES = [
       '      ? "fixa"\n' +
       "      : faturaPaga\n" +
       '        ? "fatura"\n' +
-      "        : ehEntradaSoltaDoMyBank(crua) || saidaDoAutoEmprestimo\n" +
+      "        : ehEntradaSoltaDoMyBank(crua) || saidaDoAutoEmprestimo || ehJuroPagoDoMyBank(crua)\n" +
       '          ? "mybank"\n' +
       '          : "despesa",',
   },
@@ -815,7 +816,9 @@ const MUTANTES = [
     de:
       "    natureza: faturaPaga\n" +
       '      ? "fatura"\n' +
-      "      : ehEntradaSoltaDoMyBank(crua) || saidaDoAutoEmprestimo\n" +
+      "      : ehEntradaSoltaDoMyBank(crua) ||\n" +
+      "          saidaDoAutoEmprestimo ||\n" +
+      "          ehJuroPagoDoMyBank(crua)\n" +
       '        ? "mybank"\n' +
       "        : idsDeFixa.has(crua.id)\n" +
       '          ? "fixa"\n' +
@@ -823,7 +826,7 @@ const MUTANTES = [
     para:
       "    natureza: faturaPaga\n" +
       '      ? "fatura"\n' +
-      "      : saidaDoAutoEmprestimo\n" +
+      "      : saidaDoAutoEmprestimo || ehJuroPagoDoMyBank(crua)\n" +
       '        ? "mybank"\n' +
       "        : idsDeFixa.has(crua.id)\n" +
       '          ? "fixa"\n' +
@@ -839,31 +842,24 @@ const MUTANTES = [
   // mesma nota `mybank:` nas duas pernas e o elo do 015 na de entrada -- e a de
   // saida e `transfer` na coluna, entao o filtro de tipo a tirava de Despesas.
   //
-  // NAO HA SALDO ERRADO PARA DENUNCIAR: as duas pernas estao certas. O que
-  // falhava era so a aba que existe para dizer quanto saiu da conta no mes.
+  // DESDE A FASE 5 (RN021.4) ELA NAO ENTRA MAIS EM DESPESAS: a aba e a metade
+  // de Despesas do Resultado do mes, e o emprestimo a si mesmo e transferencia
+  // nos dois lados. A excecao que a trazia saiu, e os mutantes que mediam a
+  // excecao sairam com ela. O que fica e o selo em Transferencias, e o mutante
+  // que poe a excecao de volta.
   {
-    nome: "parcela_paga_do_caso_a_sai_de_despesas",
+    nome: "parcela_paga_volta_para_despesas",
     porque:
-      "o defeito desta issue inteiro de volta: a excecao do realizado " +
-      "desaparece, o filtro de tipo volta a tirar a perna de saida da aba " +
-      "Despesas, e os R$ 10,00 que de fato sairam da conta corrente somem do " +
-      "mes em que foram pagos -- um mes MENOR, sem saldo errado e sem excecao " +
-      "para denunciar, que e a direcao de falha que nao parece erro",
-    de:
+      "a excecao da HMO-385 volta: a perna de saida da parcela paga do " +
+      "auto-emprestimo entra na aba Despesas, e o Resultado do mes desce pelo " +
+      "dinheiro que so mudou de conta -- a RN021.4 desfeita sem nenhum saldo " +
+      "errado para denunciar",
+    de: "    if (classificarMovimentacao(crua) !== tipo) continue;",
+    para:
       '    if (tipo === "expense" && ehSaidaDaParcelaDoAutoEmprestimo(crua)) {\n' +
       "      linhas.push(linhaRealizada(crua, indice, idsDeFixa, meuUserId, tipo));\n" +
-      "      continue;\n    }\n",
-    para: "",
-  },
-  {
-    nome: "parcela_paga_vaza_para_receitas",
-    porque:
-      "a guarda de TELA cai e a excecao passa a valer nas tres abas: a perna " +
-      "de saida da parcela entra em Receitas, onde uma linha NEGATIVA reduz o " +
-      "«Realizado» do mes -- a armadilha 1 que a HMO-380 documentou, e o " +
-      "mesmo cuidado de ordem que a excecao da fatura paga ja tinha",
-    de: '    if (tipo === "expense" && ehSaidaDaParcelaDoAutoEmprestimo(crua)) {',
-    para: "    if (ehSaidaDaParcelaDoAutoEmprestimo(crua)) {",
+      "      continue;\n    }\n" +
+      "    if (classificarMovimentacao(crua) !== tipo) continue;",
   },
   {
     nome: "parcela_paga_sem_o_sinal",
@@ -919,36 +915,52 @@ const MUTANTES = [
       "  return Number(crua.amount) < 0;",
   },
   {
-    nome: "parcela_paga_e_transfer_em_despesas",
-    porque:
-      "a parcela paga entra no numero certo com `tipo: 'transfer'` na lista de " +
-      "Despesas. Nenhum total muda HOJE -- e e por isso que ele importa: " +
-      "`tipo` e o campo que diz a que tela a linha pertence, e o lado previsto " +
-      "ja peneira por ele (`linha.tipo === tipo`). A parcela paga " +
-      "desapareceria de Despesas no dia em que alguem repetisse aquela " +
-      "peneira do lado realizado -- exatamente o defeito que esta issue acabou " +
-      "de consertar, de volta por outro caminho",
-    // O `para` PRESERVA O RAMO DA FATURA PAGA: quem o mede e
-    // `fatura_paga_e_transfer_em_despesas`.
-    de:
-      "    tipo:\n" +
-      '      (faturaPaga || saidaDoAutoEmprestimo) && tela === "expense"\n' +
-      '        ? "expense"\n' +
-      "        : classificarMovimentacao(crua),",
-    para:
-      '    tipo: faturaPaga && tela === "expense" ? "expense" : classificarMovimentacao(crua),',
-  },
-  {
     nome: "selo_da_parcela_paga_no_realizado",
     porque:
       "a parcela paga entra no numero certo e SEM o selo -- a segunda metade " +
       "do defeito medido em producao, onde ela vinha `natureza: \"despesa\"` " +
       "em Transferencias depois da baixa. A MESMA serie se apresenta como " +
       "«MyBank» nas 23 parcelas pendentes e como transferencia comum na unica " +
-      "que foi paga, nas DUAS abas",
+      "que foi paga, em Transferencias",
     // ELE APAGA SO O MEU OPERANDO: o do Caso B e medido por
     // `selo_do_mybank_no_realizado`.
     de:
+      "    natureza: faturaPaga\n" +
+      '      ? "fatura"\n' +
+      "      : ehEntradaSoltaDoMyBank(crua) ||\n" +
+      "          saidaDoAutoEmprestimo ||\n" +
+      "          ehJuroPagoDoMyBank(crua)\n" +
+      '        ? "mybank"\n' +
+      "        : idsDeFixa.has(crua.id)\n" +
+      '          ? "fixa"\n' +
+      '          : "despesa",',
+    para:
+      "    natureza: faturaPaga\n" +
+      '      ? "fatura"\n' +
+      "      : ehEntradaSoltaDoMyBank(crua) || ehJuroPagoDoMyBank(crua)\n" +
+      '        ? "mybank"\n' +
+      "        : idsDeFixa.has(crua.id)\n" +
+      '          ? "fixa"\n' +
+      '          : "despesa",',
+  },
+  {
+    nome: "selo_do_juro_pago_no_realizado",
+    porque:
+      "o juro pago do MyBank entra no numero certo e SEM o selo: a MESMA " +
+      "parcela se apresenta como «MyBank» enquanto o juro e previsto e como " +
+      "despesa comum no mes em que foi pago -- a licao da HMO-385, no juro",
+    // ELE APAGA SO O MEU OPERANDO: os outros dois tem mutante proprio.
+    de:
+      "    natureza: faturaPaga\n" +
+      '      ? "fatura"\n' +
+      "      : ehEntradaSoltaDoMyBank(crua) ||\n" +
+      "          saidaDoAutoEmprestimo ||\n" +
+      "          ehJuroPagoDoMyBank(crua)\n" +
+      '        ? "mybank"\n' +
+      "        : idsDeFixa.has(crua.id)\n" +
+      '          ? "fixa"\n' +
+      '          : "despesa",',
+    para:
       "    natureza: faturaPaga\n" +
       '      ? "fatura"\n' +
       "      : ehEntradaSoltaDoMyBank(crua) || saidaDoAutoEmprestimo\n" +
@@ -956,14 +968,17 @@ const MUTANTES = [
       "        : idsDeFixa.has(crua.id)\n" +
       '          ? "fixa"\n' +
       '          : "despesa",',
-    para:
-      "    natureza: faturaPaga\n" +
-      '      ? "fatura"\n' +
-      "      : ehEntradaSoltaDoMyBank(crua)\n" +
-      '        ? "mybank"\n' +
-      "        : idsDeFixa.has(crua.id)\n" +
-      '          ? "fixa"\n' +
-      '          : "despesa",',
+  },
+  {
+    nome: "juro_pago_sem_o_tipo_gravado",
+    porque:
+      "o `transaction_type` deixa de ser criterio e a perna de JURO de quem " +
+      "emprestou (income, com a mesma chave) passa a se apresentar como juro " +
+      "pago -- e as pernas `transfer` do principal tambem",
+    de:
+      "  if (String(crua.transaction_type) !== DIRECAO_DA_PARCELA_DEVIDA_DO_MYBANK) {\n" +
+      "    return false;\n  }",
+    para: "  if (false) {\n    return false;\n  }",
   },
   {
     nome: "fatura_paga_sem_mes",

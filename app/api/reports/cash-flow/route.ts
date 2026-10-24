@@ -117,6 +117,7 @@ import {
 } from "@/lib/periodo-do-painel";
 import { lerPreferenciaDeMoeda, separarSeriePorMoeda } from "@/lib/moeda";
 import { lerContasDoFechamentoRealizadas } from "@/lib/services/fechamento-no-resultado";
+import { lerJurosPagosDoMyBank } from "@/lib/services/divida-do-mybank";
 import {
   COLUNAS_DA_PARTE_DE_GRUPO,
   partesComoTransacoes,
@@ -442,6 +443,26 @@ export async function GET(request: NextRequest) {
           );
         }
         for (const linha of partesComoTransacoes(doFechamento.contas)) linhas.push(linha);
+
+        // O JURO PAGO DO MYBANK (071, RN021.3), do lado de quem pegou, na data
+        // do pagamento. Quem pegou nao grava transacao nenhuma quando quem
+        // emprestou confirma, e a view entrega a mesma forma da conta do
+        // fechamento (`amount` positivo, o sinal em `transaction_type`). O
+        // juro de quem emprestou ja e uma transacao `income` dele.
+        const jurosPagos = await lerJurosPagosDoMyBank(
+          supabase,
+          user.id,
+          periodo.de,
+          periodo.ate
+        );
+        if (!jurosPagos.ok) {
+          console.error("Erro nos juros pagos do MyBank do intervalo:", jurosPagos.erro);
+          return NextResponse.json(
+            { error: "Não foi possível montar o relatório" },
+            { status: 500 }
+          );
+        }
+        for (const linha of partesComoTransacoes(jurosPagos.juros)) linhas.push(linha);
       }
 
       // O CARTAO PASSA A CONTAR PELA FATURA (HMO-265).

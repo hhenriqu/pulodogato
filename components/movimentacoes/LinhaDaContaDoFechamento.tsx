@@ -9,6 +9,10 @@
 //
 // SEM BOTAO NENHUM: ela nao e uma transacao, e se quita pelo acerto no grupo
 // (RN018.12). Ver `comAsContasDoFechamento` em lib/fechamento-no-resultado.ts.
+//
+// O JURO PAGO DO MYBANK (fase 5, RN021.3) usa esta mesma linha, com o selo
+// "MyBank" no lugar de "Fechamento do grupo": ele tambem nao e uma transacao de
+// quem pegou, e some quando quem emprestou desfaz a baixa.
 
 import { Users } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -42,7 +46,7 @@ export function LinhaDaContaDoFechamento({
           <p className="font-medium truncate">{conta.description}</p>
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
             <Badge variant="outline" className="shrink-0">
-              Fechamento do grupo
+              {conta.selo ?? "Fechamento do grupo"}
             </Badge>
             <span>{conta.category.name}</span>
             <span>•</span>

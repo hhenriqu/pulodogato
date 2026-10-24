@@ -5874,6 +5874,67 @@ jobs:
       - name: A divisao com pessoa muda pelo lancamento, e cada lado da baixa na sua
         run: npm run test:divisao-com-pessoa
 
+      # =====================================================================
+      # 071 -- o juro do MyBank no Resultado (RN021, fase 5)
+      # =====================================================================
+      # Do emprestimo so o juro entra no Resultado: receita de quem emprestou
+      # (a perna `income` que a confirmacao ja gravava) e despesa de quem pegou,
+      # que nao grava transacao nenhuma. A 071 da a cada parcela o juro pelo
+      # rateio da serie (`mybank_installment_interest`), guarda o da baixa em
+      # `mybank_installments.interest_paid` e poe o juro pago de quem pegou nos
+      # relatorios (`mybank_interest_entries`, a quarta perna de
+      # `personal_category_monthly_totals`).
+      #
+      # A fixture COMITA, como a da 027: ela planta uma parcela paga antes da
+      # 071, e a suite confere que o backfill gravou o juro dela. Controle
+      # negativo medido: a suite contra um banco com a fixture e sem a 071 fica
+      # VERMELHA em "a parcela 1/2 da Moto, paga antes da 071, tem o juro de
+      # R$ 50 gravado -> esperado 50.00, obtido <NULL>". Os usuarios dela sao
+      # `a0710000-...`, que nao colidem com nenhuma outra fixture, e os
+      # `profiles` nascem `is_public = FALSE` pela armadilha documentada no
+      # cabecalho de `056_contas_antes_da_056.sql`.
+      - name: Parcela do MyBank paga antes da 071
+        run: $PSQL -f database/tests/071_parcela_paga_antes_da_071.sql
+
+      - name: 071_juros_do_mybank_no_resultado
+        run: $PSQL -f database/migrations/071_juros_do_mybank_no_resultado.sql
+
+      - name: 071 e idempotente
+        run: $PSQL -f database/migrations/071_juros_do_mybank_no_resultado.sql
+
+      - name: O juro do MyBank entra no Resultado, e so ele
+        run: $PSQL -f database/tests/071_juros_do_mybank_no_resultado_test.sql
+
+      # A 071 pendura um trigger em `mybank_installments`, acrescenta uma
+      # categoria de sistema e refaz `personal_category_monthly_totals` com uma
+      # quarta perna. Estas suites leem essas tabelas e views em posicoes
+      # acima; rodadas verdes aqui, elas provam que o juro do emprestimo, a
+      # categoria de transferencia e o Resultado de quem nao tem MyBank nao
+      # mudaram. As da 053, 033, `hmo216` e `rls_isolation` nao rodam de novo:
+      # elas afirmam o estado da posicao delas (a taxa recusada antes da 062, o
+      # realizado antes da 069, o catalogo com 13 categorias, o lancamento sem
+      # `transaction_type`), e ficam vermelhas em qualquer banco mais novo.
+      - name: O juro do emprestimo continua, depois da 071
+        run: $PSQL -f database/tests/062_juros_do_mybank_test.sql
+
+      - name: O custo pessoal continua com um criterio, depois da 071
+        run: $PSQL -f database/tests/046_um_criterio_de_custo_pessoal_test.sql
+
+      - name: Lancamento fora dos totais continua fora, depois da 071
+        run: $PSQL -f database/tests/060_lancamento_fora_dos_totais_test.sql
+
+      - name: O Resultado pelo fechamento continua, depois da 071
+        run: $PSQL -f database/tests/069_resultado_pelo_fechamento_test.sql
+
+      - name: A divisao com pessoa continua, depois da 071
+        run: $PSQL -f database/tests/070_divisao_com_pessoa_no_lancamento_test.sql
+
+      - name: A categoria de transferencia continua, depois da 071
+        run: $PSQL -f database/tests/023_categoria_de_transferencia_test.sql
+
+      - name: Toda view continua security_invoker, depois da 071
+        run: $PSQL -f database/tests/view_security_invoker_test.sql
+
       - name: schema-columns.json em dia com as migrations
         run: node scripts/gen-schema-columns.mjs --check
 

@@ -368,6 +368,46 @@ test("A SOMA DO RATEIO DA SERIE FECHA EXATO -- principal e juro", () => {
   }
 });
 
+test("o rateio da 071 e o desta funcao: os numeros da suite do banco, um a um", () => {
+  // A view `mybank_installment_interest` (071) refaz este rateio em SQL, para
+  // as abas Receitas e Despesas somarem o juro de cada parcela antes da baixa.
+  // Os dois tem de dar o mesmo centavo: a confirmacao grava o juro desta
+  // funcao como `income` de quem emprestou, e a view o mostra como despesa de
+  // quem pegou. As series e os numeros sao os de
+  // database/tests/071_juros_do_mybank_no_resultado_test.sql.
+  const juros = (r) => (r === null ? null : r.map((p) => p.parteDosJuros));
+  const doPrincipal = (r) => r.map((p) => p.parteDoPrincipal);
+
+  // Moto: R$ 1.000 em 2x de R$ 550.
+  assert.deepEqual(juros(rateioDaSerie({ parcelas: [550, 550], principal: 1000, total: 1100 })), [50, 50]);
+
+  // Notebook: R$ 1.000 em 3x, o centavo na ultima.
+  const notebook = rateioDaSerie({
+    parcelas: [366.67, 366.67, 366.66],
+    principal: 1000,
+    total: 1100,
+  });
+  assert.deepEqual(juros(notebook), [33.33, 33.33, 33.34]);
+  assert.deepEqual(doPrincipal(notebook), [333.34, 333.34, 333.32]);
+
+  // Notebook depois do ajuste da ultima para R$ 466,66: o juro da 1/3 pela
+  // serie de hoje passa a R$ 61,11 (a 071 guarda o da baixa em `interest_paid`).
+  assert.equal(
+    rateioDaSerie({ parcelas: [366.67, 366.67, 466.66], principal: 1000, total: 1200 })[0]
+      .parteDosJuros,
+    61.11
+  );
+
+  // Geladeira: sem juro.
+  assert.deepEqual(juros(rateioDaSerie({ parcelas: [300, 300], principal: 600, total: 600 })), [0, 0]);
+
+  // Centavos: a ultima nao cabe a sobra, e a serie inteira fica sem rateio.
+  assert.equal(
+    rateioDaSerie({ parcelas: [0.03, 0.03, 0.03, 0.03, 0.01], principal: 0.11, total: 0.13 }),
+    null
+  );
+});
+
 test("MUTANTE sem absorcao: a ULTIMA parcela carrega a sobra", () => {
   const rateio = rateioDaSerie({
     parcelas: Array(12).fill(100),

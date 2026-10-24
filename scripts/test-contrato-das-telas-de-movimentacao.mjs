@@ -605,18 +605,22 @@ test("a rota TRAZ `notes` do realizado -- sem ele a fatura PAGA desaparece", () 
   );
 });
 
-test("a rota LE a divida do MyBank e a CONCATENA nas previstas (HMO-377)", () => {
-  // POR QUE UMA SONDA TEXTUAL AQUI, e nao so o mutante da lib: a mudanca desta
-  // issue tem DUAS metades, e o mutador de lib/telas-de-movimentacao.ts nao
-  // alcanca a segunda. `ehParcelaDevidaDoMyBank` pode estar perfeita e com
-  // mutante morto enquanto a rota simplesmente nao chama `lerDividaDoMyBank` --
-  // e o sintoma seria a aba Despesas voltando aos R$ 200,00 da main 40c7b01,
-  // com a lib verde e o `tsc` verde. E a mesma armadilha que fez a HMO-379
-  // achar `a_receber_do_mybank` sem um unico consumidor na UI.
+test("a rota LE o juro devido do MyBank e o CONCATENA nas previstas (HMO-377, fase 5)", () => {
+  // POR QUE UMA SONDA TEXTUAL AQUI, e nao so o mutante da lib: a mudanca tem
+  // DUAS metades, e o mutador de lib/telas-de-movimentacao.ts nao alcanca a
+  // segunda. `ehParcelaDevidaDoMyBank` pode estar perfeita e com mutante morto
+  // enquanto a rota simplesmente nao chama a leitura -- e o sintoma seria o
+  // juro sumindo da aba Despesas de quem pegou, com a lib verde e o `tsc`
+  // verde. E a mesma armadilha que fez a HMO-379 achar `a_receber_do_mybank`
+  // sem um unico consumidor na UI.
+  //
+  // DESDE A FASE 5 (RN021.3) A LEITURA E A DO JURO, `lerJurosDevidosDoMyBank`:
+  // a aba Despesas e a metade de Despesas do Resultado do mes, e da parcela so
+  // o juro entra nela. Contas a Pagar continua com `lerDividaDoMyBank`.
   //
   // E A SONDA LE A FONTE SEM COMENTARIO (`semComentarios`), porque esta rota
-  // CITA `lerDividaDoMyBank` dentro do comentario que explica a decisao: um
-  // `includes` sobre o arquivo cru casaria com a explicacao e nao com o codigo
+  // CITA as leituras dentro do comentario que explica a decisao: um `includes`
+  // sobre o arquivo cru casaria com a explicacao e nao com o codigo
   // (`assercao-de-fiacao-casa-com-o-import`,
   // `guard-com-janela-de-chars-conta-comentario`).
 
@@ -624,20 +628,27 @@ test("a rota LE a divida do MyBank e a CONCATENA nas previstas (HMO-377)", () =>
   //    o que sobra quando alguem apaga o uso (`fiacao-provada-tirando-o-import`).
   assert.match(
     rota,
-    /await lerDividaDoMyBank\(\s*supabase,\s*user\.id,/,
-    `${ROTA} nao chama mais \`lerDividaDoMyBank\`: a parcela que a pessoa DEVE ` +
-      "a uma conexao desaparece da aba Despesas e a tela volta a discordar de " +
-      "Contas a Pagar pela mesma divida -- R$ 200,00 contra R$ 1.200,00"
+    /await lerJurosDevidosDoMyBank\(\s*supabase,\s*user\.id,/,
+    `${ROTA} nao chama mais \`lerJurosDevidosDoMyBank\`: o juro que a pessoa ` +
+      "DEVE a uma conexao desaparece da aba Despesas"
+  );
+
+  // E A PARCELA CHEIA NAO VOLTA para esta aba.
+  assert.doesNotMatch(
+    rota,
+    /await lerDividaDoMyBank\(/,
+    `${ROTA} voltou a ler a divida cheia: o principal entraria em Despesas`
   );
 
   // 2. E ELA E GUARDADA PELA ABA DE DESPESAS. Sem a guarda, Receitas e
   //    Transferencias gastam uma consulta por leitura para descartar tudo
-  //    depois -- e a assercao de que elas NAO consultam a view esta medida na
-  //    rota de verdade em scripts/test-leituras-do-mybank.mjs (leitura 4).
+  //    depois -- e a assercao de que Transferencias NAO consulta a view esta
+  //    medida na rota de verdade em scripts/test-leituras-do-mybank.mjs
+  //    (leitura 4).
   assert.match(
     rota,
-    /tela\.tipo === "expense"\)\s*\{\s*const leitura = await lerDividaDoMyBank/,
-    "a leitura da divida do MyBank perdeu a guarda `tela.tipo === \"expense\"`"
+    /tela\.tipo === "expense"\)\s*\{\s*const leitura = await lerJurosDevidosDoMyBank/,
+    "a leitura do juro devido do MyBank perdeu a guarda `tela.tipo === \"expense\"`"
   );
 
   // 3. O DONO DA LEITURA E PREENCHIDO. `ParcelaDevidaNaAgenda` nasce com
