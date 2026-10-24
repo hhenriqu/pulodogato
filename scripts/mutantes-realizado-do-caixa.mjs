@@ -30,24 +30,26 @@
 // menos o arquivo mutado; se ela divergir, o controle positivo aborta antes de
 // qualquer mutante rodar.
 //
-// TRES MUTANTES MUTAM lib/telas-de-movimentacao.ts, E NAO A FONTE -- HMO-317
-// --------------------------------------------------------------------------
-// O criterio "esta linha e a perna de saida do pagamento da fatura" era uma
-// COPIA aqui dentro e passou a ser `ehPagamentoDaFatura`, de
-// lib/telas-de-movimentacao.ts. Se os mutantes dele saissem desta lista junto
-// com a copia, o caminho de dinheiro do PAINEL ficaria sem medida nenhuma: quem
-// mede aquela funcao do outro lado e scripts/mutantes-telas-de-movimentacao.mjs,
-// que roda a suite da TELA -- e a suite da tela nao soma um centavo pelo painel.
+// ALGUNS MUTANTES MUTAM lib/fatura-paga-no-resultado.ts, E NAO A FONTE
+// --------------------------------------------------------------------
+// Da HMO-317 ate a fase 5 tres mutantes daqui mutavam `ehPagamentoDaFatura`,
+// em lib/telas-de-movimentacao.ts: o painel promovia a perna de saida do
+// pagamento por aquele criterio. Desde a fase 6 (RN017.4, 072) o painel nao le
+// mais a perna -- a fatura entra pelas linhas de `card_invoice_paid_entries`,
+// somadas por `faturasPagasComoTransacoes` --, e aqueles tres mediriam uma
+// dependencia que nao existe. Quem mede `ehPagamentoDaFatura` agora e so
+// scripts/mutantes-telas-de-movimentacao.mjs, onde ela decide o selo.
 //
-// Entao cada mutante declara em `alvo` QUAL arquivo da arvore ele muta (a FONTE,
-// por omissao), e a mutacao do dono e verificada contra ESTA suite, que agrega
-// pelo `agregarTransacoes` da rota. Mutar o dono aqui nao custa arvore nova: ele
-// JA e copiado como dependencia.
+// No lugar deles entram os mutantes da SOMA da fatura, que mora em
+// lib/fatura-paga-no-resultado.ts. Cada mutante declara em `alvo` QUAL arquivo
+// da arvore ele muta (a FONTE, por omissao), e a mutacao e verificada contra
+// ESTA suite, que agrega pelo `agregarTransacoes` da rota. Mutar a soma aqui nao
+// custa arvore nova: ela JA e copiada como dependencia.
 //
 // `compilaERoda` reescreve TODOS os arquivos mutaveis a partir do original antes
-// de aplicar a mutacao. Sem isso o mutante do dono ficaria na arvore e o
-// seguinte -- que muta a FONTE -- rodaria contra um dono ja mutado, morrendo com
-// o rotulo mentindo sobre o que foi medido.
+// de aplicar a mutacao. Sem isso o mutante da soma ficaria na arvore e o
+// seguinte -- que muta a FONTE -- rodaria contra uma soma ja mutada, morrendo
+// com o rotulo mentindo sobre o que foi medido.
 
 import {
   readFileSync,
@@ -63,12 +65,15 @@ import { tmpdir } from "node:os";
 
 const FONTE = "lib/realizado-do-caixa.ts";
 /**
- * O DONO do criterio da fatura paga -- HMO-317. Ele e dependencia E alvo de
- * mutante (ver o cabecalho), e e por isso que ele tem nome proprio aqui.
+ * A SOMA da fatura paga -- fase 6. Ela e dependencia E alvo de mutante (ver o
+ * cabecalho), e e por isso que ela tem nome proprio aqui.
  */
-const DONO_DO_CRITERIO = "lib/telas-de-movimentacao.ts";
+const SOMA_DA_FATURA = "lib/fatura-paga-no-resultado.ts";
 const DEPENDENCIAS = [
-  DONO_DO_CRITERIO,
+  "lib/telas-de-movimentacao.ts",
+  SOMA_DA_FATURA,
+  // `fatura-paga-no-resultado` importa o tipo e a constante de categoria daqui.
+  "lib/categorias-do-periodo.ts",
   // AS DUAS ENTRARAM NA HMO-264, E SEM ELAS ESTE GUARD ESTAVA MORTO.
   //
   // `chave-da-fatura` nasceu na HMO-285 (a chave canonica saiu de `card-invoice`
@@ -128,7 +133,7 @@ const TESTE = "scripts/test-realizado-do-caixa.mjs";
  * no arquivo errado deixaria passar ancora ambigua (ver o laco).
  */
 const ORIGINAIS = new Map(
-  [FONTE, DONO_DO_CRITERIO].map((arquivo) => [
+  [FONTE, SOMA_DA_FATURA].map((arquivo) => [
     arquivo,
     readFileSync(arquivo, "utf8"),
   ])
@@ -175,96 +180,65 @@ const MUTANTES = [
   {
     nome: "fatura_paga_nao_entra",
     porque:
-      "o mes em que a fatura foi paga perde o valor dela: R$ 1.290 a menos no " +
+      "o mes em que a fatura vence perde o valor dela: R$ 1.290 a menos no " +
       "Realizado, e um total MENOR nao parece erro, parece um mes barato (HMO-264)",
-    de: "    if (ehPagamentoDaFatura(linha)) {",
-    para: "    if (false) {",
-  },
-
-  // --- o criterio da fatura paga, que mora no DONO (HMO-317) ---------------
-  //
-  // Os tres abaixo mutam `lib/telas-de-movimentacao.ts` dentro da arvore
-  // isolada, e nao a FONTE: o criterio deixou de ser copia daqui. O que eles
-  // provam e que o caminho de dinheiro do PAINEL depende de cada criterio do
-  // dono -- a suite da tela, que o outro mutador roda, nao soma nada por aqui.
-  {
-    nome: "as_duas_pernas_entram",
-    alvo: DONO_DO_CRITERIO,
-    porque:
-      "a perna de entrada e promovida junto: `agregarTransacoes` aplica " +
-      "Math.abs, entao as duas NAO se anulam -- a fatura conta em DOBRO",
-    de: "  if (ehPernaDeEntrada(crua)) return false;\n  return Number(crua.amount) < 0;",
-    para: "  return true;",
-  },
-  {
-    nome: "par_de_valor_zero_e_promovido",
-    alvo: DONO_DO_CRITERIO,
-    porque:
-      "o sinal deixa de ser ESTRITO e as duas pernas de um pagamento de valor " +
-      "ZERO sao promovidas: o total nao muda um centavo e o " +
-      "`transaction_count` sobe DOIS -- o tile «Lancamentos» discordando do " +
-      "total ao lado dele, que e a forma de erro mais barata de nao notar " +
-      "(HMO-317)",
-    // A LINHA DE CIMA ESTA NA ANCORA pela trava de ambiguidade, e desde a
-    // HMO-385: `return Number(crua.amount) < 0;` passou a existir tambem em
-    // `ehSaidaDaParcelaDoAutoEmprestimo`, no MESMO arquivo (o criterio de sinal
-    // da perna de SAIDA da parcela paga do MyBank). O
-    // `if (ehPernaDeEntrada(crua)) return false;` e o que diz que a funcao
-    // cegada e `ehPagamentoDaFatura` -- a mesma receita que o irmao
-    // `as_duas_pernas_entram`, logo acima, ja usava.
-    de:
-      "  if (ehPernaDeEntrada(crua)) return false;\n" +
-      "  return Number(crua.amount) < 0;",
-    para: "  if (ehPernaDeEntrada(crua)) return false;\n  return true;",
-  },
-  {
-    nome: "fatura_sem_a_chave",
-    alvo: DONO_DO_CRITERIO,
-    porque:
-      "toda transferencia entre contas proprias vira despesa do mes: um Pix da " +
-      "corrente para a poupanca passa a ser gasto",
-    de: "  if (!faturaDaChave(crua.notes)) return false;",
-    para: "  if (false) return false;",
-  },
-  // NAO EXISTE MUTANTE PARA O CRITERIO DO `transaction_type`, E ISSO E
-  // DELIBERADO. Ele existiu, sobreviveu, e a investigacao mostrou que a guarda
-  // e invisivel DESTE lado: nenhum caminho de escrita do app produz linha com a
-  // chave `fatura:` e tipo diferente de 'transfer', e a unica linha que ela
-  // separa (a despesa nascida do elo da HMO-305) ja e `expense` -- promove-la
-  // para `expense` nao mudaria um centavo. Matar aquele mutante aqui exigiria
-  // forjar, no teste, um estado que o app nao alcanca, e uma trava provada so
-  // por estado forjado por fora nao prova nada.
-  //
-  // DESDE A HMO-317 ELE TEM TESTE DO OUTRO LADO, e e isso que mudou: na tela de
-  // Despesas o mesmo criterio decide `natureza`, e o mutante
-  // `fatura_paga_ignora_o_tipo_gravado` de
-  // scripts/mutantes-telas-de-movimentacao.mjs MORRE. A guarda continua
-  // invariante aqui; a lista daqui nao finge cobri-la.
-  //
-  // E `perna_sem_elo_pelo_sinal` MORAVA AQUI, com o `porque` "a perna de
-  // entrada cujo par perdeu o elo (o FK e ON DELETE SET NULL) passa por perna
-  // de saida". Ele saiu porque o modulo nao faz mais essa afirmacao em uma
-  // linha propria: no dono, a perna sem elo e pega pelo SINAL dentro de
-  // `ehPernaDeEntrada`, e a linha que sobrou no lugar dele decide outra coisa --
-  // o zero (`par_de_valor_zero_e_promovido` acima). Reescrever a ancora
-  // mantendo aquele `porque` daria um mutante medindo uma afirmacao que nao
-  // existe mais; quem mede o sinal de `ehPernaDeEntrada` e
-  // `entrada_so_pelo_elo`, no mutador do dono.
-  {
-    nome: "promove_como_receita",
-    porque:
-      "a fatura paga entra como RECEITA: o mes em que se pagou R$ 1.290 de " +
-      "cartao passa a mostrar R$ 1.290 que ninguem recebeu",
-    de: '      saida.push({ ...linha, transaction_type: "expense" });',
-    para: '      saida.push({ ...linha, transaction_type: "income" });',
+    de: "    saida.push(fatura);",
+    para: "    void fatura;",
   },
   {
     nome: "muta_a_lista_de_entrada",
     porque:
-      "a linha de origem e reescrita no lugar: a rota le a MESMA lista uma vez " +
-      "por moeda, e o efeito a distancia nao aparece em nenhuma das duas funcoes",
-    de: '      saida.push({ ...linha, transaction_type: "expense" });',
-    para: '      linha.transaction_type = "expense";\n      saida.push(linha);',
+      "a regra tira e acrescenta linha no PROPRIO array: a rota le a MESMA " +
+      "lista uma vez por moeda, e o efeito a distancia nao aparece em nenhuma " +
+      "das duas funcoes",
+    de: "  const saida: LinhaDoRealizado[] = [];",
+    para: "  const saida = linhas as unknown as LinhaDoRealizado[];",
+  },
+
+  // OS MUTANTES DO CRITERIO DA PERNA DE SAIDA SAIRAM NA FASE 6, junto com a
+  // promocao dela (`promove_como_receita`, `as_duas_pernas_entram`,
+  // `par_de_valor_zero_e_promovido`, `fatura_sem_a_chave`). Ver o cabecalho.
+
+  // --- a soma da fatura, que mora em lib/fatura-paga-no-resultado.ts --------
+  //
+  // Os tres abaixo mutam a SOMA dentro da arvore isolada, e nao a FONTE. O que
+  // eles provam e que o caminho de dinheiro do PAINEL depende de cada decisao
+  // de la -- e as tres dao um total plausivel.
+  {
+    nome: "estorno_soma_na_fatura",
+    alvo: SOMA_DA_FATURA,
+    porque:
+      "o estorno no cartao passa a SOMAR na fatura em vez de abater: a fatura " +
+      "de R$ 300 com um estorno de R$ 40 sai R$ 340, e nao R$ 260",
+    de: "    fatura.total += valorDaLinha(linha);",
+    para: "    fatura.total += Math.abs(valorDaLinha(linha));",
+  },
+  {
+    nome: "fatura_negativa_vira_despesa",
+    alvo: SOMA_DA_FATURA,
+    porque:
+      "a fatura de total negativo (estorno maior que as compras) sai `expense`: " +
+      "os agregadores somam `Math.abs` pelo tipo, e ela SOBE a despesa do mes em " +
+      "vez de baixa-la -- o Resultado deixa de ser o do banco",
+    de: '      transaction_type: fatura.total > 0 ? "expense" : "income",',
+    para: '      transaction_type: "expense",',
+  },
+  {
+    nome: "fatura_soma_a_linha_fora_dos_totais",
+    alvo: SOMA_DA_FATURA,
+    porque:
+      "a linha da fatura que a pessoa tirou dos totais (060) volta a somar no " +
+      "Realizado: a fatura do banco a contem, e o Resultado nao",
+    // A LINHA DE CIMA ESTA NA ANCORA pela trava de ambiguidade: o `for` sobre
+    // `apenasNosTotais(linhas)` existe tambem em `faturasPagasPorCategoria`, no
+    // mesmo arquivo. O `Map<string, FaturaPaga>` diz que a funcao cegada e
+    // `faturasPagas`, que e a que o painel le.
+    de:
+      "  const porFatura = new Map<string, FaturaPaga>();\n\n" +
+      "  for (const linha of apenasNosTotais(linhas)) {",
+    para:
+      "  const porFatura = new Map<string, FaturaPaga>();\n\n" +
+      "  for (const linha of linhas) {",
   },
 
   // --- o contrato da consulta ---------------------------------------------
@@ -272,24 +246,25 @@ const MUTANTES = [
     nome: "select_sem_o_embed_da_conta",
     porque:
       "a consulta para de pedir `account_type` -- a regra recebe `undefined` em " +
-      "toda linha, nenhuma casa com credit_card, e o painel volta ao defeito " +
-      "desta issue. Foi exatamente este o modo de falha da HMO-260",
-    de: '  "amount, transaction_type, currency, notes, counterpart_transaction_id, include_in_total, account:financial_accounts(account_type)";',
-    para: '  "amount, transaction_type, currency, notes, counterpart_transaction_id";',
+      "toda linha, nenhuma casa com credit_card, e o painel volta a contar o " +
+      "cartao duas vezes. Foi exatamente este o modo de falha da HMO-260",
+    de: '  "amount, transaction_type, currency, include_in_total, account:financial_accounts(account_type)";',
+    para: '  "amount, transaction_type, currency, include_in_total";',
   },
   {
-    nome: "select_sem_notes",
+    nome: "select_sem_include_in_total",
     porque:
-      "a consulta para de pedir `notes`: nenhuma perna de pagamento e " +
-      "reconhecida como fatura, e o cartao desaparece do Realizado",
-    de: '  "amount, transaction_type, currency, notes, counterpart_transaction_id, include_in_total, account:financial_accounts(account_type)";',
-    para: '  "amount, transaction_type, currency, counterpart_transaction_id, account:financial_accounts(account_type)";',
+      "a consulta para de pedir `include_in_total`: o campo chega `undefined`, " +
+      "o `!== false` deixa tudo passar, e a linha que a pessoa tirou dos " +
+      "relatorios volta a contar no painel (HMO-453)",
+    de: '  "amount, transaction_type, currency, include_in_total, account:financial_accounts(account_type)";',
+    para: '  "amount, transaction_type, currency, account:financial_accounts(account_type)";',
   },
 ];
 
-// `select_sem_o_embed_da_conta` e `select_sem_notes` mutam a MESMA string, e os
-// dois estao aqui de proposito: o teste do `select` afirma coluna por coluna, e
-// um unico mutante provaria apenas que ALGUMA coluna e cobrada.
+// `select_sem_o_embed_da_conta` e `select_sem_include_in_total` mutam a MESMA
+// string, e os dois estao aqui de proposito: o teste do `select` afirma coluna
+// por coluna, e um unico mutante provaria apenas que ALGUMA coluna e cobrada.
 
 const dir = mkdtempSync(join(tmpdir(), "mut265-"));
 const dirLib = join(dir, "lib");
@@ -298,8 +273,8 @@ for (const dep of DEPENDENCIAS) copyFileSync(dep, join(dirLib, basename(dep)));
 
 // O tsconfig temporario e a copia do scripts/tsconfig.realizado-do-caixa-
 // test.json apontada para a arvore mutada. `baseUrl` no dir temporario e o que
-// faz `@/lib/telas-de-movimentacao` achar a COPIA, e nao o arquivo do repo --
-// que e exatamente o que permite mutar o DONO do criterio aqui (HMO-317).
+// faz `@/lib/fatura-paga-no-resultado` achar a COPIA, e nao o arquivo do
+// repo -- que e exatamente o que permite mutar a soma da fatura aqui.
 const tsconfig = join(dir, "tsconfig.json");
 writeFileSync(
   tsconfig,
@@ -328,8 +303,8 @@ let falhas = 0;
  * Compila a arvore e roda a suite, com UM arquivo mutado (ou nenhum).
  *
  * TODO arquivo mutavel e reescrito do original antes da mutacao, e nao so o
- * alvo: sem isso o mutante do DONO ficaria na arvore e o mutante seguinte --
- * que muta a FONTE -- rodaria contra um dono ja mutado, morrendo com o rotulo
+ * alvo: sem isso o mutante da SOMA ficaria na arvore e o mutante seguinte --
+ * que muta a FONTE -- rodaria contra uma soma ja mutada, morrendo com o rotulo
  * mentindo sobre o que foi medido (HMO-317).
  */
 function compilaERoda(alvo, fonteTs) {

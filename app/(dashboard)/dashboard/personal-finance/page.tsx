@@ -60,6 +60,9 @@ import {
   type JuroPagoCru,
 } from "@/lib/leituras-do-mybank";
 import { viewDaParteAusente } from "@/lib/parte-do-grupo-realizada";
+import { faturasPagasComoRealizadas } from "@/lib/fatura-paga-no-resultado";
+import { lerFaturasPagas } from "@/lib/services/fatura-paga-no-resultado";
+import { ehCompraNoCartao } from "@/lib/realizado-do-caixa";
 import {
   TAMANHO_DA_PAGINA,
   descreverLista,
@@ -345,7 +348,8 @@ function Lancamentos() {
    * As contas do fechamento do grupo ja quitadas no periodo (fase 4, RN017.6):
    * "Pagamento ao grupo" e "A receber do grupo". Entram nos cartoes e na
    * lista, sem botao -- ver `carregarContasDoFechamento`. O juro pago do
-   * MyBank (fase 5) vem junto, com o selo "MyBank".
+   * MyBank (fase 5) vem junto, com o selo "MyBank", e a fatura paga do cartao
+   * (fase 6), com o selo "Fatura".
    */
   const [contasDoFechamento, setContasDoFechamento] = useState<
     ContaDoFechamentoRealizada[]
@@ -846,6 +850,11 @@ function Lancamentos() {
    * pegou nao grava transacao nenhuma quando quem emprestou confirma, e e
    * `mybank_interest_entries` (071) que o devolve. Cada leitura tem o seu
    * try/catch, para a falha de uma nao apagar a outra.
+   *
+   * A FATURA PAGA DO CARTAO (fase 6, RN017.4) tambem, uma linha por fatura que
+   * VENCE no periodo, pelo total das compras dela. As compras continuam na
+   * lista, porque sao lancamentos com Editar e Excluir, e saem dos cartoes do
+   * topo (`calculateBalance`): e a fatura que conta.
    */
   const carregarContasDoFechamento = async (userId: string) => {
     const contas: ContaDoFechamentoRealizada[] = [];
@@ -888,6 +897,21 @@ function Lancamentos() {
       );
     } catch (erro) {
       console.error("Erro ao carregar os juros pagos do MyBank:", erro);
+    }
+
+    // Pelo VENCIMENTO, e nao pela data do pagamento: e por ele que a fatura
+    // entra no mes. A view que ainda nao existe (a 072 e colada a mao) e lista
+    // vazia, como as duas de cima.
+    const faturas = await lerFaturasPagas(supabase, userId, periodo.de, periodo.ate);
+    if (faturas.ok) {
+      contas.push(
+        ...faturasPagasComoRealizadas(faturas.linhas).map((fatura) => ({
+          ...fatura,
+          selo: "Fatura",
+        }))
+      );
+    } else {
+      console.error("Erro ao carregar as faturas pagas do cartão:", faturas.erro);
     }
 
     setContasDoFechamento(contas);
@@ -1187,8 +1211,22 @@ function Lancamentos() {
   const calculateBalance = () => {
     // A conta do fechamento quitada entra como linha minha nos totais: ela e
     // receita ou despesa inteira, nao uma fracao (fase 4, RN017.6).
+    //
+    // A COMPRA E O ESTORNO NO CARTAO SAEM DOS TOTAIS (fase 6, RN017.4): estao
+    // dentro da fatura, e a fatura paga entra pelas contas acima. Somar os dois
+    // contaria o cartao duas vezes.
     const resumo = resumoComPartesDeGrupo(
-      [...transactions, ...contasDoFechamento],
+      [
+        ...transactions.filter(
+          (t) =>
+            !ehCompraNoCartao({
+              amount: t.amount,
+              transaction_type: t.transaction_type ?? null,
+              account: t.account,
+            })
+        ),
+        ...contasDoFechamento,
+      ],
       partesDeGrupo
     );
 
@@ -1251,6 +1289,11 @@ function Lancamentos() {
   // lista e FORA dos tres cartoes. Ver o cabecalho de
   // lib/parte-de-grupo-na-lista.ts.
   const notaDasPartes = notaDasPartesDeTerceiros(partesDeGrupo);
+
+  // Ha linha de cartao no periodo: uma compra na lista ou uma fatura paga.
+  const temCartaoNoPeriodo =
+    transactions.some((t) => t.account?.account_type === "credit_card") ||
+    contasDoFechamento.some((c) => c.selo === "Fatura");
 
   // O QUE OS OUTROS ME DEVEM, PARA O CARTAO DE RECEITAS DIZER QUE ESTA FORA
   // DELE (HMO-245 F10).
@@ -1549,6 +1592,14 @@ function Lancamentos() {
               aqui: o valor escrito é a fração que me cabe, não o valor cheio da
               despesa de quem pagou.
             */}
+            {/* O cartao conta pela fatura (fase 6): a compra de ontem esta na
+                lista e nao neste total. Sem a frase, a soma da lista nao bate
+                e o numero se le como erro. So quando ha cartao no periodo. */}
+            {temCartaoNoPeriodo && (
+              <p className="text-xs text-muted-foreground">
+                compras no cartão entram pela fatura paga, no mês do vencimento
+              </p>
+            )}
             {notaDasPartes && (
               <p className="text-xs text-muted-foreground">
                 inclui {formatCurrency(notaDasPartes.total)} de{" "}

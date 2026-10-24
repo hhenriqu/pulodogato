@@ -3704,7 +3704,8 @@ jobs:
       # Vizinha da de cima de proposito: as duas medem a mesma rota, cada uma
       # num ramo. A de cima cobre o modo MES (os rollups do 008); esta cobre o
       # modo INTERVALO, que soma `financial_transactions` crua no JavaScript e e
-      # o ramo que o painel principal usa -- `cartao=fatura` sempre cai nele.
+      # o ramo que o painel principal usa -- `faturaAte` (ate a fase 6,
+      # `cartao=fatura`) sempre cai nele.
       #
       # Aquele ramo nao tinha sonda NENHUMA, e nao por esquecimento: ele pagina
       # as duas consultas que soma, e o duble de client (duble-de-supabase.mjs)
@@ -3745,9 +3746,10 @@ jobs:
       # A migration 046 pos esse criterio nas views e declarou no cabecalho dela
       # "painel ... 950,00 -> 1.010,00". O commit dela nao toca um arquivo de
       # `app/`, e O PAINEL NAO LE VIEW NENHUMA: ele chama
-      # /api/reports/cash-flow?de=&ate=&cartao=fatura, e `cartao=fatura` cai no
-      # ramo que soma as linhas cruas mesmo num mes inteiro. Nenhuma migration
-      # pode mudar o numero daquela tela -- e por isso esta suite CHAMA os dois
+      # /api/reports/cash-flow?de=&ate=&faturaAte= (ate a fase 6, `cartao=fatura`),
+      # e o parametro cai no ramo que soma as linhas cruas mesmo num mes
+      # inteiro. Nenhuma migration pode mudar o numero daquela tela -- e por
+      # isso esta suite CHAMA os dois
       # handlers em vez de medir view.
       #
       # /api/reports/categories entra junto, e isso nao e zelo: o cabecalho das
@@ -5933,6 +5935,65 @@ jobs:
         run: $PSQL -f database/tests/023_categoria_de_transferencia_test.sql
 
       - name: Toda view continua security_invoker, depois da 071
+        run: $PSQL -f database/tests/view_security_invoker_test.sql
+
+      # =====================================================================
+      # 072 -- o cartao entra no Resultado pela fatura (RN017.3, RN017.4, fase 6)
+      # =====================================================================
+      # A compra no cartao deixa de entrar sozinha em Despesas no dia dela: a
+      # fatura e que conta, no mes do VENCIMENTO, realizada quando foi paga,
+      # pelo total das linhas que contam nos totais. A 072 cria
+      # `card_invoice_paid_entries` (cada linha de uma fatura paga, com o
+      # vencimento dela) e refaz `personal_category_monthly_totals`: a perna 1
+      # sem o cartao, e uma quinta perna com a fatura paga, aberta nas
+      # categorias das compras. O estorno no cartao abate a fatura e sai de
+      # Receitas.
+      - name: 072_cartao_pela_fatura_no_resultado
+        run: $PSQL -f database/migrations/072_cartao_pela_fatura_no_resultado.sql
+
+      - name: 072 e idempotente
+        run: $PSQL -f database/migrations/072_cartao_pela_fatura_no_resultado.sql
+
+      - name: O cartao entra no Resultado pela fatura paga, no mes do vencimento
+        run: $PSQL -f database/tests/072_cartao_pela_fatura_no_resultado_test.sql
+
+      # A 072 refaz a view que todo Resultado pessoal le, e acrescenta uma
+      # leitura das faturas. Estas suites leem essas views e as tabelas da
+      # fatura em posicoes acima; rodadas verdes aqui, elas provam que o
+      # criterio de custo pessoal, os totais, o fechamento, a divisao com
+      # pessoa, o juro do MyBank e a fatura em si nao mudaram para quem nao
+      # tem cartao na conta.
+      - name: O custo pessoal continua com um criterio, depois da 072
+        run: $PSQL -f database/tests/046_um_criterio_de_custo_pessoal_test.sql
+
+      - name: Lancamento fora dos totais continua fora, depois da 072
+        run: $PSQL -f database/tests/060_lancamento_fora_dos_totais_test.sql
+
+      - name: A fatura publica continua com a linha fora dos totais, depois da 072
+        run: $PSQL -f database/tests/061_fatura_publica_fora_dos_totais_test.sql
+
+      - name: O Resultado pelo fechamento continua, depois da 072
+        run: $PSQL -f database/tests/069_resultado_pelo_fechamento_test.sql
+
+      - name: A divisao com pessoa continua, depois da 072
+        run: $PSQL -f database/tests/070_divisao_com_pessoa_no_lancamento_test.sql
+
+      - name: O juro do MyBank continua no Resultado, depois da 072
+        run: $PSQL -f database/tests/071_juros_do_mybank_no_resultado_test.sql
+
+      - name: A fatura escolhida no lancamento continua, depois da 072
+        run: $PSQL -f database/tests/041_fatura_escolhida_no_lancamento_test.sql
+
+      - name: O ajuste de fatura continua, depois da 072
+        run: $PSQL -f database/tests/ajuste_de_fatura_test.sql
+
+      - name: O orcamento com fatura continua, depois da 072
+        run: $PSQL -f database/tests/budget_invoice_test.sql
+
+      - name: O pagamento da fatura continua, depois da 072
+        run: $PSQL -f database/tests/card_invoice_payment_test.sql
+
+      - name: Toda view continua security_invoker, depois da 072
         run: $PSQL -f database/tests/view_security_invoker_test.sql
 
       - name: schema-columns.json em dia com as migrations

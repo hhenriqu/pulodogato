@@ -8,7 +8,8 @@
 // `/api/reports/cash-flow` tem dois ramos. O de MES sai dos rollups do 008 e
 // tinha sonda desde a HMO-207 (scripts/test-parte-do-grupo-no-csv.mjs). O de
 // INTERVALO -- o que soma `financial_transactions` crua no JavaScript, e o que o
-// painel principal usa, porque `cartao=fatura` sempre cai nele -- nao tinha
+// painel principal usa (ate a fase 6 por `cartao=fatura`; hoje pelo periodo
+// que para em hoje, ou por `faturaAte`) -- nao tinha
 // NENHUMA, e nao por esquecimento: ele pagina as duas consultas que soma com
 // `.range(inicio, inicio + TAMANHO_DA_PAGINA - 1)`, e o duble de client
 // (scripts/duble-de-supabase.mjs) nao implementava `range`.
@@ -142,10 +143,10 @@ const transacao = (extra) => ({
   amount: -1,
   transaction_type: "expense",
   currency: "BRL",
-  // Pedidas so no caminho `cartao=fatura` (COLUNAS_DO_REALIZADO_DE_CAIXA).
-  // Nulas aqui: `notes` vazio e conta que nao e cartao fazem a regra da fatura
-  // deixar a linha passar intacta -- o criterio dela e assunto da HMO-413, nao
-  // desta suite.
+  // `account` e pedido no relatorio pessoal (COLUNAS_DO_REALIZADO_DE_CAIXA):
+  // conta que nao e cartao faz a regra da fatura deixar a linha passar intacta
+  // -- o criterio dela e assunto da HMO-413, nao desta suite. `notes` e o elo
+  // ficaram de antes da fase 6, quando a regra lia a perna do pagamento.
   notes: null,
   counterpart_transaction_id: null,
   account: { account_type: "checking" },
@@ -553,22 +554,23 @@ test("secao 3: sem a 033 colada, o intervalo responde sem a parte de grupo", TET
 });
 
 // ===========================================================================
-// SECAO 4 - o ramo que o painel principal usa: `cartao=fatura`
+// SECAO 4 - a porta do painel principal: `faturaAte`
 // ===========================================================================
-// `cartao=fatura` entra NESTA mesma condicao, e por isso ele e o caso mais
-// comum do ramo paginado: o painel pede a regra nova em todo periodo, inclusive
-// num mes inteiro (que sem o parametro cairia nos rollups do 008). Era este o
-// caminho que a falta de `range` tornava inalcancavel por sonda.
+// `faturaAte` entra NESTA mesma condicao, e o painel o manda em todo periodo:
+// o Realizado dele para em hoje, e a fatura paga que vence depois de hoje tem
+// de ser lida ate o fim do periodo. Com ele um mes inteiro (que sem o parametro
+// cairia nos rollups) responde pelo ramo paginado. Ate a fase 6 a porta era
+// `cartao=fatura`.
 //
-// O CRITERIO da regra -- que linha e compra no cartao e que linha e pagamento de
-// fatura -- nao e medido aqui: as linhas deste fixture atravessam a regra
-// intactas (conta que nao e cartao, `notes` vazio). O que se mede e que o ramo
-// responde, no grao certo, com o total das DUAS paginas.
-test("secao 4: cartao=fatura cai no ramo paginado e soma as duas paginas", TETO, async () => {
+// O CRITERIO da regra -- que linha e compra no cartao -- nao e medido aqui: as
+// linhas deste fixture atravessam a regra intactas (conta que nao e cartao). O
+// que se mede e que o ramo responde, no grao certo, com o total das DUAS
+// paginas, e que a fatura paga e lida ate `faturaAte`.
+test("secao 4: faturaAte cai no ramo paginado e soma as duas paginas", TETO, async () => {
   const MES_INTEIRO = "de=2026-03-01&ate=2026-03-31";
 
   const { resposta, lidas } = await chamar(
-    `https://exemplo.test/api/reports/cash-flow?${MES_INTEIRO}&cartao=fatura`,
+    `https://exemplo.test/api/reports/cash-flow?${MES_INTEIRO}&faturaAte=2026-04-30`,
     {
       tabelas: {
         financial_transactions: [...RECUSADAS, DE_GRUPO_QUE_EU_PAGUEI, ...VOLUME_DE_DESPESA],
@@ -587,19 +589,30 @@ test("secao 4: cartao=fatura cai no ramo paginado e soma as duas paginas", TETO,
   assert.equal(
     corpo.grao,
     "intervalo",
-    "mesmo num mes inteiro: `cartao=fatura` responde um BALDE, nao uma serie"
+    "mesmo num mes inteiro: `faturaAte` responde um BALDE, nao uma serie"
   );
   assert.deepEqual(corpo.months, []);
 
   assert.ok(
     faixasPedidas(lidas, "financial_transactions").length >= 2,
-    "o caminho de `cartao=fatura` nao paginou a segunda pagina"
+    "o caminho de `faturaAte` nao paginou a segunda pagina"
+  );
+
+  // A FATURA PAGA E LIDA ATE `faturaAte`, e nao ate `ate`: e o que o parametro
+  // existe para fazer.
+  const daFatura = lidas.find((l) => l.tabela === "card_invoice_paid_entries");
+  assert.ok(daFatura, "a rota nao leu a fatura paga no ramo de intervalo pessoal");
+  assert.ok(
+    daFatura.filtros.some(
+      ([op, coluna, valor]) => op === "lte" && coluna === "due_date" && valor === "2026-04-30"
+    ),
+    `a fatura paga nao foi lida ate \`faturaAte\` (filtros: ${JSON.stringify(daFatura.filtros)})`
   );
 
   assert.equal(
     corpo.summary.total_expense,
     SAIDA_ESPERADA,
-    "o total de `cartao=fatura` perdeu a linha da segunda pagina"
+    "o total de `faturaAte` perdeu a linha da segunda pagina"
   );
 });
 

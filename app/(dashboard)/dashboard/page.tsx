@@ -431,22 +431,22 @@ function PainelCompleto() {
         // previsao. Periodo inteiramente futuro nao tem realizado, e ai a
         // chamada nem acontece: com `ate` antes de `de` a rota responde 400.
         //
-        // `cartao=fatura` E O QUE FAZ O CARTAO CONTAR NO PAGAMENTO (HMO-265)
+        // O CARTAO CONTA PELA FATURA PAGA, NO MES DO VENCIMENTO (fase 6)
         //
-        // Sem ele o painel somava a compra no cartao no dia da COMPRA -- e a
-        // fatura aberta inteira ja entra no Previsto por
-        // `/api/scheduled-transactions/summary` (HMO-227), entao o cartao
-        // aparecia nos dois lados do "Realizado + Previsao = Total esperado".
-        // Com ele a compra sai do Realizado e o que entra e a fatura PAGA, pelo
-        // valor que de fato saiu da conta. A regra esta em
-        // lib/realizado-do-caixa.ts; as tres consequencias de desenho, no
+        // A rota ja aplica a regra a todo relatorio pessoal: a compra sai do
+        // Realizado e o que entra e a fatura paga, pelo total dela. A fatura
+        // aberta inteira entra no Previsto por
+        // `/api/scheduled-transactions/summary` (HMO-227), e o cartao fica num
+        // lado so do "Realizado + Previsao = Total esperado". A regra esta em
+        // lib/realizado-do-caixa.ts.
+        //
+        // `faturaAte` E O FIM DO PERIODO, e nao o de hoje. A fatura paga que
+        // vence depois de hoje ja saiu do Previsto quando foi paga; recortada
+        // pelo `ate` de hoje, ela sumiria dos dois lados ate vencer. Ver o
         // cabecalho de app/api/reports/cash-flow/route.ts.
-        //
-        // O parametro NAO e opcional para esta tela: a rota sem ele responde
-        // 200 com o numero da regra antiga, que e indistinguivel aqui.
         janelaRealizado
           ? fetch(
-              `/api/reports/cash-flow?de=${janelaRealizado.de}&ate=${janelaRealizado.ate}&cartao=fatura`
+              `/api/reports/cash-flow?de=${janelaRealizado.de}&ate=${janelaRealizado.ate}&faturaAte=${periodo.ate}`
             )
           : null,
         fetch(`/api/scheduled-transactions/summary?${query}`),
@@ -812,22 +812,16 @@ function PainelCompleto() {
         {/* ----------------------------------------------------------------
             A LEGENDA DO CRITERIO DO CARTAO (HMO-266)
             ----------------------------------------------------------------
-            A outra metade do par que comeca na tela de Relatorios. O Realizado
-            acima conta o cartao na FATURA PAGA (`&cartao=fatura` na URL la
-            atras); o grafico por mes dos Relatorios conta na COMPRA, e isso foi
-            DECIDIDO, nao esquecido -- as duas telas respondem perguntas
-            diferentes, e a HMO-266 tem o racional.
-
-            O que esta linha evita e barato de descrever: sem ela, quem abre as
-            duas telas no mesmo periodo ve R$ 3.345 aqui e R$ 7.545 la (medido na
-            fixture de 6 meses) e nao tem como saber qual delas esta com defeito.
-            Nenhuma esta.
+            O Realizado acima conta o cartao na FATURA PAGA, no mes do
+            vencimento, e a tela de Relatorios conta igual desde a fase 6. A
+            HMO-266 tinha as duas telas em criterios diferentes, e esta linha
+            explicava a diferenca; hoje ela diz a regra, porque quem lancou a
+            compra de ontem e nao a ve no Realizado precisa saber onde ela esta.
 
             Constante e nao `fluxo.cartao` porque esta tela nao guarda o campo --
-            ela guarda so `d.summary`. O que garante que o criterio e `fatura` e
-            o `&cartao=fatura` da URL, e isso ja tem guard proprio em
-            scripts/check-cartao-pela-fatura.mjs (primeira exigencia). O texto em
-            si mora em lib/criterio-do-cartao.ts, junto do par dele. */}
+            ela guarda so `d.summary`. O painel e sempre pessoal, e a rota conta
+            todo relatorio pessoal pela fatura. O texto em si mora em
+            lib/criterio-do-cartao.ts, junto do par dele. */}
         <p className="text-xs text-muted-foreground max-w-prose">
           {LEGENDA_DO_CARTAO.fatura}
         </p>

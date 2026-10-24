@@ -8,33 +8,28 @@
 // `lib/criterio-do-cartao.ts` nao calcula dinheiro -- ele devolve texto. Uma
 // suite que so comparasse a string com ela mesma nao afirmaria nada: passaria
 // verde com as duas legendas IGUAIS, com as duas TROCADAS de lugar, e com uma
-// delas descrevendo apenas a propria tela. E esses tres sao exatamente os
-// defeitos que importam, porque a legenda e a UNICA coisa que separa "duas
-// telas com criterios diferentes" de "uma das duas telas esta com bug".
+// delas descrevendo apenas a propria regra.
 //
-// Entao as assercoes sao sobre as PROPRIEDADES que fazem o par funcionar:
+// DESDE A FASE 6 O PAR E OUTRO. Ate a fase 5 eram o painel (a fatura paga) e a
+// tela de relatorios (a compra). Desde a 072 as duas telas pessoais contam a
+// fatura paga, no mes do vencimento, e o que ainda conta a compra e o GRUPO.
+// Entao as assercoes sao sobre as PROPRIEDADES que fazem o par novo funcionar:
 //
-//   1. cada legenda NOMEIA A OUTRA TELA. Legenda que descreve so a propria tela
-//      nao resolve o problema: quem comparou os dois numeros e chegou nela ja
-//      sabe o que aquela tela mostra -- o que ele nao sabe e qual das duas esta
-//      errada;
-//   2. a DIRECAO da diferenca e oposta nas duas. Esta e a assercao que mata a
-//      troca: o consumo e sempre >= o caixa, entao visto dos Relatorios o total
-//      do painel e MENOR, e visto do painel o dos Relatorios e MAIOR. Copiar uma
-//      legenda para o lugar da outra inverte as duas frases, e uma tela passaria
-//      a prometer uma diferenca com o sinal trocado;
-//   3. cada legenda cita os DOIS eixos de data (compra e fatura). Uma frase que
-//      diz so "conta na compra" e verdadeira e inutil aqui;
-//   4. valor desconhecido NAO recebe legenda. Sem isto, uma funcao que devolve
-//      LEGENDA_DO_CARTAO.compra para qualquer entrada passa na assercao (1) do
-//      criterio `compra` e afirma "conta na compra" debaixo de um total que
-//      pode ter sido calculado pela fatura;
-//   5. e a ultima, que e a unica que nao e sobre texto: os valores que a ROTA
+//   1. cada legenda NOMEIA A OUTRA REGRA: a do pessoal fala do grupo, e a do
+//      grupo fala do painel pessoal;
+//   2. a PRIMEIRA FRASE de cada uma e a propria regra. Esta e a assercao que
+//      mata a troca: copiar uma legenda para o lugar da outra poe a regra do
+//      grupo na primeira frase da tela pessoal;
+//   3. cada legenda cita os DOIS eixos (compra e fatura);
+//   4. a legenda do pessoal diz as tres partes da RN017.4: o mes do
+//      VENCIMENTO, o TOTAL das compras, e que a fatura EM ABERTO ainda nao e
+//      realizado. Sem a terceira, quem lancou a compra de ontem le "sumiu";
+//   5. valor desconhecido NAO recebe legenda;
+//   6. e a ultima, que e a unica que nao e sobre texto: os valores que a ROTA
 //      emite sao criterios que este modulo conhece, nos dois sentidos. Ela sai
 //      do fonte de /api/reports/cash-flow, porque o contrato entre os dois e um
 //      string que atravessa `await res.json()` -- `any` na fronteira, invisivel
-//      no tsc. A rota emitir `cartao: "consumo"` (que e como a HMO-266 chama
-//      este criterio em PROSA) deixa a tela sem legenda sem nada ficar vermelho.
+//      no tsc.
 //
 // A comparacao e sempre em minusculas e sem acento: o que esta sob teste e se a
 // legenda DIZ a coisa, nao a grafia dela. Exigir "Relatórios" com maiuscula e
@@ -64,69 +59,54 @@ const FATURA = normal(LEGENDA_DO_CARTAO.fatura);
 // 1. Cada legenda nomeia a OUTRA tela
 // ---------------------------------------------------------------------------
 
-test("a legenda do consumo nomeia o painel, que e a outra tela", () => {
+test("a legenda do pessoal nomeia o grupo, que e a outra regra", () => {
   assert.ok(
-    COMPRA.includes("painel"),
-    "a legenda da tela de relatorios tem de dizer que o PAINEL usa outro critério — " +
-      "sem nomear a outra tela, ela não explica a divergência que a pessoa está vendo"
+    FATURA.includes("grupo"),
+    "a legenda do painel e dos relatórios tem de dizer que o GRUPO conta a compra — " +
+      "sem nomear a outra regra, ela não explica a divergência com o painel do grupo"
   );
 });
 
-test("a legenda do caixa nomeia a tela de relatorios, que e a outra tela", () => {
+test("a legenda do grupo nomeia o painel pessoal, que e a outra regra", () => {
   assert.ok(
-    FATURA.includes("relatorios"),
-    "a legenda do painel tem de dizer que a tela de RELATÓRIOS usa outro critério"
-  );
-});
-
-test("nenhuma das duas nomeia so a si mesma", () => {
-  // O par e cruzado: a do painel fala de Relatorios e a de Relatorios fala do
-  // painel. Se uma delas citasse a PROPRIA tela no lugar da outra, a assercao
-  // acima continuaria verde para a sua gemea e esta pega a metade que sobra.
-  assert.ok(
-    !COMPRA.includes("relatorios"),
-    "a legenda da tela de relatórios está se nomeando a si mesma em vez de nomear o painel"
-  );
-  assert.ok(
-    !FATURA.includes("painel"),
-    "a legenda do painel está se nomeando a si mesma em vez de nomear a tela de relatórios"
+    COMPRA.includes("pessoal"),
+    "a legenda do grupo tem de dizer que o painel PESSOAL conta pela fatura"
   );
 });
 
 // ---------------------------------------------------------------------------
-// 2. A direcao da diferenca e OPOSTA nas duas -- a assercao que mata a troca
+// 2. A primeira frase e a PROPRIA regra -- a assercao que mata a troca
 // ---------------------------------------------------------------------------
 
-test("vista dos relatorios, a outra tela mostra um total MENOR", () => {
-  // O consumo soma a compra no dia em que ela aconteceu; o caixa espera a
-  // fatura ser paga. Toda compra ainda nao faturada esta no primeiro e nao no
-  // segundo, entao consumo >= caixa SEMPRE -- a diferenca e zero apenas para
-  // quem nao tem cartao, e nunca negativa.
+const primeiraFrase = (texto) => texto.split(".")[0];
+
+test("a primeira frase do pessoal e a regra da fatura", () => {
+  const frase = primeiraFrase(FATURA);
   assert.ok(
-    COMPRA.includes("menor"),
-    "a legenda dos relatórios tem de dizer que o total do painel é MENOR"
+    frase.includes("vence"),
+    "a primeira frase da legenda do pessoal tem de dizer que o cartão conta no mês em que a fatura VENCE"
   );
   assert.ok(
-    !COMPRA.includes("maior"),
-    "a legenda dos relatórios diz 'maior': ou as duas legendas foram trocadas de lugar, " +
-      "ou ela está prometendo uma diferença com o sinal invertido"
+    !frase.includes("foi feita"),
+    "a primeira frase da legenda do pessoal diz 'foi feita': ou as duas legendas foram " +
+      "trocadas de lugar, ou ela voltou à regra da compra"
   );
 });
 
-test("visto do painel, a outra tela mostra um total MAIOR", () => {
+test("a primeira frase do grupo e a regra da compra", () => {
+  const frase = primeiraFrase(COMPRA);
   assert.ok(
-    FATURA.includes("maior"),
-    "a legenda do painel tem de dizer que o total dos relatórios é MAIOR"
+    frase.includes("foi feita"),
+    "a primeira frase da legenda do grupo tem de dizer que a compra conta no mês em que FOI FEITA"
   );
   assert.ok(
-    !FATURA.includes("menor"),
-    "a legenda do painel diz 'menor': ou as duas legendas foram trocadas de lugar, " +
-      "ou ela está prometendo uma diferença com o sinal invertido"
+    !frase.includes("vence"),
+    "a primeira frase da legenda do grupo diz 'vence': ou as duas legendas foram trocadas de lugar"
   );
 });
 
 // ---------------------------------------------------------------------------
-// 3. Cada legenda cita os DOIS eixos de data
+// 3. Cada legenda cita os DOIS eixos
 // ---------------------------------------------------------------------------
 
 test("as duas legendas citam a compra E a fatura", () => {
@@ -136,28 +116,29 @@ test("as duas legendas citam a compra E a fatura", () => {
   ]) {
     assert.ok(
       texto.includes("compra"),
-      `a legenda de \`${criterio}\` não cita a compra — sem os dois eixos de data a frase não diz em que elas diferem`
+      `a legenda de \`${criterio}\` não cita a compra — sem os dois eixos a frase não diz em que as regras diferem`
     );
     assert.ok(
       texto.includes("fatura"),
-      `a legenda de \`${criterio}\` não cita a fatura — sem os dois eixos de data a frase não diz em que elas diferem`
+      `a legenda de \`${criterio}\` não cita a fatura — sem os dois eixos a frase não diz em que as regras diferem`
     );
   }
 });
 
-test("as duas legendas dizem que os DOIS numeros estao certos", () => {
-  // Sem esta parte a legenda explica a diferenca e deixa a pergunta de pe. O
-  // que a pessoa foi buscar ao comparar as telas e se precisa consertar algo.
-  for (const [criterio, texto] of [
-    ["compra", COMPRA],
-    ["fatura", FATURA],
-  ]) {
-    assert.ok(
-      texto.includes("os dois estao certos"),
-      `a legenda de \`${criterio}\` não afirma que os dois totais estão certos — ` +
-        "explicar a divergência sem dizer isso deixa a pessoa procurando o bug que não existe"
-    );
-  }
+test("a legenda do pessoal diz as tres partes da RN017.4", () => {
+  // O mes do vencimento esta na assercao da primeira frase. Aqui ficam as
+  // outras duas: o valor (o TOTAL das compras, e nao o que foi pago) e o
+  // momento (a fatura em aberto ainda nao e realizado). Sem a ultima, a compra
+  // de ontem que nao aparece no Realizado se le como dinheiro perdido.
+  assert.ok(
+    FATURA.includes("total das compras"),
+    "a legenda do pessoal não diz que a fatura conta pelo TOTAL das compras"
+  );
+  assert.ok(
+    FATURA.includes("em aberto"),
+    "a legenda do pessoal não diz que a fatura EM ABERTO ainda não conta — " +
+      "quem lançou a compra de ontem e não a vê no Realizado lê 'sumiu'"
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -218,10 +199,11 @@ const ROTA = "app/api/reports/cash-flow/route.ts";
 test("todo criterio que a rota emite tem legenda", () => {
   const fonte = semComentarios(readFileSync(ROTA, "utf8"));
 
-  // Os dois ramos da rota escrevem o campo de formas diferentes: o mensal
-  // crava `cartao: "compra"` e o de intervalo usa a condicional
-  // `cartao: cartaoPelaFatura ? "fatura" : "compra"`. Esta regex colhe o campo
-  // e os literais que vierem na expressao dele, ate a virgula do fim.
+  // Os dois ramos da rota escrevem o campo pela mesma condicional,
+  // `cartao: groupId ? "compra" : "fatura"`. Esta regex colhe o campo e os
+  // literais que vierem na expressao dele, ate a virgula do fim -- e aceita
+  // tambem um literal cravado, que era como o ramo mensal o escrevia ate a
+  // fase 6.
   const atribuicoes = [...fonte.matchAll(/[^\w.]cartao:([^,\n]*(?:\n[^,]*)?),/g)];
 
   assert.ok(
@@ -250,13 +232,12 @@ test("todo criterio que a rota emite tem legenda", () => {
       null,
       `a rota emite \`cartao: "${valor}"\` e este módulo não tem legenda para esse valor. ` +
         "A tela recebe o campo, não reconhece, e não renderiza legenda nenhuma — " +
-        "a divergência entre o painel e os relatórios volta a ser muda"
+        "a divergência entre o painel pessoal e o do grupo volta a ser muda"
     );
   }
 
   // E o caminho inverso: os dois criterios do modulo tem de ser EMITIDOS por
-  // alguem. Legenda que a rota nunca pede e legenda que ninguem nunca ve, e o
-  // par da HMO-266 so funciona com os dois lados vivos.
+  // alguem. Legenda que a rota nunca pede e legenda que ninguem nunca ve.
   for (const criterio of Object.keys(LEGENDA_DO_CARTAO)) {
     assert.ok(
       emitidos.has(criterio),

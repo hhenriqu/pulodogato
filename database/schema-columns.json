@@ -80,6 +80,25 @@
     "transaction_type",
     "user_id"
   ],
+  "card_invoice_paid_entries": [
+    "account_id",
+    "account_name",
+    "category_id",
+    "currency",
+    "description",
+    "due_date",
+    "id",
+    "include_in_total",
+    "invoice_amount",
+    "invoice_description",
+    "invoice_month",
+    "month",
+    "paid_date",
+    "scheduled_id",
+    "transaction_date",
+    "transaction_type",
+    "user_id"
+  ],
   "categorization_rules": [
     "category_id",
     "created_at",

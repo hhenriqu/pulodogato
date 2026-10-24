@@ -9,11 +9,15 @@
 // Porque `npm run test:realizado-do-caixa` prova a REGRA, e a regra pode estar
 // perfeita e nao estar LIGADA. O defeito que sobra e de fiacao, e ele e mudo:
 //
-//   * o painel para de mandar `&cartao=fatura` na URL -> a rota responde 200
-//     com o numero da regra ANTIGA. Nenhum erro, nenhum campo faltando, nenhum
-//     log: o painel volta ao defeito desta issue com os 12 mutantes verdes.
-//   * a rota para de chamar `realizadoComCartaoPelaFatura` -> idem. O modulo
-//     continua passando em todos os testes dele, sem ninguem chamando.
+//   * o painel para de mandar `&faturaAte=` na URL -> a rota le a fatura paga
+//     so ate hoje, e a fatura que vence depois de hoje e ja foi paga some do
+//     Realizado do painel. Nenhum erro, nenhum campo faltando, nenhum log.
+//     (Ate a fase 6 o parametro era `&cartao=fatura`, que ligava a regra; desde
+//     a 072 a regra e a do relatorio pessoal inteiro e nao se pede.)
+//   * a rota para de ler a fatura paga, ou de chamar
+//     `realizadoComCartaoPelaFatura` -> a compra no cartao volta a contar no
+//     dia em que foi feita, ou sai e nada entra no lugar. O modulo continua
+//     passando em todos os testes dele, sem ninguem chamando.
 //   * a rota da Previsao para de tirar as compras no cartao da agenda, ou para
 //     de sintetizar a fatura aberta -> o cartao conta em dobro na Previsao, ou
 //     desaparece dela. As duas metades dessa rota sao uma so mudanca.
@@ -52,6 +56,12 @@
 // estado que produziu a HMO-258. As tres ultimas exigencias da lista cobrem
 // isso: o campo na rota, a chamada+render na tela de relatorios, e a legenda
 // gemea no painel.
+//
+// DESDE A FASE 6 (072, RN017.4) as duas telas pessoais contam pela fatura, e o
+// par que diverge de proposito e outro: o relatorio PESSOAL (fatura) e o do
+// GRUPO (compra). As tres exigencias continuam as mesmas, porque o modo de
+// falha e o mesmo -- um criterio emitido sem legenda, ou uma legenda que nao le
+// o criterio.
 // =====================================================
 
 import { readFileSync } from "node:fs";
@@ -77,17 +87,19 @@ function semComentariosNemImports(fonte) {
 const EXIGENCIAS = [
   {
     arquivo: "app/(dashboard)/dashboard/page.tsx",
-    trechos: ["cartao=fatura"],
+    trechos: ["faturaAte="],
     porque:
-      "o painel precisa PEDIR a regra nova. Sem o parametro, /api/reports/cash-flow " +
-      "responde 200 com o total da regra antiga -- o cartao contado no dia da compra.",
+      "o painel precisa pedir a fatura paga ATE O FIM DO PERIODO. O Realizado " +
+      "dele para em hoje, e sem o parametro a fatura que vence depois de hoje e " +
+      "ja foi paga sai do mes -- pagar adiantado tiraria a fatura do Resultado.",
   },
   {
     arquivo: "app/api/reports/cash-flow/route.ts",
-    trechos: ['get("cartao")', "realizadoComCartaoPelaFatura("],
+    trechos: ['get("faturaAte")', "lerFaturasPagas(", "realizadoComCartaoPelaFatura("],
     porque:
-      "a rota precisa LER o parametro e APLICAR a regra. Lendo sem aplicar, ou " +
-      "aplicando sem ler, o total e o de antes desta issue.",
+      "a rota precisa LER a fatura paga e APLICAR a regra (RN017.4). Lendo sem " +
+      "aplicar, a compra no cartao conta no dia em que foi feita; aplicando sem " +
+      "ler, a compra sai e a fatura nao entra -- o cartao some do Realizado.",
   },
   {
     arquivo: "app/api/dashboard/previsao/route.ts",
@@ -99,29 +111,29 @@ const EXIGENCIAS = [
   },
   {
     arquivo: "lib/realizado-do-caixa.ts",
-    // `ehPagamentoDaFatura(`, e nao `ehFatura(`: a HMO-317 deu um DONO SO ao
-    // criterio da perna de saida, em lib/telas-de-movimentacao.ts, e apagou
-    // deste arquivo a leitura local de `notes` por `ehFatura`. A exigencia
-    // ficou apontando para o nome antigo, e desde o merge da #211 este guard
-    // estava VERMELHO na main -- ninguem viu porque o Actions nao iniciava job
-    // (HMO-242). Ancora de guard que apodrece grita; ancora de `sed` apodrece
-    // calada (HMO-339).
-    trechos: ["account:financial_accounts(account_type)", "ehPagamentoDaFatura("],
+    // `faturasPagasComoTransacoes(` desde a fase 6. Ate ali a exigencia era
+    // `ehPagamentoDaFatura(`, a perna de saida do pagamento promovida a
+    // despesa no dia em que o dinheiro saiu; a 072 trocou a perna pela FATURA,
+    // somada das linhas de `card_invoice_paid_entries`, no mes do vencimento.
+    // Ancora de guard que apodrece grita; ancora de `sed` apodrece calada
+    // (HMO-339) -- e por isso as duas mudaram juntas.
+    trechos: ["account:financial_accounts(account_type)", "faturasPagasComoTransacoes("],
     porque:
-      "sem o embed da conta a regra nao sabe que a linha esta na fatura, e sem " +
-      "`ehPagamentoDaFatura` a fatura PAGA nao vira despesa do mes em que o " +
-      "dinheiro saiu -- o cartao desaparece dos dois lados (HMO-264).",
+      "sem o embed da conta a regra nao sabe que a linha e compra no cartao, e " +
+      "sem `faturasPagasComoTransacoes` a fatura PAGA nao entra no mes do " +
+      "vencimento -- o cartao desaparece do Realizado (HMO-264, RN017.4).",
   },
 
   // -------------------------------------------------------------------------
-  // A LEGENDA QUE SEPARA AS DUAS LEITURAS (HMO-266)
+  // A LEGENDA QUE SEPARA AS DUAS LEITURAS (HMO-266, fase 6)
   // -------------------------------------------------------------------------
   // A HMO-266 decidiu (opcao "consumo", escolhida pelo Helio) que a tela de
-  // relatorios NAO adota a regra acima: ela responde "no que o dinheiro foi
-  // gasto" e o painel responde "quando o dinheiro saiu". O preco disso e que as
-  // duas telas mostram totais diferentes para o mesmo periodo -- medidos
-  // R$ 7.545 contra R$ 3.345 na fixture de 6 meses -- e a legenda e a UNICA
-  // coisa que separa isso de um defeito aos olhos de quem compara.
+  // relatorios NAO adotava a regra acima, e as duas telas mostravam totais
+  // diferentes para o mesmo periodo -- medidos R$ 7.545 contra R$ 3.345 na
+  // fixture de 6 meses. A fase 6 (decisao D1) desfez isso: o relatorio pessoal
+  // inteiro conta pela fatura, e quem continua contando pela compra e o GRUPO.
+  // A legenda e a UNICA coisa que separa as duas leituras de um defeito aos
+  // olhos de quem compara.
   //
   // As tres exigencias abaixo sao de fiacao, e nenhuma aparece no `tsc`:
   // `cartao` e campo de um objeto literal que ninguem tipa na saida, e as duas
@@ -130,19 +142,22 @@ const EXIGENCIAS = [
   // que e o estado que esta issue existe para nao deixar acontecer.
   {
     arquivo: "app/api/reports/cash-flow/route.ts",
-    // REGEX, e nao a string: `includes('cartao: "compra"')` casa dentro de
-    // `grao_do_cartao: "compra"`, e a tela le `d.cartao`. Renomear o campo e a
-    // forma mais plausivel de quebrar isto -- foi a mutacao que o controle
-    // negativo desta issue rodou primeiro, e ela passou VERDE na primeira
-    // versao desta exigencia. O `[^\w.]` exige que o nome comece aqui.
-    trechos: [/[^\w.]cartao: "compra"/],
+    // REGEX, e nao a string: `includes('cartao: groupId ...')` casa dentro de
+    // `grao_do_cartao: groupId ...`, e a tela le `d.cartao`. Renomear o campo e
+    // a forma mais plausivel de quebrar isto -- foi a mutacao que o controle
+    // negativo da HMO-266 rodou primeiro, e ela passou VERDE na primeira versao
+    // desta exigencia. O `[^\w.]` exige que o nome comece aqui.
+    //
+    // A CONDICIONAL INTEIRA desde a fase 6: o relatorio pessoal conta pela
+    // fatura e o do grupo pela compra, nos dois ramos da rota, e e o `groupId`
+    // que decide. Um literal cravado em qualquer dos dois lados faria uma das
+    // telas afirmar o criterio da outra.
+    trechos: [/[^\w.]cartao: groupId \? "compra" : "fatura"/],
     porque:
-      "o ramo MENSAL da rota precisa dizer qual criterio usou, com esse nome de " +
-      "campo. Ele e o ramo que " +
-      "a tela de relatorios consome (`?months=N`), e sem o campo a legenda de la " +
-      "nao tem de onde sair -- ela passaria a SUPOR o criterio, que e o mesmo que " +
-      "nao ter legenda. O ramo de intervalo ja emitia o campo desde a HMO-265; " +
-      "este literal e o do ramo mensal, onde `cartao=fatura` e inalcancavel.",
+      "a rota precisa dizer qual criterio usou, com esse nome de campo, e pela " +
+      "mesma condicao que o decide: `fatura` no relatorio pessoal, `compra` no do " +
+      "grupo. Sem o campo a legenda da tela de relatorios nao tem de onde sair -- " +
+      "ela passaria a SUPOR o criterio, que e o mesmo que nao ter legenda.",
   },
   {
     arquivo: "app/(dashboard)/dashboard/reports/page.tsx",
@@ -158,11 +173,11 @@ const EXIGENCIAS = [
     arquivo: "app/(dashboard)/dashboard/page.tsx",
     trechos: ["LEGENDA_DO_CARTAO.fatura"],
     porque:
-      "o painel e a OUTRA metade do par. Uma legenda so nao resolve: quem ve " +
-      "R$ 3.345 aqui e R$ 7.545 la precisa encontrar a explicacao na tela em que " +
-      "estiver, nao na outra. Aqui e constante e nao o campo da resposta porque " +
-      "esta tela guarda apenas `d.summary` -- o que garante o criterio e o " +
-      "`cartao=fatura` da primeira exigencia deste guard.",
+      "o painel tambem explica o criterio. Uma legenda so nao resolve: quem " +
+      "compara o painel pessoal com o do grupo precisa encontrar a explicacao na " +
+      "tela em que estiver, nao na outra. Aqui e constante e nao o campo da resposta porque " +
+      "esta tela guarda apenas `d.summary` -- e o painel e sempre pessoal, entao " +
+      "o criterio dele e sempre a fatura.",
   },
 ];
 

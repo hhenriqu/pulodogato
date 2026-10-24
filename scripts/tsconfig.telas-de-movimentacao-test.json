@@ -1,5 +1,5 @@
 {
-  "//": "Build so do teste: lib/telas-de-movimentacao.ts importa @/lib/movimentacoes (a classificacao por tipo, que e a UNICA do projeto) e @/lib/destino-do-lancamento (a frase da conta, com os DOIS mapas que o elo de uma via exige). O tsc resolve o alias @/ por `paths` mas NAO o reescreve no JS emitido, entao o npm script tem um passo de reescrita depois. Ver scripts/test-telas-de-movimentacao.mjs.",
+  "//": "Build so do teste: lib/telas-de-movimentacao.ts importa @/lib/movimentacoes (a classificacao por tipo, que e a UNICA do projeto) e @/lib/destino-do-lancamento (a frase da conta, com os DOIS mapas que o elo de uma via exige). O tsc resolve o alias @/ por `paths` mas NAO o reescreve no JS emitido, entao o npm script tem um passo de reescrita depois. lib/fatura-paga-no-resultado.ts entra na fase 6: e ela que monta a fatura paga que a rota poe na aba Despesas, e a suite a usa como oraculo em vez de escrever a linha a mao. Ver scripts/test-telas-de-movimentacao.mjs.",
   "compilerOptions": {
     "outDir": "../.tmp-telas-de-movimentacao",
     "rootDir": "../lib",
@@ -10,5 +10,8 @@
     "baseUrl": "..",
     "paths": { "@/*": ["./*"] }
   },
-  "include": ["../lib/telas-de-movimentacao.ts"]
+  "include": [
+    "../lib/telas-de-movimentacao.ts",
+    "../lib/fatura-paga-no-resultado.ts"
+  ]
 }

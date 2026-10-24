@@ -191,17 +191,21 @@ const MUTANTES = [
       "o defeito da HMO-260 inteiro de volta: a compra de R$ 400 no cartao " +
       "conta no Realizado E dentro da fatura que o Previsto soma, e o mes " +
       "fecha em R$ 800 com as duas linhas visiveis na lista ao lado",
-    de: '    if (tipo === "expense" && ehGastoNoCartao(crua)) continue;',
+    de: "    if (ehGastoNoCartao(crua)) continue;",
     para: "    if (false) continue;",
   },
+  // `cartao_sai_de_toda_tela` MORAVA AQUI, e virou o mutante de baixo. Ate a
+  // fase 5 a peneira era so da tela de Despesas, e ele media a condicao de tela
+  // apagada; desde a fase 6 (RN017.4) ela vale para Despesas E Receitas, e o
+  // mutante que importa e o que poe a condicao de volta.
   {
-    nome: "cartao_sai_de_toda_tela",
+    nome: "cartao_so_sai_de_despesas",
     porque:
-      "a regra aplicada as tres telas: o estorno no cartao desaparece de " +
-      "Receitas e a perna que quita a fatura desaparece de Transferencias -- " +
-      "o cartao sai do app, e nao so da tela de Despesas",
-    de: '    if (tipo === "expense" && ehGastoNoCartao(crua)) continue;',
-    para: "    if (ehGastoNoCartao(crua)) continue;",
+      "a peneira volta a ser so da tela de Despesas, como ate a fase 5: o " +
+      "estorno no cartao abate a fatura E soma em Receitas -- os R$ 40 contados " +
+      "duas vezes, e um mes com mais receita nao parece erro",
+    de: "    if (ehGastoNoCartao(crua)) continue;",
+    para: '    if (tipo === "expense" && ehGastoNoCartao(crua)) continue;',
   },
   {
     nome: "sem_conta_e_cartao",
@@ -535,20 +539,22 @@ const MUTANTES = [
   {
     nome: "fatura_paga_nao_entra",
     porque:
-      "o defeito da issue, inteiro: a fatura paga sai do Previsto por " +
-      "`status: 'paid'` e nao entra no Realizado -- o mes em que se pagou " +
-      "R$ 1.290 de cartao fecha R$ 1.290 mais barato, e um total MENOR nao " +
+      "o defeito da HMO-264, inteiro: a fatura paga sai do Previsto por " +
+      "`status: 'paid'` e nao entra no Realizado -- a linha somada e do cartao " +
+      "e `expense`, e a peneira da armadilha 5 a tira. O mes em que vence uma " +
+      "fatura de R$ 1.290 fecha R$ 1.290 mais barato, e um total MENOR nao " +
       "parece erro, parece um mes barato",
-    de: '    if (tipo === "expense" && ehPagamentoDaFatura(crua)) {',
+    de: "    if (ehFaturaPagaNoResultado(crua)) {",
     para: "    if (false) {",
   },
   {
     nome: "fatura_paga_em_toda_tela",
     porque:
-      "a excecao deixa de ser so da tela de Despesas: a chave canonica poe o " +
-      "pagamento da fatura no total de RECEITAS do mes",
-    de: '    if (tipo === "expense" && ehPagamentoDaFatura(crua)) {',
-    para: "    if (ehPagamentoDaFatura(crua)) {",
+      "a excecao deixa de ser so da tela de Despesas: a fatura somada entra no " +
+      "total de RECEITAS do mes -- o pagamento do cartao somado como dinheiro " +
+      "que entrou",
+    de: '      if (tipo === "expense") {',
+    para: "      if (true) {",
   },
   {
     nome: "fatura_paga_sem_peneira",
@@ -558,36 +564,100 @@ const MUTANTES = [
       "incluidas. As duas perdem o Editar e o Excluir (`podeAgirNaLinha` recusa " +
       "toda linha de fatura) e ganham link para um cartao que nao e onde a " +
       "despesa aconteceu",
-    de: "  const faturaPaga = ehPagamentoDaFatura(crua) ? faturaDaChave(crua.notes) : null;",
+    de:
+      "  const faturaPaga =\n" +
+      "    ehFaturaPagaNoResultado(crua) || ehPagamentoDaFatura(crua)\n" +
+      "      ? faturaDaChave(crua.notes)\n" +
+      "      : null;",
     para: "  const faturaPaga = faturaDaChave(crua.notes);",
+  },
+  {
+    nome: "fatura_paga_sem_o_selo_em_transferencias",
+    porque:
+      "a perna de saida do pagamento perde o selo «Fatura» em Transferencias: " +
+      "ela vira um movimento comum entre duas contas, sem o caminho de volta " +
+      "para o cartao e o mes que ela quitou. Nenhum total muda, e e por isso " +
+      "que so a lista denuncia",
+    de: "    ehFaturaPagaNoResultado(crua) || ehPagamentoDaFatura(crua)\n",
+    para: "    ehFaturaPagaNoResultado(crua)\n",
+  },
+  {
+    nome: "fatura_somada_sem_o_selo",
+    porque:
+      "a fatura somada entra em Despesas no valor certo e sem o rotulo: perde " +
+      "o «Fatura» e o caminho de volta para o cartao, e fica na lista como uma " +
+      "linha qualquer com a descricao da fatura",
+    de: "    ehFaturaPagaNoResultado(crua) || ehPagamentoDaFatura(crua)\n",
+    para: "    ehPagamentoDaFatura(crua)\n",
   },
   {
     nome: "fatura_paga_sem_chave",
     porque:
-      "a chave canonica deixa de ser o criterio: TODA perna de saida de " +
-      "transferencia entra na tela de Despesas, e todo Pix entre contas " +
-      "proprias volta a ser gasto do mes (a armadilha 4, por outro caminho)",
-    de: "  if (!faturaDaChave(crua.notes)) return false;",
+      "a chave canonica deixa de ser o criterio de `ehPagamentoDaFatura`: o " +
+      "consultor passa a dizer que TODA perna de saida de transferencia e o " +
+      "pagamento de uma fatura. Na tela nada muda HOJE (`linhaRealizada` le a " +
+      "chave de novo), e e o teste direto do consultor que o mata -- o dia em " +
+      "que alguem o usar sem reler a chave, todo Pix entre contas proprias vira " +
+      "fatura",
+    // A LINHA DE BAIXO ESTA NA ANCORA pela trava de ambiguidade: a checagem da
+    // chave existe tambem em `ehFaturaPagaNoResultado`.
+    de:
+      "  if (!faturaDaChave(crua.notes)) return false;\n" +
+      "  if (String(crua.transaction_type) !== TIPO_DA_PERNA_DE_PAGAMENTO) return false;",
+    para:
+      "  if (String(crua.transaction_type) !== TIPO_DA_PERNA_DE_PAGAMENTO) return false;",
+  },
+  // --- os tres criterios de `ehFaturaPagaNoResultado` (fase 6) --------------
+  {
+    nome: "fatura_somada_sem_o_prefixo",
+    porque:
+      "o id deixa de ser criterio: a despesa comum nascida do elo da HMO-305 " +
+      "(uma `expense` com a chave da fatura em `notes`) entra pelo ramo da " +
+      "fatura, perde o Editar e o Excluir (`podeAgirNaLinha` recusa toda linha " +
+      "de fatura) e ganha link para um cartao que nao e onde ela aconteceu. E a " +
+      "linha do cartao com a chave passa POR CIMA de `ehGastoNoCartao`",
+    de: '  if (!String(crua.id ?? "").startsWith(PREFIXO_DA_FATURA_PAGA)) return false;',
     para: "  if (false) return false;",
+  },
+  {
+    nome: "fatura_somada_sem_a_chave",
+    porque:
+      "a linha com o prefixo e sem a chave canonica entra como fatura sem " +
+      "cartao nem mes: `natureza: 'fatura'` com `fatura: null`, um rotulo sem " +
+      "o caminho de volta que e a unica coisa que ele existe para dar",
+    de:
+      "  if (!faturaDaChave(crua.notes)) return false;\n" +
+      "  return String(crua.transaction_type) === TIPO_DA_FATURA_PAGA;",
+    para: "  return String(crua.transaction_type) === TIPO_DA_FATURA_PAGA;",
+  },
+  {
+    nome: "fatura_somada_de_qualquer_tipo",
+    porque:
+      "o tipo deixa de ser criterio: a linha com o prefixo e a chave entra no " +
+      "ramo da fatura qualquer que seja o tipo gravado, e o ramo passa POR CIMA " +
+      "da peneira do cartao -- uma `income` no cartao entra em Despesas",
+    de: "  return String(crua.transaction_type) === TIPO_DA_FATURA_PAGA;",
+    para: "  return true;",
   },
   {
     nome: "fatura_paga_ignora_o_tipo_gravado",
     porque:
-      "a despesa comum que nasceu do elo da fatura (HMO-305) passa a entrar " +
-      "pelo ramo da fatura: ela NAO conta duas vezes (o ramo faz `continue`), " +
-      "mas perde o Editar e o Excluir e se apresenta como fatura de um cartao. " +
-      "E o ramo passa POR CIMA de `ehGastoNoCartao`, o que devolve o defeito da " +
-      "HMO-260 para a linha de cartao que carregue a chave",
+      "a despesa comum que nasceu do elo da fatura (HMO-305) passa a ser 'o " +
+      "pagamento da fatura': ela continua somando uma vez em Despesas, mas " +
+      "perde o Editar e o Excluir (`podeAgirNaLinha` recusa toda linha de " +
+      "fatura) e se apresenta como fatura de um cartao que nao e onde ela " +
+      "aconteceu",
     de: "  if (String(crua.transaction_type) !== TIPO_DA_PERNA_DE_PAGAMENTO) return false;",
     para: "  if (false) return false;",
   },
   {
     nome: "fatura_paga_pega_as_duas_pernas",
     porque:
-      "as duas pernas do pagamento entram: elas tem a MESMA chave, a mesma " +
-      "data e o mesmo valor com sinais opostos, e `valorEmReais` passa " +
-      "`Math.abs` -- entao nao da zero, da o DOBRO. R$ 2.580 de uma fatura de " +
-      "R$ 1.290",
+      "as duas pernas do pagamento passam a ser 'o pagamento da fatura': elas " +
+      "tem a MESMA chave e o mesmo valor com sinais opostos, e so o sinal as " +
+      "separa. Ate a fase 5 isso somava R$ 2.580 de uma fatura de R$ 1.290 em " +
+      "Despesas; desde a fase 6 o consultor decide so o selo, e e o teste " +
+      "direto dele que mata o mutante",
     // A ANCORA SAO AS DUAS LINHAS, e nao uma -- HMO-317. Com o sinal estrito ao
     // lado, `ehPernaDeEntrada` sozinho so decide um estado que o app nao
     // alcanca (chave + transfer + valor NEGATIVO + elo preenchido), entao um
@@ -602,10 +672,10 @@ const MUTANTES = [
     nome: "fatura_paga_de_valor_zero_entra",
     porque:
       "o sinal deixa de ser ESTRITO (HMO-317) e as DUAS pernas de um pagamento " +
-      "de valor ZERO passam a ser a fatura paga: a tela de Despesas mostra duas " +
-      "linhas «Fatura» de R$ 0,00, sem Editar e sem Excluir (`podeAgirNaLinha` " +
-      "recusa toda linha de fatura), para um par que ja tem casa na tela de " +
-      "Transferencias -- e e la que ele continua inteiro",
+      "de valor ZERO passam a ser a fatura paga: em Transferencias as duas " +
+      "ganham o selo «Fatura», que tira o Editar e o Excluir (`podeAgirNaLinha` " +
+      "recusa toda linha de fatura) de um par que a pessoa pode querer " +
+      "corrigir, e oferece um caminho para o cartao por um pagamento de R$ 0,00",
     // A LINHA DE CIMA ESTA NA ANCORA pela trava de ambiguidade, e desde a
     // HMO-385: `return Number(crua.amount) < 0;` existe tambem em
     // `ehSaidaDaParcelaDoAutoEmprestimo` (o mesmo criterio de sinal, sobre outra
@@ -624,14 +694,11 @@ const MUTANTES = [
       "que tela a linha pertence, e o lado previsto ja peneira por ele " +
       "(`linha.tipo === tipo`). A fatura paga desapareceria de Despesas no dia " +
       "em que alguem repetisse aquela peneira do lado realizado",
-    de:
-      "    tipo:\n" +
-      '      faturaPaga && tela === "expense"\n' +
-      '        ? "expense"\n' +
-      "        : classificarMovimentacao(crua),",
-    // A CONDICAO VOLTOU A TER UM OPERANDO NA FASE 5 (RN021.4): o da parcela
-    // paga do auto-emprestimo saiu junto com a excecao dela.
-    para: "    tipo: classificarMovimentacao(crua),",
+    // A ANCORA E O TIPO DA COLUNA DESDE A FASE 6: a perna de saida nao entra
+    // mais em Despesas, e a condicao por tela saiu com ela. O mutante e o que
+    // DESFARIA a igualdade "o tipo da linha e o da coluna" para a fatura.
+    de: "    tipo: classificarMovimentacao(crua),",
+    para: '    tipo: faturaPaga ? "transfer" : classificarMovimentacao(crua),',
   },
   {
     nome: "fatura_paga_sempre_expense",
@@ -640,11 +707,7 @@ const MUTANTES = [
       "na tela de Transferencias, onde ela e um movimento entre duas contas " +
       "minhas. Variar so um dos dois lados deixaria a decisao por tela sem " +
       "medida",
-    de:
-      "    tipo:\n" +
-      '      faturaPaga && tela === "expense"\n' +
-      '        ? "expense"\n' +
-      "        : classificarMovimentacao(crua),",
+    de: "    tipo: classificarMovimentacao(crua),",
     para: '    tipo: faturaPaga ? "expense" : classificarMovimentacao(crua),',
   },
   {
@@ -857,7 +920,7 @@ const MUTANTES = [
     de: "    if (classificarMovimentacao(crua) !== tipo) continue;",
     para:
       '    if (tipo === "expense" && ehSaidaDaParcelaDoAutoEmprestimo(crua)) {\n' +
-      "      linhas.push(linhaRealizada(crua, indice, idsDeFixa, meuUserId, tipo));\n" +
+      "      linhas.push(linhaRealizada(crua, indice, idsDeFixa, meuUserId));\n" +
       "      continue;\n    }\n" +
       "    if (classificarMovimentacao(crua) !== tipo) continue;",
   },

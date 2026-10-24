@@ -5,8 +5,8 @@
 > **Documento de referência do produto.** Descreve o que o Pulo do Gato é, as
 > regras de negócio que valem, e o que ainda é requisito não implementado.
 
-**Versão:** 2.4
-**Data:** 23 de outubro de 2026
+**Versão:** 2.5
+**Data:** 24 de outubro de 2026
 **Projeto:** Pulo do Gato — gestão financeira familiar
 **Tipo:** Progressive Web App (PWA)
 **Status:** em produção — https://pulodogato.hmoraes.com.br
@@ -23,6 +23,7 @@
 | 2.2 | 23/10/2026 | Fases 2 a 4 implantadas: fechamento do grupo, acerto que dá baixa e a leitura nova nos totais (RN018.13 e RN018.14 novas) | Helio (decisões D1 a D5) |
 | 2.3 | 23/10/2026 | Fase 5, primeira parte: divisão com pessoa pelo lançamento (RN020, com RN020.6 e RN020.7 novas). O acerto da RN019 fica só para o grupo | Helio (decisões D1 a D5) |
 | 2.4 | 23/10/2026 | Fase 5, segunda parte: MyBank (RN021, com RN021.6 nova). Só os juros entram no Resultado, e o empréstimo a si mesmo sai de Despesas | Helio (decisões D1 a D5) |
+| 2.5 | 24/10/2026 | Fase 6: o cartão pela fatura (RN017.3 e RN017.4). A fatura paga conta no mês do vencimento, pelo total das compras, e a compra e o estorno no cartão saem do Resultado. Conclui o modelo novo | Helio (decisões D1 a D5) |
 
 > **O que a versão 2.0 corrigiu.** Até aqui esta PRD descrevia um app de carteira
 > de investimentos: o problema era "investidores pessoa física", as personas eram
@@ -157,8 +158,8 @@ Fatura consolidada por ciclo; o **pagamento** da fatura é registrado como
 transferência de duas pernas, para que a despesa original não seja contada
 novamente.
 
-Muda na fase 6 (RN017.4): a fatura total passa a ser a despesa, no mês do
-vencimento, e as compras viram o detalhe dela.
+Desde a fase 6 (RN017.4), a fatura total é a despesa, no mês do vencimento, e
+as compras viram o detalhe dela.
 
 ### Grupos de despesa ✅
 
@@ -262,8 +263,8 @@ a tela não pode contorná-las. As marcadas **(tela)** vivem em TypeScript testa
 - RN004.1 As compras do ciclo compõem a fatura.
 - RN004.2 O **pagamento** da fatura é transferência (RN003), não despesa —
   contá-lo como despesa dobraria o gasto do mês.
-  ↪ Substituída pela RN017.4 na fase 6: o pagamento continua com duas pernas
-  para o saldo, mas a fatura total passa a ser a despesa, e as compras deixam
+  ↪ Substituída pela RN017.4 desde a fase 6: o pagamento continua com duas
+  pernas para o saldo, mas a fatura total é a despesa, e as compras deixaram
   de contar sozinhas.
 - RN004.3 Detectar "é fatura" pelo tipo de conta é proibido: isso apagaria a
   despesa de toda assinatura lançada no cartão.
@@ -382,7 +383,7 @@ nas contas que o fechamento gerou.
 - RN015.3 No plano Hobby da Vercel o horário tem tolerância de ±59 min: a ordem
   entre dois jobs do mesmo dia **não** é garantida.
 
-### RN016 — Saldo de contas e Resultado do mês 🚧 **(tela)** — fase 4 (o cartão na fase 6)
+### RN016 — Saldo de contas e Resultado do mês ✅ **(tela)** — fases 4 e 6
 
 - RN016.1 **Saldo de contas** = saldo inicial da conta + receitas realizadas +
   despesas realizadas (com o sinal da RN002), somado nas contas que entram nos
@@ -403,11 +404,11 @@ nas contas que o fechamento gerou.
   (RN003.3, RN021.2).
 - RN016.6 Conta marcada fora dos totais (058) aparece na lista e não soma.
 
-### RN017 — O que é Despesa e o que é Receita 🚧 — fases 4 a 6
+### RN017 — O que é Despesa e o que é Receita ✅ — fases 4 a 6
 
-Na fase 4 entraram o pagamento a grupo e o a receber de grupos, e na fase 5 o
+Na fase 4 entraram o pagamento a grupo e o a receber de grupos, na fase 5 o
 pagamento a pessoa e o a receber de pessoas (RN020) e os juros do MyBank
-(RN021). Falta a fatura do cartão, na fase 6.
+(RN021), e na fase 6 a fatura do cartão (migration 072).
 
 - RN017.1 **Despesas** = gastos fixos + gastos aleatórios + fatura do cartão +
   pagamento a grupo + pagamento a pessoa, mais os juros do MyBank de quem pegou
@@ -417,12 +418,18 @@ pagamento a pessoa e o a receber de pessoas (RN020) e os juros do MyBank
   conta de grupo paga por mim entra aqui, como fixo ou aleatório, pelo valor
   inteiro (RN018.1).
 - RN017.3 **Compra no cartão**, à vista ou parcelada, não entra sozinha em
-  Despesas. Ela é uma linha da fatura do ciclo em que cai.
+  Despesas. Ela é uma linha da fatura do ciclo em que cai. O **estorno** no
+  cartão também é linha da fatura: ele abate a fatura e não é Receita.
 - RN017.4 **Fatura do cartão**: a fatura total é a despesa, no mês do
-  vencimento (decisão D1). Ela é realizada pelo que foi pago e prevista pelo
-  que falta. O pagamento continua com duas pernas para o saldo (RN003.1). Os
-  relatórios por categoria abrem a fatura nas compras dela, e a soma por
-  categoria fecha com a fatura.
+  vencimento (decisão D1). Ela é prevista pelo total enquanto está em aberto e
+  realizada quando a conta a pagar dela é paga, pelo total das linhas que
+  contam nos totais (RN016.6): pagar um valor diferente não muda a despesa, e
+  a diferença fica no saldo do cartão. Pagar antes ou depois do vencimento não
+  muda o mês. O pagamento continua com duas pernas para o saldo (RN003.1) e
+  aparece em Transferências. Os relatórios por categoria abrem a fatura nas
+  compras dela, e a soma por categoria fecha com a fatura. O painel do grupo
+  continua contando a compra no mês em que ela foi feita: quem divide a conta
+  não paga a fatura do cartão de ninguém.
 - RN017.5 **Receitas** = salários (o líquido do contracheque) + a receber de
   grupos + a receber de pessoas + outras receitas, mais os juros do MyBank de
   quem emprestou (RN021.3).
@@ -694,12 +701,12 @@ metas com aporte; contas previstas e detector de recorrência; fluxo de caixa,
 "quanto posso gastar", anomalias e gasto variável; patrimônio líquido;
 relatórios; extratos OFX/CSV com comprovantes; categorização automática;
 contracheque; notificações push e resumo mensal; PWA instalável com fila offline;
-planos e limites; modo noturno por token; CI de build, schema, cor e PWA.
+planos e limites; modo noturno por token; CI de build, schema, cor e PWA; o
+modelo novo das movimentações (RN016 a RN021), com um Resultado do mês só e o
+cartão pela fatura.
 
 ### Próximo
 
-- Implantar o modelo novo das movimentações (RN016 a RN021): falta a fase 6
-  (cartão pela fatura).
 - Zerar o backlog de 142 warnings de lint.
 - Fechar o módulo de investimentos (rentabilidade consolidada).
 - Fechar a experiência multi-moeda.

@@ -1,5 +1,5 @@
 // =====================================================
-// PULODOGATO - o cartao conta pela FATURA PAGA, nao pela compra (HMO-265)
+// PULODOGATO - o cartao conta pela FATURA PAGA, nao pela compra (HMO-265, fase 6)
 // =====================================================
 //   npm run test:realizado-do-caixa
 //
@@ -8,21 +8,27 @@
 //
 // POR QUE A ASSERCAO E SOBRE O TOTAL, E NAO SOBRE A LISTA
 // -------------------------------------------------------
-// `realizadoComCartaoPelaFatura` nao soma nada: ela tira linha e reescreve
-// `transaction_type`. Afirmar so sobre a lista que ela devolve deixaria passar
-// o defeito que esta issue existe para corrigir, porque o defeito e um NUMERO:
+// `realizadoComCartaoPelaFatura` nao soma nada: ela tira a linha do cartao e
+// acrescenta uma linha por fatura paga. Afirmar so sobre a lista que ela
+// devolve deixaria passar o defeito que ela existe para impedir, porque o
+// defeito e um NUMERO:
 //
-//   * promover as DUAS pernas do pagamento -> a lista parece certa (as duas
-//     linhas estao la, uma de cada lado) e o total sai com a fatura em DOBRO,
-//     porque `agregarTransacoes` aplica `Math.abs` antes de somar;
-//   * promover a perna de ENTRADA como income -> a lista tem o mesmo tamanho e
-//     a receita do mes sobe pelo valor da fatura;
-//   * tirar a compra e nao promover nada -> a lista encurta "corretamente" e o
-//     total fica MENOR, que nao parece erro: parece um mes barato.
+//   * a compra fica e a fatura entra -> a lista parece certa (cada linha e de
+//     verdade) e o total sai com o cartao em DOBRO;
+//   * a compra sai e a fatura nao entra -> a lista encurta "corretamente" e o
+//     total fica MENOR, que nao parece erro: parece um mes barato;
+//   * o estorno vira despesa -> `agregarTransacoes` aplica `Math.abs`, e o
+//     estorno que abatia a fatura passa a soma-la.
 //
 // Entao cada bloco abaixo afirma o total E o numero que a conta errada daria.
-// Sem o segundo, "total = 1290" passa verde num modulo que nao faz nada, desde
-// que o fixture tenha so a fatura.
+//
+// A FASE 6 MUDOU A SEGUNDA METADE (RN017.3, RN017.4, migracao 072)
+// ---------------------------------------------------------------
+// Ate a fase 5 a fatura entrava pela PERNA DE SAIDA do pagamento: o valor pago,
+// no dia do pagamento. Desde a 072 ela entra pelas linhas de
+// `card_invoice_paid_entries`: o TOTAL das compras que contam, no mes do
+// VENCIMENTO. As pernas voltaram a ser so `transfer`, e nenhum agregado de
+// fluxo as soma.
 //
 // O FIXTURE CANONICO E A FATURA DE R$ 1.290 COM R$ 400 DE COMPRA
 // --------------------------------------------------------------
@@ -46,20 +52,8 @@ const { agregarTransacoes } = await import(
   "../.tmp-realizado-do-caixa/periodo-do-painel.js"
 );
 
-/**
- * A FUNCAO DONA do criterio da fatura paga, e o OUTRO leitor dela -- HMO-317.
- *
- * `ehPagamentoDaFatura` mora em lib/telas-de-movimentacao.ts e decide "esta
- * linha e a perna de saida do pagamento da fatura" para os DOIS lados do app.
- * Ate a HMO-317 este modulo tinha a sua propria copia dos tres criterios
- * (`ehSaidaDePagamentoDeFatura`), e as duas JA DIVERGIAM em `amount === 0`.
- *
- * `linhasDaTela` entra para que o bloco de concordancia possa passar a MESMA
- * lista pelos DOIS leitores. Esta e a unica suite do projeto cuja arvore compila
- * os dois modulos, e e por isso que aquele controle mora aqui.
- */
-const { ehPagamentoDaFatura, linhasDaTela } = await import(
-  "../.tmp-realizado-do-caixa/telas-de-movimentacao.js"
+const { COLUNAS_DA_FATURA_PAGA, PREFIXO_DA_FATURA_PAGA } = await import(
+  "../.tmp-realizado-do-caixa/fatura-paga-no-resultado.js"
 );
 
 const CARTAO = "11111111-1111-4111-8111-111111111111";
@@ -85,7 +79,7 @@ const compraNoCartao = (over = {}) => ({
 
 /**
  * A perna de SAIDA do pagamento da fatura: negativa, na conta pagadora, com a
- * chave canonica em `notes` e SEM o elo (quem o grava e a perna de entrada).
+ * chave canonica em `notes`. `transfer`, e e assim que ela fica.
  */
 const saidaDaFatura = (over = {}) => ({
   amount: -1290,
@@ -108,143 +102,169 @@ const entradaDaFatura = (over = {}) => ({
   ...over,
 });
 
-const totalizar = (linhas) =>
-  agregarTransacoes(realizadoComCartaoPelaFatura(linhas));
+/** Uma linha de `card_invoice_paid_entries` (072): positiva na compra. */
+const linhaDaFatura = (over = {}) => ({
+  id: "compra",
+  account_id: CARTAO,
+  account_name: "C6",
+  invoice_month: "2026-09-01",
+  invoice_description: "Fatura C6 09/2026",
+  due_date: "2026-10-05",
+  paid_date: "2026-10-03",
+  category_id: "cat-mercado",
+  invoice_amount: "1290.00",
+  currency: "BRL",
+  include_in_total: true,
+  ...over,
+});
+
+const totalizar = (linhas, faturas = []) =>
+  agregarTransacoes(realizadoComCartaoPelaFatura(linhas, faturas));
 
 // ---------------------------------------------------------------------------
 // As duas metades da regra, cada uma com o numero da conta errada
 // ---------------------------------------------------------------------------
 
 test("a compra no cartao sai do realizado -- a fatura e que vai contar", () => {
-  const linhas = [despesa(), compraNoCartao()];
-  const resumo = totalizar(linhas);
+  const resumo = totalizar([despesa(), compraNoCartao()]);
 
   assert.equal(resumo.total_expense, 250);
-  // O numero de antes desta issue: a compra somada no dia da compra.
+  // O numero de antes da HMO-265: a compra somada no dia da compra.
   assert.notEqual(resumo.total_expense, 650);
   // E a contagem acompanha: um `COUNT(*)` que ainda visse a compra deixaria o
   // tile "Lancamentos" discordando do total ao lado dele.
   assert.equal(resumo.transaction_count, 1);
 });
 
-test("a fatura PAGA entra no realizado pelo valor que saiu da conta", () => {
-  const resumo = totalizar([saidaDaFatura(), entradaDaFatura()]);
+test("a fatura PAGA entra no realizado pelo total das compras dela", () => {
+  const resumo = totalizar([], [linhaDaFatura()]);
 
   assert.equal(resumo.total_expense, 1290);
-  // Sem a promocao, as duas pernas sao 'transfer' e nenhuma entra: o mes em que
-  // se pagou a fatura sairia R$ 1.290 mais barato. E o defeito da HMO-264.
+  // Sem a segunda metade, o mes em que a fatura vence sairia R$ 1.290 mais
+  // barato. E o defeito da HMO-264.
   assert.notEqual(resumo.total_expense, 0);
-  // E ela nao pode entrar como RECEITA pela perna de entrada, que e positiva.
   assert.equal(resumo.total_income, 0);
+  // UMA linha por fatura, e nao uma por compra: e a unica diferenca para o
+  // modo mes, onde o banco conta cada compra.
+  assert.equal(resumo.transaction_count, 1);
 });
 
 test("as duas metades juntas: a compra sai e a fatura que a contem entra", () => {
-  const resumo = totalizar([
-    despesa(),
-    compraNoCartao(),
-    saidaDaFatura(),
-    entradaDaFatura(),
-  ]);
+  const resumo = totalizar(
+    [despesa(), compraNoCartao(), saidaDaFatura(), entradaDaFatura()],
+    [
+      linhaDaFatura({ id: "c1", invoice_amount: "400.00" }),
+      linhaDaFatura({ id: "c2", invoice_amount: "890.00" }),
+    ]
+  );
 
   assert.equal(resumo.total_expense, 1540); // 250 + 1290
-  // Os tres totais errados que esta issue tem de impedir, nomeados:
+  // Os tres totais errados que a regra tem de impedir, nomeados:
   assert.notEqual(resumo.total_expense, 1940, "a compra somou junto da fatura");
   assert.notEqual(resumo.total_expense, 2830, "a fatura contou em DOBRO");
   assert.notEqual(resumo.total_expense, 250, "o cartao desapareceu dos dois lados");
 });
 
-test("a perna de ENTRADA do pagamento nunca vira receita nem despesa", () => {
-  // Ela e positiva e esta no cartao: promove-la como income inflaria a receita
-  // do mes pelo valor da fatura, e promove-la como expense daria a fatura em
-  // dobro -- `agregarTransacoes` aplica `Math.abs`, entao as duas NAO se anulam.
-  assert.equal(ehPagamentoDaFatura(entradaDaFatura()), false);
-
-  const resumo = totalizar([entradaDaFatura()]);
+test("as pernas do pagamento nao entram em lado nenhum", () => {
+  // Ate a fase 5 a perna de saida era promovida a `expense`. Com ela E a
+  // fatura somada, o mes fecharia no dobro.
+  const resumo = totalizar([saidaDaFatura(), entradaDaFatura()]);
+  assert.equal(resumo.total_expense, 0);
   assert.equal(resumo.total_income, 0);
-  assert.equal(resumo.total_expense, 0);
-  assert.notEqual(resumo.total_income, 1290);
-});
-
-test("a perna de entrada SEM o elo e reconhecida pelo sinal", () => {
-  // O FK do 015 e `ON DELETE SET NULL`: apagar a perna de saida deixa a de
-  // entrada sem elo. Sem o criterio de sinal ela passaria por perna de saida e
-  // a fatura voltaria a contar duas vezes num par antigo.
-  const semElo = entradaDaFatura({ counterpart_transaction_id: null });
-  assert.equal(ehPagamentoDaFatura(semElo), false);
-});
-
-test("o par de pagamento de valor ZERO nao e promovido em nenhuma das duas pernas", () => {
-  // A DECISAO DE PRODUTO DA HMO-317, e ela tinha de ser UMA.
-  //
-  // A baixa aceita um `valorPago` proprio e `pernasDoPagamentoDeFatura` faz
-  // `Math.abs`, entao um pagamento de valor zero sai com as DUAS pernas em 0 --
-  // e um par de zero nao tem elo quando vem de antes do 015 ou quando a FK
-  // `ON DELETE SET NULL` o zerou. Ate esta issue, esse par ficava FORA aqui (o
-  // sinal estrito) e ENTRAVA na tela de Despesas (`ehPernaDeEntrada` deixa as
-  // duas linhas de zero passarem, de proposito). A decisao unica e FICA FORA.
-  const zeroA = saidaDaFatura({ amount: 0, counterpart_transaction_id: null });
-  const zeroB = entradaDaFatura({ amount: 0, counterpart_transaction_id: null });
-
-  assert.equal(ehPagamentoDaFatura(zeroA), false);
-  assert.equal(ehPagamentoDaFatura(zeroB), false);
-
-  // O QUE ESTE BLOCO MEDE NAO E O TOTAL -- ele nao mudaria de qualquer forma, e
-  // e exatamente por isso que a divergencia pudera durar. E a CONTAGEM: as duas
-  // pernas promovidas somam R$ 0,00 e sobem DOIS no `transaction_count`, que e o
-  // tile «Lancamentos». Um total que nao mexeu ao lado de uma contagem que
-  // subiu e a forma de erro mais barata de nao notar.
-  const resumo = totalizar([zeroA, zeroB]);
-  assert.equal(resumo.total_expense, 0);
   assert.equal(resumo.transaction_count, 0);
-  assert.notEqual(resumo.transaction_count, 2, "o par de zero foi promovido");
 
-  // E A LINHA NAO DESAPARECEU DO APP: ela continua `transfer` na lista que a
-  // rota entrega -- e e a tela de Transferencias que a mostra, pelas duas
-  // pernas, por `ehPernaDeEntrada`, que esta issue nao tocou.
-  const lista = realizadoComCartaoPelaFatura([zeroA, zeroB]);
-  assert.equal(lista.length, 2);
+  // E a linha nao some do app: ela atravessa a regra como `transfer`, e e a
+  // tela de Transferencias que a mostra.
+  const lista = realizadoComCartaoPelaFatura([saidaDaFatura()], []);
   assert.deepEqual(
     lista.map((l) => l.transaction_type),
-    ["transfer", "transfer"]
+    ["transfer"]
   );
 });
 
-// ---------------------------------------------------------------------------
-// O que NAO pode ser confundido com fatura nem com compra
-// ---------------------------------------------------------------------------
-
-test("transferencia entre contas proprias continua fora dos dois lados", () => {
-  // Um Pix da corrente para a poupanca: 'transfer', SEM chave de fatura. Sem o
-  // criterio de `notes`, toda transferencia do periodo viraria despesa do mes.
-  const pix = saidaDaFatura({ notes: "Reserva de emergência" });
-  assert.equal(ehPagamentoDaFatura(pix), false);
-
-  const resumo = totalizar([pix]);
-  assert.equal(resumo.total_expense, 0);
-  assert.notEqual(resumo.total_expense, 1290);
+test("o valor e o TOTAL das compras, e nao o que foi pago", () => {
+  // RN017.4: pagar R$ 1.200 de uma fatura de R$ 1.290 nao muda a despesa. A
+  // diferenca fica no saldo do cartao.
+  const resumo = totalizar(
+    [saidaDaFatura({ amount: -1200 }), entradaDaFatura({ amount: 1200 })],
+    [linhaDaFatura()]
+  );
+  assert.equal(resumo.total_expense, 1290);
+  assert.notEqual(resumo.total_expense, 1200);
 });
 
-test("nota escrita a mao que PARECE chave de fatura nao e chave de fatura", () => {
-  // `ehFatura` e ancorado nas duas pontas de proposito (lib/card-invoice.ts).
-  // Sem o `$`, a descricao livre do usuario viraria regra de negocio.
-  const aMao = saidaDaFatura({
-    notes: `${CHAVE_FATURA} paguei no debito`,
-  });
-  assert.equal(ehPagamentoDaFatura(aMao), false);
+test("o estorno abate a fatura, e nao vira despesa", () => {
+  // `invoice_amount` e negativo no estorno. Somado com `Math.abs` como linha
+  // solta, ele SUBIRIA a despesa: 300 + 40 = 340 em vez de 260.
+  const resumo = totalizar(
+    [],
+    [
+      linhaDaFatura({ id: "mercado", invoice_amount: "300.00" }),
+      linhaDaFatura({ id: "estorno", invoice_amount: "-40.00" }),
+    ]
+  );
+  assert.equal(resumo.total_expense, 260);
+  assert.notEqual(resumo.total_expense, 340);
 });
 
-test("assinatura cobrada no cartao e paga COM o cartao continua sendo despesa", () => {
+test("a fatura de total NEGATIVO sai como receita, e o Resultado e o do banco", () => {
+  // Um estorno maior que as compras que contam: no banco a fatura e despesa
+  // negativa. Os agregadores somam `Math.abs` pelo tipo, entao ela tem de sair
+  // `income` -- como `expense` ela SUBIRIA a despesa.
+  const resumo = totalizar(
+    [despesa()],
+    [linhaDaFatura({ id: "estorno", invoice_amount: "-90.00" })]
+  );
+  assert.equal(resumo.total_expense, 250);
+  assert.equal(resumo.total_income, 90);
+  assert.equal(resumo.net, -160);
+});
+
+test("a linha da fatura fora dos totais nao soma", () => {
+  // A 060 tira a linha desmarcada do Resultado. A fatura do banco a soma, e o
+  // Resultado nao: `faturasPagasComoTransacoes` usa o mesmo `apenasNosTotais`
+  // das outras somas do app.
+  const resumo = totalizar(
+    [],
+    [
+      linhaDaFatura({ id: "mercado", invoice_amount: "300.00" }),
+      linhaDaFatura({ id: "presente", invoice_amount: "50.00", include_in_total: false }),
+    ]
+  );
+  assert.equal(resumo.total_expense, 300);
+  assert.notEqual(resumo.total_expense, 350);
+});
+
+test("duas faturas, dois cartoes, cada uma uma linha", () => {
+  const OUTRO = "22222222-2222-4222-8222-222222222222";
+  const lista = realizadoComCartaoPelaFatura(
+    [],
+    [
+      linhaDaFatura({ id: "a" }),
+      linhaDaFatura({ id: "b", account_id: OUTRO, invoice_amount: "100.00" }),
+    ]
+  );
+  assert.equal(lista.length, 2);
+  assert.deepEqual(
+    lista.map((l) => l.id).sort(),
+    [
+      `${PREFIXO_DA_FATURA_PAGA}${CARTAO}:2026-09-01`,
+      `${PREFIXO_DA_FATURA_PAGA}${OUTRO}:2026-09-01`,
+    ].sort()
+  );
+  assert.equal(agregarTransacoes(lista).total_expense, 1390);
+});
+
+// ---------------------------------------------------------------------------
+// O que NAO pode ser confundido com compra no cartao
+// ---------------------------------------------------------------------------
+
+test("assinatura cobrada no cartao e linha da fatura como qualquer compra", () => {
   // Ela e uma conta prevista com `account_id` do cartao, e a baixa dela grava
   // uma despesa no cartao -- que a fatura CONTEM. Entao ela sai daqui pelo
-  // mesmo caminho da compra, e nao por ser "pagamento": o criterio de fatura e
-  // a chave em `notes`, e esta linha nao tem chave nenhuma.
-  //
-  // O que esta sendo provado e o contrario do erro da migration 015: quem
-  // detectasse fatura por `account_type` transformaria toda assinatura de cartao
-  // em transferencia e a faria desaparecer do relatorio.
+  // mesmo caminho da compra.
   const assinatura = compraNoCartao({ amount: -39.9, notes: "Streaming" });
   assert.equal(ehCompraNoCartao(assinatura), true);
-  assert.equal(ehPagamentoDaFatura(assinatura), false);
 });
 
 test("compra no cartao com transaction_type NULO fica onde estava", () => {
@@ -256,10 +276,8 @@ test("compra no cartao com transaction_type NULO fica onde estava", () => {
   assert.equal(ehCompraNoCartao(nula), false);
 
   // Ela atravessa a regra intacta -- e continua fora do total, porque todo
-  // agregado de fluxo filtra income/expense. O ponto e que a regra nao a TOCA:
-  // o dia em que o tipo dela for corrigido no banco, ela entra pelo caminho
-  // normal.
-  const [sobrevivente] = realizadoComCartaoPelaFatura([nula]);
+  // agregado de fluxo filtra income/expense. O ponto e que a regra nao a TOCA.
+  const [sobrevivente] = realizadoComCartaoPelaFatura([nula], []);
   assert.equal(sobrevivente.transaction_type, null);
 });
 
@@ -275,6 +293,12 @@ test("ESTORNO no cartao (income) sai junto, porque a fatura ja o abate", () => {
   assert.notEqual(resumo.total_income, 120);
 });
 
+test("a perna de entrada do pagamento, no cartao, nao e linha da fatura", () => {
+  // Ela mora no cartao, mas e `transfer`: a fatura nao a contem, e tira-la
+  // daqui esconderia o pagamento da tela de Transferencias por outro caminho.
+  assert.equal(ehCompraNoCartao(entradaDaFatura()), false);
+});
+
 // ---------------------------------------------------------------------------
 // As duas formas do embed, e a linha que nao tem conta
 // ---------------------------------------------------------------------------
@@ -283,8 +307,8 @@ test("o embed da conta e lido venha ele objeto OU array de um", () => {
   // `financial_transactions` e TABELA e o supabase-js devolve objeto -- mas a
   // rota atravessa a fronteira com um `as` e o tsc nao verifica nada ali. Lendo
   // so a forma objeto, um embed em array daria `undefined` em TODA linha,
-  // nenhuma casaria com `credit_card`, e o painel voltaria ao defeito desta
-  // issue sem erro, sem log e com o tsc verde (HMO-209).
+  // nenhuma casaria com `credit_card`, e o painel voltaria a contar o cartao em
+  // dobro sem erro, sem log e com o tsc verde (HMO-209).
   const emArray = compraNoCartao({ account: [{ account_type: "credit_card" }] });
   assert.equal(ehCompraNoCartao(emArray), true);
 
@@ -307,9 +331,8 @@ test("linha SEM conta FICA: 'nao sei' nao e 'e cartao'", () => {
 
 test("a parte de grupo atravessa a regra intacta", () => {
   // `partesComoTransacoes` (lib/parte-do-grupo-realizada.ts) entrega linhas sem
-  // conta, sem `notes` e sem elo: a MESMA lista que as transacoes. Elas nao
-  // podem ser tocadas aqui -- a minha parte de uma despesa de grupo nao e compra
-  // no cartao nem pagamento de fatura.
+  // conta: a MESMA lista que as transacoes. Elas nao podem ser tocadas aqui --
+  // a minha parte de uma despesa de grupo nao e linha de fatura minha.
   const parte = {
     amount: 200,
     transaction_type: "expense",
@@ -327,39 +350,35 @@ test("a parte de grupo atravessa a regra intacta", () => {
 
 test("a lista de entrada nao e alterada", () => {
   // A rota le a mesma lista mais de uma vez (uma vez por moeda, em
-  // `agregarTransacoesPorMoeda`). Reescrever `transaction_type` no proprio
-  // objeto seria um efeito a distancia invisivel nas duas funcoes.
-  const original = saidaDaFatura();
-  const [promovida] = realizadoComCartaoPelaFatura([original]);
+  // `agregarTransacoesPorMoeda`). Tirar ou acrescentar no proprio array seria
+  // um efeito a distancia invisivel nas duas funcoes.
+  const linhas = [despesa(), compraNoCartao()];
+  const faturas = [linhaDaFatura()];
+  const saida = realizadoComCartaoPelaFatura(linhas, faturas);
 
-  assert.equal(promovida.transaction_type, "expense");
-  assert.equal(original.transaction_type, "transfer");
+  assert.equal(linhas.length, 2);
+  assert.equal(faturas.length, 1);
+  assert.notEqual(saida, linhas);
 });
 
 // ---------------------------------------------------------------------------
-// As colunas que a consulta precisa pedir
+// As colunas que as consultas precisam pedir
 // ---------------------------------------------------------------------------
 
-test("as cinco colunas load-bearing estao na lista que a rota pede", () => {
-  // Nenhuma das cinco aparece na tela, e tirar qualquer uma do `select` nao
-  // quebra tsc nem assercao de unidade: a regra passa a receber `undefined`,
-  // deixa de casar, e o painel volta ao defeito. Este bloco e o que torna o
-  // `select` parte do contrato.
+test("as colunas load-bearing estao na lista que a rota pede", () => {
+  // Nenhuma delas aparece na tela, e tirar qualquer uma do `select` nao quebra
+  // tsc nem assercao de unidade: a regra passa a receber `undefined`, deixa de
+  // casar, e o painel volta ao defeito. Este bloco e o que torna o `select`
+  // parte do contrato.
   for (const coluna of [
     "amount",
     "transaction_type",
     "currency",
-    "notes",
-    "counterpart_transaction_id",
     // HMO-453: quem FILTRA por ela e a ROTA (`apenasNosTotais` no laco de
     // paginacao de /api/reports/cash-flow), nao este modulo -- mas e esta
-    // lista que a pede, e so o caminho `cartao=fatura` a usa. Sem a coluna
-    // aqui, o Realizado do painel recebe o campo `undefined` em toda linha, o
-    // predicado `!== false` deixa tudo passar, e a linha que a pessoa tirou
-    // dos relatorios volta a contar. Nenhum `tsc` e nenhuma assercao de
-    // unidade DESTE arquivo nota, que e o que faz dela a mais facil de perder
-    // numa limpeza de "campos nao usados" -- foi o que aconteceu com
-    // `account_type` na HMO-260.
+    // lista que a pede no relatorio pessoal. Sem a coluna, o campo chega
+    // `undefined` em toda linha, o predicado `!== false` deixa tudo passar, e a
+    // linha que a pessoa tirou dos relatorios volta a contar.
     "include_in_total",
     "account_type",
   ]) {
@@ -378,130 +397,20 @@ test("as cinco colunas load-bearing estao na lista que a rota pede", () => {
     ),
     "account_type tem de vir pelo embed de financial_accounts"
   );
-});
 
-// ---------------------------------------------------------------------------
-// OS DOIS LEITORES DA FATURA PAGA CONCORDAM -- HMO-317
-// ---------------------------------------------------------------------------
-// O controle que NAO EXISTIA EM LUGAR NENHUM enquanto havia duas copias do
-// criterio. Com um dono so, `ehPagamentoDaFatura` responde pelos dois leitores:
-//
-//   * o PAINEL (`realizadoComCartaoPelaFatura`, deste modulo), onde a resposta
-//     decide se o `transaction_type` da linha e REESCRITO para `expense` -- o
-//     unico jeito de a fatura entrar num agregado que deixa `transfer` fora;
-//   * a tela de DESPESAS (`linhasDaTela`, lib/telas-de-movimentacao.ts), onde
-//     ela decide se a linha entra no Realizado com `natureza: "fatura"`.
-//
-// POR QUE A MATRIZ, E NAO UM "chamar as duas e comparar": com um dono unico,
-// comparar a funcao com ela mesma seria uma tautologia -- uma sonda que se mede
-// a si mesma. O que importa e que cada LEITOR continue fazendo com a linha
-// exatamente o que a funcao dona responde sobre ela. Um quarto criterio
-// acrescentado dentro de UM dos dois leitores (o jeito pelo qual a divergencia
-// voltaria) poe este bloco vermelho na linha em que os dois discordam.
-//
-// E A MATRIZ E A MESMA LISTA nos dois: as linhas sao construidas uma vez e
-// atravessam os dois leitores, porque dois fixtures parecidos divergiriam e o
-// bloco passaria a comparar duas perguntas diferentes.
-
-const EU = "a1b2c3d4-e5f6-4789-abcd-ef0123456789";
-const SEM_FIXAS = new Set();
-
-/** Os campos que `linhasDaTela` le a mais, e que o painel ignora. */
-const paraATela = (linha, id) => ({
-  ...linha,
-  id,
-  user_id: EU,
-  description: "linha",
-  transaction_date: "2026-10-10",
-});
-
-test("os dois leitores da fatura paga concordam, linha por linha", () => {
-  const casos = [
-    { nome: "perna de SAIDA do pagamento", linha: saidaDaFatura(), fatura: true },
-    { nome: "perna de ENTRADA com o elo", linha: entradaDaFatura(), fatura: false },
-    {
-      nome: "perna de ENTRADA sem o elo (a FK e ON DELETE SET NULL)",
-      linha: entradaDaFatura({ counterpart_transaction_id: null }),
-      fatura: false,
-    },
-    {
-      nome: "par de valor ZERO -- a decisao de produto da HMO-317",
-      linha: saidaDaFatura({ amount: 0, counterpart_transaction_id: null }),
-      fatura: false,
-    },
-    {
-      nome: "Pix entre contas proprias, sem chave",
-      linha: saidaDaFatura({ notes: "Reserva de emergência" }),
-      fatura: false,
-    },
-    {
-      nome: "nota escrita a mao que PARECE a chave canonica",
-      linha: saidaDaFatura({ notes: `${CHAVE_FATURA} paguei no debito` }),
-      fatura: false,
-    },
-    {
-      // A despesa nascida do elo da HMO-305: `expense`, negativa, com a chave e
-      // sem contraparte. Indistinguivel da perna de saida por tudo menos o
-      // `transaction_type` -- e e o criterio que o painel nao consegue medir
-      // sozinho (promover uma linha que JA e `expense` nao muda centavo nenhum).
-      nome: "despesa comum nascida do elo da fatura (HMO-305)",
-      linha: despesa({ amount: -1290, notes: CHAVE_FATURA }),
-      fatura: false,
-    },
-    {
-      // O ramo da fatura nao pode servir de desvio para a armadilha 5.
-      nome: "compra NO CARTAO carregando a chave",
-      linha: compraNoCartao({ notes: CHAVE_FATURA }),
-      fatura: false,
-    },
-    { nome: "despesa comum da conta corrente", linha: despesa(), fatura: false },
-  ];
-
-  // CONTROLE DA MATRIZ: ela tem de ter os dois lados da resposta. Uma matriz
-  // onde `fatura` fosse `false` em tudo passaria verde com os dois leitores
-  // dizendo "nao" para tudo -- inclusive para a fatura paga.
-  assert.ok(
-    casos.some((c) => c.fatura) && casos.some((c) => !c.fatura),
-    "a matriz perdeu um dos dois lados da resposta"
-  );
-
-  for (const [i, caso] of casos.entries()) {
-    // 1. A FUNCAO DONA.
-    assert.equal(
-      ehPagamentoDaFatura(caso.linha),
-      caso.fatura,
-      `ehPagamentoDaFatura discorda da matriz em: ${caso.nome}`
-    );
-
-    // 2. O LEITOR DO PAINEL. Ele e observavel por UMA coisa so: o
-    //    `transaction_type` da linha foi REESCRITO? Comparar com `"expense"`
-    //    solto daria verde na despesa comum, que ja chega `expense` -- e e
-    //    justamente ela que o criterio do tipo gravado separa.
-    const doPainel = realizadoComCartaoPelaFatura([caso.linha]);
-    const reescrita =
-      doPainel.length === 1 &&
-      doPainel[0].transaction_type !== caso.linha.transaction_type;
-    assert.equal(
-      reescrita,
-      caso.fatura,
-      `o Realizado do painel discorda da funcao dona em: ${caso.nome}`
-    );
-
-    // 3. O LEITOR DA TELA DE DESPESAS. Observavel pela `natureza`: e `"fatura"`
-    //    exatamente na linha que a funcao dona reconhece, e a linha que ela
-    //    recusa ou fica de fora da tela ou entra como despesa comum.
-    const daTela = linhasDaTela(
-      [paraATela(caso.linha, `t${i}`)],
-      [],
-      "expense",
-      SEM_FIXAS,
-      EU
-    );
-    const comoFatura = daTela.length === 1 && daTela[0].natureza === "fatura";
-    assert.equal(
-      comoFatura,
-      caso.fatura,
-      `a tela de Despesas discorda da funcao dona em: ${caso.nome}`
+  // E A VIEW DA FATURA PAGA. `include_in_total` pelo mesmo motivo; os outros
+  // sao a chave da fatura (cartao e mes), o recorte (vencimento) e o valor.
+  for (const coluna of [
+    "account_id",
+    "invoice_month",
+    "due_date",
+    "invoice_amount",
+    "currency",
+    "include_in_total",
+  ]) {
+    assert.ok(
+      COLUNAS_DA_FATURA_PAGA.split(", ").includes(coluna),
+      `COLUNAS_DA_FATURA_PAGA perdeu ${coluna}`
     );
   }
 });
@@ -509,16 +418,13 @@ test("os dois leitores da fatura paga concordam, linha por linha", () => {
 // ---------------------------------------------------------------------------
 // O LANCAMENTO FORA DOS TOTAIS -- O QUE ESTE MODULO *NAO* FAZ (HMO-453)
 // ---------------------------------------------------------------------------
-// `realizadoComCartaoPelaFatura` NAO filtra por `include_in_total`, e isso e
-// decisao e nao esquecimento: o filtro vive UMA PORTA ACIMA, no laco de
-// paginacao de /api/reports/cash-flow, porque so la ele cobre os DOIS caminhos
-// do ramo de intervalo (com e sem `cartao=fatura`). Um segundo filtro aqui
-// seria codigo morto no unico chamador que existe -- e codigo morto nao tem
-// mutante que morra.
-//
-// Os dois blocos abaixo prendem a decisao pelos dois lados. Se alguem
-// acrescentar o filtro aqui, o primeiro fica vermelho; se alguem tirar o filtro
-// da rota, e `test:fora-dos-totais-nas-somas` que fica.
+// `realizadoComCartaoPelaFatura` NAO filtra as linhas de `financial_transactions`
+// por `include_in_total`, e isso e decisao e nao esquecimento: o filtro vive UMA
+// PORTA ACIMA, no laco de paginacao de /api/reports/cash-flow. Um segundo filtro
+// aqui seria codigo morto no unico chamador que existe -- e codigo morto nao tem
+// mutante que morra. As linhas da FATURA sao outra fonte, e o filtro delas mora
+// em `faturasPagasComoTransacoes` (o bloco "a linha da fatura fora dos totais"
+// acima).
 
 test("a regra do cartao atravessa a linha desmarcada INTACTA", () => {
   // A linha chega aqui ja filtrada pela rota. Receber uma desmarcada e o
@@ -532,19 +438,7 @@ test("a regra do cartao atravessa a linha desmarcada INTACTA", () => {
     account: { account_type: "checking" },
   };
 
-  const saida = realizadoComCartaoPelaFatura([desmarcada]);
+  const saida = realizadoComCartaoPelaFatura([desmarcada], []);
   assert.equal(saida.length, 1);
   assert.equal(saida[0].include_in_total, false);
-});
-
-test("e o flag sobrevive a PROMOCAO do pagamento da fatura", () => {
-  // A perna de saida e reescrita para 'expense' por copia (`{ ...linha }`).
-  // Se a copia perdesse `include_in_total`, a rota -- que filtra ANTES -- nao
-  // notaria, mas um chamador novo que filtrasse DEPOIS passaria a contar toda
-  // fatura paga desmarcada. O campo tem de atravessar.
-  const original = saidaDaFatura({ include_in_total: false });
-
-  const [promovida] = realizadoComCartaoPelaFatura([original]);
-  assert.equal(promovida.transaction_type, "expense");
-  assert.equal(promovida.include_in_total, false);
 });

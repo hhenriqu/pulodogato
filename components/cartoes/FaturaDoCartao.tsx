@@ -386,10 +386,16 @@ export function FaturaDoCartao({
 
           {/* A data de vencimento sai da PROPRIA fatura (invoice_due_date), e
               nao de uma conta em cima do due_day: quem sabe em que dia a fatura
-              daquele mes vence e card_invoice_due_date(), no banco. */}
+              daquele mes vence e card_invoice_due_date(), no banco.
+
+              A SEGUNDA FRASE E A REGRA DO RESULTADO (fase 6, RN017.4): as
+              compras desta lista nao entram sozinhas em Despesas, a fatura e
+              que entra, no mes do vencimento, quando for paga. Sem ela quem
+              lancou a compra aqui e nao a ve em Despesas le "sumiu". */}
           {podeMostrarNumero(estado) && fatura?.due_date && (
             <p className="text-xs text-muted-foreground">
-              Vence em {diaEMes(fatura.due_date)}.
+              Vence em {diaEMes(fatura.due_date)}. Entra em Despesas no mês do
+              vencimento, pelo total, quando for paga.
             </p>
           )}
         </CardContent>

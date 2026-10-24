@@ -32,6 +32,21 @@
 // `app/api/reports/cash-flow/route.ts` tem a decisao, os quatro numeros medidos
 // e por que os dois filtros do modo intervalo so funcionam juntos.
 //
+// O CARTAO CONTA PELA FATURA PAGA, ABERTA NAS COMPRAS (fase 6, RN017.4)
+// ---------------------------------------------------------------------
+// No relatorio pessoal a compra no cartao conta no mes do VENCIMENTO da fatura,
+// depois de paga, cada uma na sua categoria: a fatura e aberta nas compras dela
+// (decisao D1). O estorno abate a categoria dele, e uma categoria so com estorno
+// numa fatura fica com despesa NEGATIVA naquele mes -- ela fica na lista, para a
+// soma das categorias fechar com o total, e a pizza desenha so as positivas.
+//
+//   modo mes       -> `personal_category_monthly_totals` (a perna 5 da 072)
+//   modo intervalo -> AQUI: a linha do cartao sai (`ehCompraNoCartao`) e as
+//                     de `card_invoice_paid_entries` que vencem no periodo
+//                     entram por `faturasPagasPorCategoria`
+//
+// O grupo continua na compra, como em /api/reports/cash-flow.
+//
 // Aqui vale com um agravante: esta rota e o fluxo de caixa tem de ler o MESMO
 // conjunto de linhas, senao o total do periodo deixa de bater com a soma das
 // categorias e a pizza do painel nao fecha em 100%. Os dois filtros estao
@@ -47,6 +62,9 @@ import {
   ultimoDiaDoMes,
 } from "@/lib/periodo-do-painel";
 import { linhasDeCategoria } from "@/lib/categorias-do-periodo";
+import { ehCompraNoCartao, type ContaDaLinha } from "@/lib/realizado-do-caixa";
+import { faturasPagasPorCategoria } from "@/lib/fatura-paga-no-resultado";
+import { lerFaturasPagas } from "@/lib/services/fatura-paga-no-resultado";
 import { lerContasDoFechamentoRealizadas } from "@/lib/services/fechamento-no-resultado";
 import { lerJurosPagosDoMyBank } from "@/lib/services/divida-do-mybank";
 import {
@@ -124,8 +142,15 @@ export async function GET(request: NextRequest) {
           // respondeu 42501 (existe, a RLS barrou) e um nome inventado
           // respondeu 42703 com hint apontando a coluna de verdade -- a 060
           // esta colada.
+          //
+          // No relatorio pessoal entra o embed da conta (fase 6): e por ele que
+          // `ehCompraNoCartao` sabe que a linha esta numa fatura. Sem ele a
+          // regra recebe `undefined`, deixa tudo passar, e a compra conta duas
+          // vezes: no dia dela e na fatura.
           .select(
-            "category_id, amount, transaction_type, currency, include_in_total"
+            groupId
+              ? "category_id, amount, transaction_type, currency, include_in_total"
+              : "category_id, amount, transaction_type, currency, include_in_total, account:financial_accounts(account_type)"
           )
           .gte("transaction_date", periodo.de)
           // `lte` e nao `lt`: o periodo e fechado nos dois extremos, e o
@@ -161,7 +186,12 @@ export async function GET(request: NextRequest) {
         amount: number | string;
         transaction_type: string | null;
         currency?: string | null;
+        account?: ContaDaLinha | ContaDaLinha[] | null;
       }[] = [];
+
+      // As linhas das faturas pagas que vencem no periodo (fase 6). So no
+      // relatorio pessoal.
+      let porCategoriaDasFaturas: ReturnType<typeof faturasPagasPorCategoria> = [];
 
       for (let inicio = 0; ; inicio += TAMANHO_DA_PAGINA) {
         const { data, error } = await pagina(inicio);
@@ -174,8 +204,14 @@ export async function GET(request: NextRequest) {
           );
         }
 
-        const lote = data ?? [];
-        for (const linha of lote) transacoes.push(linha);
+        const lote = (data ?? []) as unknown as typeof transacoes;
+        for (const linha of lote) {
+          // A LINHA DO CARTAO SAI do relatorio pessoal: ela esta dentro da
+          // fatura, e a fatura entra abaixo, aberta nas compras. No do grupo a
+          // consulta nem pede a conta, e nada sai.
+          if (!groupId && ehCompraNoCartao(linha)) continue;
+          transacoes.push(linha);
+        }
         // Pagina incompleta = acabou. Uma pagina cheia pode ser a ultima, e
         // nesse caso a proxima volta vazia e o laco encerra do mesmo jeito.
         if (lote.length < TAMANHO_DA_PAGINA) break;
@@ -278,6 +314,23 @@ export async function GET(request: NextRequest) {
           );
         }
         for (const linha of partesComoTransacoes(jurosPagos.juros)) transacoes.push(linha);
+
+        // A FATURA PAGA (072, RN017.4), pelo VENCIMENTO, aberta nas compras.
+        // Falhar aqui e 500, pela razao da conta do fechamento logo acima.
+        const faturas = await lerFaturasPagas(
+          supabase,
+          user.id,
+          periodo.de,
+          periodo.ate
+        );
+        if (!faturas.ok) {
+          console.error("Erro nas faturas pagas do intervalo:", faturas.erro);
+          return NextResponse.json(
+            { error: "Não foi possível montar o relatório" },
+            { status: 500 }
+          );
+        }
+        porCategoriaDasFaturas = faturasPagasPorCategoria(faturas.linhas);
       }
 
       const { data: perfilDoIntervalo } = await perfilPromessa;
@@ -285,9 +338,15 @@ export async function GET(request: NextRequest) {
         perfilDoIntervalo?.preferences
       ).oficial;
 
+      // A FATURA ENTRA DEPOIS DE `linhasDeCategoria`, e nao como transacao para
+      // ela somar: ela soma `Math.abs`, e o estorno viraria despesa.
+      // `montarResposta` junta as duas linhas da mesma categoria.
       return montarResposta({
         supabase,
-        linhas: linhasDeCategoria(transacoes, moedaDoIntervalo).map((l) => ({
+        linhas: [
+          ...linhasDeCategoria(transacoes, moedaDoIntervalo),
+          ...porCategoriaDasFaturas,
+        ].map((l) => ({
           ...l,
           month: null,
         })),
@@ -500,7 +559,11 @@ async function montarResposta({
             // comecou.
             share: totalGasto > 0 ? Number((v.expense / totalGasto).toFixed(4)) : 0,
           }))
-          .filter((c) => c.expense > 0 || c.income > 0)
+          // `!== 0` e nao `> 0` desde a fase 6: a categoria so com estorno no
+          // cartao tem despesa NEGATIVA no mes da fatura, e tira-la da lista
+          // deixaria a soma das categorias diferente do total. A pizza da
+          // tela de relatorios desenha so as positivas.
+          .filter((c) => c.expense !== 0 || c.income !== 0)
           .sort((a, b) => b.expense - a.expense),
       };
     });
