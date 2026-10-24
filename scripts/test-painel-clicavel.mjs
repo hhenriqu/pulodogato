@@ -338,6 +338,11 @@ const PARTES = [
   "lib/recurrence.js",
   "lib/dinheiro.js",
   "lib/moeda.js",
+  // `lib/contas` e `lib/saldo-em-conta` entraram com o saldo em conta do
+  // painel (RN016.1.1, PR #405): a pagina importa `rotuloDoSaldoEmConta`, e
+  // sem a parte aqui a sonda parava no `__exige` antes de desenhar tile nenhum.
+  "lib/contas.js",
+  "lib/saldo-em-conta.js",
   "lib/recurrence-detector.js",
   "lib/periodo-do-painel.js",
   "lib/realizado-e-previsao.js",
@@ -618,6 +623,20 @@ const RESPOSTAS = [
   [/^\\/api\\/safe-to-spend/, () => ({ safe_to_spend: POSSO_GASTAR })],
   [/^\\/api\\/settings\\/dashboard/, () => ({ layout: null })],
   [/^\\/api\\/reports\\/net-worth\\?/, () => ({ months: [] })],
+  // O saldo em conta do periodo (RN016.1.1). Com \`saldo: null\` a pagina
+  // desenharia o \`NumeroIndisponivel\` no lugar do numero -- um esboco a mais
+  // na tela, de uma leitura que a sonda fingiria ter falhado.
+  [/^\\/api\\/dashboard\\/saldo-em-conta\\?/, () => ({
+    saldo: {
+      desde: "2026-08-01",
+      ate: "2026-08-31",
+      saldo_inicial: 2700,
+      entradas: 4000,
+      saidas: 2500,
+      saldo_final: 4200,
+      contas: 1,
+    },
+  })],
 ];
 
 window.fetch = async function (url) {
