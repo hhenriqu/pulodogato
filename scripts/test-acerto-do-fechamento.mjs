@@ -22,6 +22,11 @@
 //      conferencia antes, o dinheiro voltaria para a conta e a divida
 //      continuaria dada como paga;
 //   4. O FECHAMENTO DO PERIODO devolve o que esta em aberto e os pares.
+//   5. A TRANSFERENCIA PREVISTA PARA O CARTAO (24/10/2026). A mesma familia do
+//      bloco 2, com outra conta: o cartao so recebe dinheiro pelo pagamento da
+//      fatura, e a baixa de uma transferencia mensal para ele (criada antes da
+//      regra) responde 409 sem gravar perna nenhuma. Mora aqui porque esta e a
+//      suite que ja chama o `/pay` de verdade com o duble.
 //
 // Cada bloco tem o CONTROLE junto: a mesma chamada sem a condicao, que tem de
 // seguir outro caminho. Sem isso, "respondeu 409" passaria verde numa rota que
@@ -445,4 +450,64 @@ test("nada em aberto: listas vazias; a leitura que falha e 500, nao 'tudo quitad
   const falhou = await lerFechamento({ erro: { message: "permission denied" } });
   assert.equal(falhou.status, 500);
   assert.equal(falhou.corpo.em_aberto, undefined);
+});
+
+// -----------------------------------------------------
+// 5. A transferencia prevista para o cartao
+// -----------------------------------------------------
+const { mensagemDaBaixaDeTransferencia } = await import(`${RAIZ}/lib/transferencia.js`);
+
+const CORRENTE = "c0c0c0c0-0000-0000-0000-000000000001";
+const CARTAO = "c0c0c0c0-0000-0000-0000-000000000002";
+const POUPANCA = "c0c0c0c0-0000-0000-0000-000000000003";
+
+/** A ocorrencia de uma regra mensal "Corrente -> destino", da Lais. */
+function transferenciaPrevista(destino) {
+  const linha = {
+    ...prevista({ geradaPeloFechamento: false }),
+    description: "Pagamento do cartão",
+    direction: "transfer",
+    transaction_type: "transfer",
+    account_id: CORRENTE,
+    destination_account_id: destino,
+  };
+  return {
+    scheduled_transactions: [linha],
+    financial_transactions: [],
+    financial_services: [{ id: "servico-pessoal", name: "personal_finance" }],
+    financial_accounts: [
+      { id: CORRENTE, user_id: LAIS, name: "Corrente", account_type: "checking" },
+      { id: CARTAO, user_id: LAIS, name: "Cartão", account_type: "credit_card" },
+      { id: POUPANCA, user_id: LAIS, name: "Poupança", account_type: "savings" },
+    ],
+  };
+}
+
+test("a baixa da transferencia prevista para o CARTAO e recusada com 409, e nada e gravado", async () => {
+  const r = await chamar(ROTA_PAY.POST, {
+    tabelas: transferenciaPrevista(CARTAO),
+    corpo: { paid_date: "2026-10-09" },
+    params: { id: PREVISTA },
+  });
+  assert.equal(r.status, 409);
+  assert.equal(r.corpo.error, mensagemDaBaixaDeTransferencia("destino_e_cartao"));
+  // Nenhuma perna: a recusa vem ANTES da primeira escrita. Uma saida gravada
+  // aqui seria o dinheiro saindo da corrente sem a fatura ser paga.
+  assert.deepEqual(r.escritas, []);
+});
+
+test("CONTROLE: a mesma transferencia para a POUPANCA passa da guarda e grava as pernas", async () => {
+  const r = await chamar(ROTA_PAY.POST, {
+    tabelas: transferenciaPrevista(POUPANCA),
+    corpo: { paid_date: "2026-10-09" },
+    params: { id: PREVISTA },
+  });
+  // Sem este controle, "respondeu 409" passaria verde numa rota que recusasse
+  // toda transferencia prevista -- ou que lesse o tipo da ORIGEM no lugar do
+  // destino.
+  assert.notEqual(r.status, 409);
+  const pernas = r.escritas.filter(
+    (e) => e.tabela === "financial_transactions" && e.verbo === "insert"
+  );
+  assert.equal(pernas.length, 2, JSON.stringify(r.escritas));
 });

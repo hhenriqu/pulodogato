@@ -8,8 +8,9 @@
 // aba e o dinheiro fica so saindo.
 //
 // O mesmo motivo faz a validacao morar aqui e nao so no formulario: o
-// `account_type` que decide se uma conta pode ser origem tem que vir do banco.
-// Vindo do cliente, bastaria mandar outro para gravar uma saida num cartao.
+// `account_type` que decide se uma conta pode ser origem ou destino tem que vir
+// do banco. Vindo do cliente, bastaria mandar outro para gravar uma saida num
+// cartao, ou para pagar o cartao por fora da fatura (`destino_e_cartao`).
 // ---------------------------------------------------------------------------
 
 import { createClient } from "@/utils/supabase/server";

@@ -107,7 +107,8 @@ export type ProblemaDaTransferencia =
   | "origem_nao_encontrada"
   | "destino_nao_encontrado"
   | "mesma_conta"
-  | "origem_e_cartao";
+  | "origem_e_cartao"
+  | "destino_e_cartao";
 
 /** O que a validacao precisa saber de cada conta. */
 export interface ContaDaTransferencia {
@@ -132,9 +133,17 @@ export interface ContaDaTransferencia {
  * - `origem_e_cartao`: cartao de credito nao tem saldo de onde tirar dinheiro,
  *   tem divida. Uma saida nele criaria divida sem compra nenhuma por tras, e
  *   essa linha entraria na fatura do mes cobrando algo que nao foi comprado.
- *   O caminho certo para mover dinheiro PARA um cartao e o pagamento da
- *   fatura, que ja existe -- e por isso o cartao continua valendo como
- *   DESTINO: quem adianta dinheiro para o cartao esta quitando divida.
+ * - `destino_e_cartao`: o cartao so recebe dinheiro pelo pagamento da fatura.
+ *   "Contas que sao de uma fatura de cartao nao podem ser pagas avulsas,
+ *   apenas com pagamento da fatura do cartao" (Helio, 24/10/2026). Ate aqui o
+ *   cartao valia como destino ("quem adianta dinheiro para o cartao esta
+ *   quitando divida"), e era esse o pagamento POR FORA: a transferencia
+ *   avulsa baixava a divida do cartao e a fatura continuava em aberto, sem
+ *   baixa. Desde a fase 6 a fatura so entra no Realizado quando e paga pelo
+ *   «Pagar» dela (RN017.3), entao as compras daquela fatura ficavam no
+ *   Previsto para sempre, com o dinheiro ja saido da corrente. Adiantar o
+ *   pagamento continua possivel, pelo mesmo «Pagar»: a fatura aberta tambem
+ *   tem o botao (lib/pagamento-da-fatura.ts).
  *
  * Conta arquivada (`is_active = false`) nao e recusada, pelo mesmo motivo da
  * `validarContaPagadora`: quem esta movendo dinheiro de uma conta que fechou
@@ -152,6 +161,7 @@ export function validarContasDaTransferencia(
   }
   if (origem.id === destino.id) return "mesma_conta";
   if (origem.account_type === "credit_card") return "origem_e_cartao";
+  if (destino.account_type === "credit_card") return "destino_e_cartao";
   return null;
 }
 
@@ -195,6 +205,16 @@ export function camposDeDestinoDaRegra(
   };
 }
 
+/**
+ * A frase da recusa do cartao como destino, no formulario e nas duas rotas que
+ * criam a transferencia (a avulsa e a regra mensal). Ela diz onde fica o
+ * caminho que sobrou. A baixa de uma transferencia prevista que ja estava na
+ * agenda tem frase propria (`mensagemDaBaixaDeTransferencia`), porque ali a
+ * pessoa nao esta preenchendo formulario nenhum.
+ */
+export const MENSAGEM_DO_CARTAO_SO_PELA_FATURA =
+  "O cartão de crédito só recebe dinheiro pelo pagamento da fatura. Use o «Pagar» da fatura, em Contas Previstas ou na aba Despesas.";
+
 /** Mensagem para o usuario. Nem a rota nem a tela inventam texto proprio. */
 export function mensagemDaTransferencia(
   problema: ProblemaDaTransferencia
@@ -212,6 +232,8 @@ export function mensagemDaTransferencia(
       return "A conta de destino tem que ser diferente da de origem";
     case "origem_e_cartao":
       return "Cartão de crédito não pode ser a origem. Para quitar a fatura, use Contas Previstas.";
+    case "destino_e_cartao":
+      return MENSAGEM_DO_CARTAO_SO_PELA_FATURA;
   }
 }
 
@@ -403,14 +425,28 @@ export function validarTransferencia(
 /**
  * As contas que cabem em cada seletor.
  *
- * O cartao sai da ORIGEM e fica no DESTINO. Filtrar na tela e o que evita a
- * recusa depois do envio, mas nao substitui `validarContasDaTransferencia`: o
- * corpo do POST nao vem so da tela.
+ * O cartao sai dos DOIS: da origem porque nao tem saldo de onde tirar, e do
+ * destino porque so recebe dinheiro pelo pagamento da fatura (ver
+ * `destino_e_cartao` em `validarContasDaTransferencia`). Filtrar na tela e o
+ * que evita a recusa depois do envio, mas nao substitui
+ * `validarContasDaTransferencia`: o corpo do POST nao vem so da tela.
  */
 export function contasDeOrigem<T extends { account_type?: string | null }>(
   contas: T[]
 ): T[] {
   return contas.filter((c) => c.account_type !== "credit_card");
+}
+
+/**
+ * O seletor de destino. Hoje e a MESMA lista da origem, e por isso chama
+ * `contasDeOrigem` em vez de repetir o filtro: as duas recusas tem motivos
+ * diferentes, mas o recorte e um so, e duas copias dele divergiriam no
+ * primeiro conserto que so uma recebesse.
+ */
+export function contasDeDestino<T extends { account_type?: string | null }>(
+  contas: T[]
+): T[] {
+  return contasDeOrigem(contas);
 }
 
 /**
@@ -480,7 +516,8 @@ export function regraDeTransferenciaRecorrente(
 export type ProblemaDaBaixaDeTransferencia =
   | "sem_origem"
   | "sem_destino"
-  | "mesma_conta";
+  | "mesma_conta"
+  | "destino_e_cartao";
 
 /**
  * Esta conta prevista esta em condicao de virar as duas pernas? (HMO-172)
@@ -502,13 +539,30 @@ export type ProblemaDaBaixaDeTransferencia =
  * falharia no passo seguinte. A recusa com mensagem e o unico comportamento
  * honesto nessa janela.
  */
-export function validarBaixaDeTransferencia(conta: {
-  account_id?: string | null;
-  destination_account_id?: string | null;
-}): ProblemaDaBaixaDeTransferencia | null {
+export function validarBaixaDeTransferencia(
+  conta: {
+    account_id?: string | null;
+    destination_account_id?: string | null;
+  },
+  /**
+   * O tipo da conta de destino, LIDO DO BANCO pela rota. A linha da agenda so
+   * tem o id, e o tipo e o que decide se a transferencia vai para um cartao.
+   *
+   * `null`/ausente = nao deu para ler, e a baixa segue: a regra do cartao e
+   * conferida tambem na criacao (`validarContasDaTransferencia`), e recusar
+   * no "nao sei" travaria uma transferencia legitima sem dizer por que.
+   */
+  tipoDoDestino?: string | null
+): ProblemaDaBaixaDeTransferencia | null {
   if (!conta.account_id) return "sem_origem";
   if (!conta.destination_account_id) return "sem_destino";
   if (conta.account_id === conta.destination_account_id) return "mesma_conta";
+  // A TRANSFERENCIA RECORRENTE PARA O CARTAO, CRIADA ANTES DA REGRA. A regra
+  // nova ja nao deixa criar outra, mas as ocorrencias de uma regra antiga
+  // continuam chegando a agenda, e confirmar uma delas seria o pagamento por
+  // fora do mesmo jeito. Ver `destino_e_cartao` em
+  // `validarContasDaTransferencia`.
+  if (tipoDoDestino === "credit_card") return "destino_e_cartao";
   return null;
 }
 
@@ -528,6 +582,8 @@ export function mensagemDaBaixaDeTransferencia(
       return "Esta transferência prevista não diz para qual conta o dinheiro vai. Edite-a antes de confirmar.";
     case "mesma_conta":
       return "A conta de destino desta transferência é igual à de origem. Edite-a antes de confirmar.";
+    case "destino_e_cartao":
+      return "Esta transferência prevista vai para um cartão de crédito, e o cartão só recebe dinheiro pelo pagamento da fatura. Pague pelo «Pagar» da fatura e exclua esta transferência prevista.";
   }
 }
 

@@ -55,6 +55,7 @@ import {
 import { useOfflineQueue } from "@/lib/hooks/useOfflineQueue";
 import {
   camposDaTransferencia,
+  contasDeDestino,
   contasDeOrigem,
   destinoDaTransferencia,
   validarTransferencia,
@@ -154,7 +155,7 @@ export function FormularioDeTransferencia() {
   }, []);
 
   const origens = contasDeOrigem(contas);
-  const destinos = contas;
+  const destinos = contasDeDestino(contas);
   // Os campos da recorrencia e as opcoes de natureza saem de lib/, nunca de um
   // `natureza === "fixed"` escrito no JSX: duas copias da mesma condicao se
   // mascaram, e quebrar uma delas nao deixa teste nenhum vermelho.
@@ -382,6 +383,15 @@ export function FormularioDeTransferencia() {
                       ))}
                   </SelectContent>
                 </Select>
+                {/* O cartao fora do destino tambem, e pelo mesmo motivo da
+                    frase da origem: sem ela o cartao "some" e parece defeito.
+                    A frase diz o caminho que sobrou, que e o «Pagar» da
+                    fatura (`destino_e_cartao`, lib/transferencia.ts). */}
+                <p className="text-xs text-muted-foreground">
+                  Cartão de crédito também não aparece aqui: ele só recebe
+                  dinheiro pelo pagamento da fatura, no «Pagar» da fatura em
+                  Contas Previstas.
+                </p>
               </div>
 
               <div className="space-y-2">
@@ -544,10 +554,13 @@ export function FormularioDeTransferencia() {
 
             {/* So afirma a falta quando a lista chegou de verdade. Sem rede a
                 frase seria falsa para quem tem seis contas. */}
-            {contasLidas && contas.length < 2 && (
+            {/* `origens` e nao `contas`: o cartao nao serve de nenhum dos dois
+                lados, entao quem tem uma corrente e um cartao tem UMA conta
+                para transferencia, e o aviso tem de aparecer para essa pessoa. */}
+            {contasLidas && origens.length < 2 && (
               <p className="text-sm text-warning">
-                Transferência precisa de duas contas cadastradas. Cadastre em
-                Contas antes de lançar.
+                Transferência precisa de duas contas cadastradas, sem contar o
+                cartão de crédito. Cadastre em Contas antes de lançar.
               </p>
             )}
             {!contasLidas && (

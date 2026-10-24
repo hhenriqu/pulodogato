@@ -563,14 +563,34 @@ async function pagarTransferencia(params: {
 }): Promise<NextResponse> {
   const { supabase, userId, serviceId, conta, valorPago, paid_date } = params;
 
+  // O TIPO DO DESTINO, LIDO ANTES DA PRIMEIRA ESCRITA. O cartao so recebe
+  // dinheiro pelo pagamento da fatura (`destino_e_cartao`, lib/transferencia.ts),
+  // e a regra mensal criada antes dessa regra continua pondo ocorrencias na
+  // agenda. A linha da agenda so tem o id do destino; o tipo vem do banco, com
+  // `user_id` no filtro como toda leitura de conta desta rota.
+  let tipoDoDestino: string | null = null;
+  if (conta.destination_account_id) {
+    const { data: destino } = await supabase
+      .from("financial_accounts")
+      .select("account_type")
+      .eq("id", conta.destination_account_id)
+      .eq("user_id", userId)
+      .maybeSingle();
+    tipoDoDestino = destino?.account_type ?? null;
+  }
+
   // RECUSA ANTES DA PRIMEIRA ESCRITA. Descobrir no passo 2 que nao ha destino
   // deixaria a perna de saida no saldo -- metade de uma transferencia, o estado
   // que esta issue existe para impedir. Ver `validarBaixaDeTransferencia`.
-  const problema = validarBaixaDeTransferencia(conta);
+  //
+  // 409 no cartao, como na conta do fechamento: a conta prevista esta inteira,
+  // e quem recusa e a regra ("o cartao so recebe pela fatura"). As outras tres
+  // sao uma linha incompleta, que se conserta editando -- 400.
+  const problema = validarBaixaDeTransferencia(conta, tipoDoDestino);
   if (problema) {
     return NextResponse.json(
       { error: mensagemDaBaixaDeTransferencia(problema) },
-      { status: 400 }
+      { status: problema === "destino_e_cartao" ? 409 : 400 }
     );
   }
 

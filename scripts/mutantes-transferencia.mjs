@@ -24,7 +24,7 @@ const original = readFileSync(ALVO, "utf8");
 // `const MUTANTES = [` ou `const mutantes = [`, e enquanto esta lista se chamava
 // `MUTACOES` nenhum deles casava -- este runner era DESCARTADO EM SILENCIO por
 // `npm run check-ancora-de-mutante`, a guarda que confere se cada `de` ainda
-// aparece (uma vez so) no arquivo que ele muta. Renomear de volta tira os 12
+// aparece (uma vez so) no arquivo que ele muta. Renomear de volta tira os 13
 // mutantes daqui da medicao outra vez.
 const MUTANTES = [
   {
@@ -53,9 +53,13 @@ const MUTANTES = [
     para: "",
   },
   {
-    nome: "cartao passa a ser recusado tambem como DESTINO",
-    de: '  if (origem.account_type === "credit_card") return "origem_e_cartao";',
-    para: '  if (origem.account_type === "credit_card" || destino.account_type === "credit_card") return "origem_e_cartao";',
+    // O INVERSO DO MUTANTE QUE ESTAVA AQUI. Ate 24/10/2026 o cartao valia como
+    // destino, e o mutante era "passa a ser recusado". Desde que o cartao so
+    // recebe pela fatura, o defeito caro e o caminho de volta: a transferencia
+    // avulsa para o cartao e o pagamento por fora, com a fatura em aberto.
+    nome: "cartao volta a servir de destino (o pagamento por fora)",
+    de: '  if (destino.account_type === "credit_card") return "destino_e_cartao";',
+    para: "",
   },
   {
     nome: "ausente e nao-encontrada viram o mesmo motivo",
@@ -85,6 +89,11 @@ const MUTANTES = [
   {
     nome: "contasDeOrigem deixa de filtrar o cartao",
     de: '  return contas.filter((c) => c.account_type !== "credit_card");',
+    para: "  return contas;",
+  },
+  {
+    nome: "contasDeDestino volta a oferecer o cartao",
+    de: "  return contasDeOrigem(contas);",
     para: "  return contas;",
   },
   {

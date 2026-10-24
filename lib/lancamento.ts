@@ -201,8 +201,10 @@ export type TipoDeRegra = TipoLancamento | "transfer";
  *     fatura que nao passa por `pernasDoPagamentoDeFatura` -- duas fontes para a
  *     mesma regra de sinal, que e exatamente o que a HMO-149 custou.
  *
- * O cartao continua valendo como DESTINO de uma transferencia pontual; quem
- * decide isso e `validarContasDaTransferencia`, nao esta funcao.
+ * Desde 24/10/2026 o cartao tambem nao vale como DESTINO de transferencia
+ * nenhuma, pontual ou mensal: ele so recebe dinheiro pelo pagamento da fatura.
+ * Quem decide isso e `validarContasDaTransferencia` (`destino_e_cartao`), nao
+ * esta funcao.
  */
 export function naturezasDoTipo(tipo: TipoDeRegra): NaturezaDespesa[] {
   return tipo === "expense"

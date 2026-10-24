@@ -5,7 +5,7 @@
 > **Documento de referência do produto.** Descreve o que o Pulo do Gato é, as
 > regras de negócio que valem, e o que ainda é requisito não implementado.
 
-**Versão:** 2.5
+**Versão:** 2.6
 **Data:** 24 de outubro de 2026
 **Projeto:** Pulo do Gato — gestão financeira familiar
 **Tipo:** Progressive Web App (PWA)
@@ -24,6 +24,7 @@
 | 2.3 | 23/10/2026 | Fase 5, primeira parte: divisão com pessoa pelo lançamento (RN020, com RN020.6 e RN020.7 novas). O acerto da RN019 fica só para o grupo | Helio (decisões D1 a D5) |
 | 2.4 | 23/10/2026 | Fase 5, segunda parte: MyBank (RN021, com RN021.6 nova). Só os juros entram no Resultado, e o empréstimo a si mesmo sai de Despesas | Helio (decisões D1 a D5) |
 | 2.5 | 24/10/2026 | Fase 6: o cartão pela fatura (RN017.3 e RN017.4). A fatura paga conta no mês do vencimento, pelo total das compras, e a compra e o estorno no cartão saem do Resultado. Conclui o modelo novo | Helio (decisões D1 a D5) |
+| 2.6 | 24/10/2026 | RN004.4 nova: o cartão só recebe dinheiro pelo pagamento da fatura. A transferência avulsa ou mensal para um cartão é recusada | Helio |
 
 > **O que a versão 2.0 corrigiu.** Até aqui esta PRD descrevia um app de carteira
 > de investimentos: o problema era "investidores pessoa física", as personas eram
@@ -268,6 +269,11 @@ a tela não pode contorná-las. As marcadas **(tela)** vivem em TypeScript testa
   de contar sozinhas.
 - RN004.3 Detectar "é fatura" pelo tipo de conta é proibido: isso apagaria a
   despesa de toda assinatura lançada no cartão.
+- RN004.4 As contas de uma fatura só se pagam pelo **pagamento da fatura**: o
+  cartão de crédito não é destino de transferência avulsa nem de transferência
+  mensal, e a baixa de uma transferência prevista para um cartão é recusada.
+  Pagar antes do vencimento, ou um valor diferente do total, continua pelo
+  «Pagar» da fatura.
 
 ### RN005 — Parcelamento ✅
 
