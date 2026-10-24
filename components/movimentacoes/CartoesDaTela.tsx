@@ -203,10 +203,14 @@ export function CartoesDaTela({
             `podeMostrarNumero` tambem aqui, e pelo motivo do vencido e do
             reembolso: "R$ 30,00 a receber" dito sobre um cache de ontem pode ja
             ter sido pago.
+
+            SO O JURO desde a fase 5 (RN021.3): o principal que volta e
+            transferencia, e a frase diz "juros de" para o numero nao ser lido
+            como a parcela inteira.
           */}
           {podeMostrarNumero(estado) && resumo?.a_receber_do_mybank && (
             <p className="text-xs text-muted-foreground">
-              inclui {moeda(resumo.a_receber_do_mybank.total)} a receber de{" "}
+              inclui juros de {moeda(resumo.a_receber_do_mybank.total)} a receber de{" "}
               {resumo.a_receber_do_mybank.devedores}{" "}
               {resumo.a_receber_do_mybank.devedores === 1
                 ? "pessoa"

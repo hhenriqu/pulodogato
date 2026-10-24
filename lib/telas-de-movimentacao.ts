@@ -173,6 +173,13 @@
 //      tipo, e sem o sinal as DUAS entrariam em Despesas -- R$ 2.000 para uma
 //      parcela de R$ 1.000.
 //
+//      DESDE A FASE 5 DO MODELO NOVO (RN021.4) A PARCELA DO CASO A NAO ENTRA
+//      MAIS EM DESPESAS, nem prevista nem paga. A aba Despesas passou a ser a
+//      metade de Despesas do Resultado do mes (RN016), e o emprestimo a si
+//      mesmo nao tira dinheiro de casa: as duas pernas sao transferencia. Ela
+//      fica em Transferencias, com o selo. `ehSaidaDaParcelaDoAutoEmprestimo`
+//      continua decidindo o selo da perna de saida la.
+//
 // O "TOTAL" E PREVISTO + REALIZADO, E ISSO E O PEDIDO
 // ---------------------------------------------------
 // E a mesma definicao do fechamento do mes do grupo (HMO-245): o que o periodo
@@ -359,11 +366,10 @@ export const STATUS_QUE_SAI_DO_PREVISTO: ReadonlySet<string> = new Set([
  * seria um rotulo errado sobre um numero certo.
  *
  * `"mybank"` ENTROU NA HMO-372, e e o SELO que a decisao 1 da HMO-368 pede.
- * Ele existe porque a parcela do auto-emprestimo e a unica linha da aba
- * Despesas que e uma TRANSFERENCIA na coluna do banco: sem o selo, ela se le
- * como uma despesa comum, e quem conferir o extrato vai procurar um gasto de
- * R$ 1.000 que nao existe -- o dinheiro foi para a propria conta de
- * investimento da pessoa. Ver `ehParcelaDoAutoEmprestimo`.
+ * Ele diz onde a linha e operada: a parcela do auto-emprestimo em
+ * Transferencias (`ehParcelaDoAutoEmprestimo`), e desde a fase 5 (RN021.3) o
+ * JURO do emprestimo de quem pegou em Despesas, previsto
+ * (`ehParcelaDevidaDoMyBank`) e pago (`ehJuroPagoDoMyBank`).
  */
 export type NaturezaDaLinha = "despesa" | "fatura" | "fixa" | "mybank";
 
@@ -1191,29 +1197,18 @@ const temOEloDaParcelaDoMyBank = (notas: unknown): boolean =>
 /**
  * Esta previsao e a parcela de um AUTO-EMPRESTIMO do MyBank?
  *
- * POR QUE ELA PRECISA DE UMA EXCECAO (HMO-372, leitura 2 de 7)
- * -----------------------------------------------------------
- * A decisao 1 da HMO-368 diz, aprovada: o auto-emprestimo e GRAVADO como
- * transferencia (e so assim o «Total de contas» fica certo -- o dinheiro vai da
- * minha conta corrente para a minha conta de investimento, e patrimonio nenhum
- * muda) e APARECE em Despesas (porque no dia 10 saem R$ 1.000 da conta
- * corrente, que e a pergunta que a aba Despesas passou a responder na HMO-364:
- * "quanto sai da sua conta", e nao "o que deixou de ser seu").
+ * Ela decide o SELO da parcela na aba Transferencias. A parcela e gravada como
+ * transferencia (decisao 1 da HMO-368): o dinheiro vai da minha conta corrente
+ * para a minha conta de investimento, e patrimonio nenhum muda.
  *
- * Sem esta excecao as duas metades da decisao se excluem: `linhaPrevista`
- * deriva `tipo` de `direction`, `direction` e `'transfer'`, e a peneira
- * `linha.tipo === tipo` manda a parcela SO para a aba Transferencias. A pessoa
- * abre Despesas no dia 9, nao ve a parcela, e conclui que o MyBank nao cobrou.
- *
- * E A LINHA CONTINUA EM TRANSFERENCIAS, nas duas abas, pelo mesmo mecanismo e
- * pela mesma razao da fatura paga (`ehPagamentoDaFatura`): o «Total» de cada aba
- * e o da propria aba, entao nao ha numero nenhum em que ela entre duas vezes --
- * e tira-la de Transferencias esconderia uma transferencia de verdade, que e o
- * que aquela aba existe para listar.
+ * DA HMO-372 ATE A FASE 4 ELA TAMBEM TRAZIA A PARCELA PARA DESPESAS, por uma
+ * excecao em `linhasDaTela` ("quanto sai da sua conta"). Desde a fase 5
+ * (RN021.4) a aba Despesas e a metade de Despesas do Resultado do mes, e o
+ * emprestimo a si mesmo nao e despesa: a parcela fica so em Transferencias.
  *
  * OS DOIS CRITERIOS SAO OBRIGATORIOS, e o `transaction_type` e o que importa:
  * sem ele, qualquer previsao de RECEITA que alguem anotasse com a palavra
- * `mybank:` em `notes` entraria na aba Despesas. Com ele, so a linha que a F2
+ * `mybank:` em `notes` levaria o selo. Com ele, so a linha que a F2
  * grava casa -- `previsoesDoEmprestimo` e o unico lugar do app que escreve as
  * duas coisas juntas.
  */
@@ -1261,16 +1256,21 @@ const DIRECAO_DA_PARCELA_DEVIDA_DO_MYBANK = "expense";
  * que: a familia `despesa-de-grupo-tem-tres-convencoes`, que este repositorio
  * ja pagou quatro vezes.
  *
+ * DESDE A FASE 5 (RN021.3) A LINHA DESTA ABA E SO O JURO DA PARCELA
+ * -----------------------------------------------------------------
+ * A aba Despesas passou a ser a metade de Despesas do Resultado do mes, e o
+ * principal que volta para quem emprestou e transferencia, nao despesa. Entao a
+ * rota manda para ca "Juros: Moto (3/24)" com o juro da parcela
+ * (`jurosDevidosNaAgenda`, lib/leituras-do-mybank.ts), e nao a parcela cheia.
+ * Contas a Pagar e o safe-to-spend continuam com a parcela cheia: la a pergunta
+ * e quanto sai da conta.
+ *
  * ESTA FUNCAO SO DECIDE O SELO, E NAO SE A LINHA ENTRA
  * ---------------------------------------------------
- * E a diferenca dela para `ehParcelaDoAutoEmprestimo`, e ela vem da `direction`.
- * A linha do Caso A e `transfer` na coluna, entao a peneira `linha.tipo === tipo`
- * de `linhasDaTela` a mandaria SO para a aba Transferencias -- ela precisa de uma
- * excecao para alcancar Despesas. A do Caso B ja chega `expense`
- * (`parcelasDevidasNaAgenda`), entao ela entra em Despesas pelo caminho comum e
- * fica fora das outras duas sem excecao nenhuma. Isso tambem e o que impede ela
- * de aparecer em Transferencias: nada andou entre duas contas MINHAS, e aquela
- * aba afirma exatamente isso.
+ * A linha ja chega `expense` (`parcelasDevidasNaAgenda`), entao ela entra em
+ * Despesas pelo caminho comum e fica fora das outras duas abas sem excecao
+ * nenhuma. Isso tambem e o que impede ela de aparecer em Transferencias: nada
+ * andou entre duas contas MINHAS, e aquela aba afirma exatamente isso.
  *
  * OS DOIS CRITERIOS SAO OBRIGATORIOS, e e o mesmo par de
  * `ehParcelaDoAutoEmprestimo` com a outra direcao -- a chave canonica sai do
@@ -1366,39 +1366,34 @@ export function ehEntradaSoltaDoMyBank(crua: PernaDoPagamentoDaFatura): boolean 
 /**
  * Esta linha realizada e a perna de SAIDA da parcela PAGA do auto-emprestimo?
  *
- * Armadilha 8 do cabecalho, e e lá que esta a decisao de produto ("a parcela
- * paga continua em Despesas, e com o selo"). Aqui estao os criterios.
+ * Armadilha 8 do cabecalho, e e lá que esta a decisao de produto. Desde a fase
+ * 5 (RN021.4) ela e so o selo: a perna paga fica em Transferencias, com
+ * `natureza: "mybank"`, e nao entra mais em Despesas. Aqui estao os criterios.
  *
  * O ESTADO QUE ELA DESCREVE E «A PARCELA DO CASO A FOI PAGA». Quem o grava e a
  * baixa da previsao (app/api/scheduled-transactions/[id]/pay/route.ts, HMO-382):
  * `pernasDaTransferencia` monta as DUAS pernas, `comum.notes` leva a MESMA chave
  * `mybank:<id da parcela>` para as duas, e o elo do 015 fica so na de ENTRADA.
- * Esta funcao responde pela de SAIDA -- a que diz quanto saiu da conta corrente,
- * que e a pergunta da aba Despesas desde a HMO-364.
+ * Esta funcao responde pela de SAIDA, a que a aba Transferencias mostra (a de
+ * entrada sai pela de-duplicacao da armadilha 3).
  *
  * SAO TRES CRITERIOS, E CADA UM SEPARA UMA COISA DIFERENTE:
  *
- *   * o `transaction_type` GRAVADO E `transfer`. Sem ele a excecao passa a
- *     engolir linhas que o caminho COMUM deveria peneirar, e a peneira que
- *     importa e `ehGastoNoCartao`: uma compra no cartao cujas notas comecassem
- *     por `mybank:` escaparia da armadilha 5 e contaria duas vezes -- dentro da
- *     fatura e como compra. A leitura e da coluna CRUA e nao de
- *     `classificarMovimentacao`, pela mesma razao de `ehGastoNoCartao`: aquele
- *     deriva o tipo do SINAL quando a coluna e nula, e pelo sinal esta perna e
- *     uma despesa comum.
+ *   * o `transaction_type` GRAVADO E `transfer`. Sem ele uma compra no cartao
+ *     cujas notas comecassem por `mybank:` ganharia o selo do MyBank. A leitura
+ *     e da coluna CRUA e nao de `classificarMovimentacao`, pela mesma razao de
+ *     `ehGastoNoCartao`: aquele deriva o tipo do SINAL quando a coluna e nula,
+ *     e pelo sinal esta perna e uma despesa comum.
  *
  *   * a CHAVE CANONICA em `notes` (`mybank:<id da parcela>`), pelo
- *     `temOEloDaParcelaDoMyBank` que os outros tres consultores do MyBank
- *     tambem chamam -- para que o dia em que a chave ganhar um segundo prefixo
- *     mude UM lugar e nao quatro (`fontes-consistentes-que-discordam`).
+ *     `temOEloDaParcelaDoMyBank` que os outros consultores do MyBank tambem
+ *     chamam -- para que o dia em que a chave ganhar um segundo prefixo mude UM
+ *     lugar e nao quatro (`fontes-consistentes-que-discordam`). Sem ela toda
+ *     transferencia de saida viraria parcela do MyBank.
  *
  *   * O SINAL E NEGATIVO, E E ELE QUE SEPARA ESTA PERNA DA OUTRA DO MESMO PAR.
  *     A de entrada carrega a MESMA nota e o MESMO `transaction_type`
- *     (`chave-mybank-esta-nas-duas-pernas-no-caso-a`): sem o sinal a excecao
- *     promoveria as DUAS para a aba Despesas, e uma parcela de R$ 1.000 entraria
- *     como R$ 2.000 com as duas linhas na lista dizendo a mesma descricao e a
- *     mesma data. E a armadilha 3 por um caminho novo, e no lado em que ela nao
- *     de-duplica nada.
+ *     (`chave-mybank-esta-nas-duas-pernas-no-caso-a`).
  *
  * NAO HA CRITERIO DE ELO, e e a diferenca desta funcao para
  * `ehEntradaSoltaDoMyBank` -- la o elo NULO e o criterio que existe para separar
@@ -1406,8 +1401,7 @@ export function ehEntradaSoltaDoMyBank(crua: PernaDoPagamentoDaFatura): boolean 
  * perna de SAIDA de uma transferencia nunca carrega o elo
  * (`elo-de-transferencia-e-de-uma-via` -- o 015 grava so na de entrada), entao
  * exigir `IS NULL` pediria uma coisa que ja e sempre verdade, e no dia em que o
- * elo passasse a ser gravado nas duas pernas a parcela paga sumiria de Despesas
- * outra vez -- que e exatamente o defeito que esta issue conserta.
+ * elo passasse a ser gravado nas duas pernas a parcela paga perderia o selo.
  *
  * E ELA NAO TORNA `ehEntradaSoltaDoMyBank` MAIS FROUXA, de proposito: aquela
  * continua respondendo so pela perna SOLTA (Caso B), porque o `!` dela na
@@ -1425,6 +1419,31 @@ export function ehSaidaDaParcelaDoAutoEmprestimo(
   if (String(crua.transaction_type) !== TIPO_DA_PARCELA_DO_MYBANK) return false;
   if (!temOEloDaParcelaDoMyBank(crua.notes)) return false;
   return Number(crua.amount) < 0;
+}
+
+/**
+ * Esta linha realizada e o JURO PAGO de um emprestimo do MyBank, do lado de
+ * quem pegou? (fase 5, RN021.3)
+ *
+ * Ela nao e uma `financial_transactions`: quem pegou nao grava linha nenhuma
+ * quando quem emprestou confirma o pagamento. A rota a monta a partir de
+ * `mybank_interest_entries` (071), com `transaction_type: "expense"` e a chave
+ * `mybank:<id da parcela>` em `notes` (`jurosPagosComoRealizados`, em
+ * lib/leituras-do-mybank.ts).
+ *
+ * So decide o SELO: o juro previsto da mesma parcela ja chega com ele
+ * (`ehParcelaDevidaDoMyBank`), e sem esta funcao a linha o perderia no mes em
+ * que foi paga -- a licao da HMO-385 no Caso A.
+ *
+ * `expense` E O CRITERIO QUE A SEPARA DAS OUTRAS LINHAS COM A CHAVE: as pernas
+ * do Caso A e o principal do Caso B sao `transfer`, e o juro de quem emprestou e
+ * `income`.
+ */
+export function ehJuroPagoDoMyBank(crua: PernaDoPagamentoDaFatura): boolean {
+  if (String(crua.transaction_type) !== DIRECAO_DA_PARCELA_DEVIDA_DO_MYBANK) {
+    return false;
+  }
+  return temOEloDaParcelaDoMyBank(crua.notes);
 }
 
 /**
@@ -1482,11 +1501,9 @@ export function linhaRealizada(
 
   // A PERNA DE SAIDA DA PARCELA PAGA DO CASO A -- HMO-385, armadilha 8.
   //
-  // Uma constante e nao duas chamadas porque ela decide DOIS campos abaixo
-  // (`tipo` e `natureza`), e os dois tem de concordar: uma linha com
-  // `tipo: "expense"` na lista de Despesas e `natureza: "despesa"` seria a
-  // parcela entrando no numero certo e sem o selo, que e metade do defeito
-  // desta issue.
+  // Ela decidia `tipo` e `natureza`. Desde a fase 5 (RN021.4) a parcela paga
+  // nao entra mais em Despesas, e a constante decide so o selo dela em
+  // Transferencias.
   const saidaDoAutoEmprestimo = ehSaidaDaParcelaDoAutoEmprestimo(crua);
 
   return {
@@ -1506,8 +1523,12 @@ export function linhaRealizada(
     // qual delas esta instancia pertence. Deixa-la `"transfer"` na lista de
     // Despesas quebraria o invariante pelo qual o lado previsto ja peneira
     // (`linha.tipo === tipo`), do jeito que o cabecalho descreve.
+    //
+    // A PARCELA PAGA DO CASO A SAIU DESTA REGRA NA FASE 5 (RN021.4): ela nao
+    // entra mais em Despesas, e em Transferencias o tipo da coluna ja e o
+    // certo.
     tipo:
-      (faturaPaga || saidaDoAutoEmprestimo) && tela === "expense"
+      faturaPaga && tela === "expense"
         ? "expense"
         : classificarMovimentacao(crua),
     status: null,
@@ -1570,7 +1591,9 @@ export function linhaRealizada(
     // que decidia: ver os dois paragrafos abaixo.
     natureza: faturaPaga
       ? "fatura"
-      : ehEntradaSoltaDoMyBank(crua) || saidaDoAutoEmprestimo
+      : ehEntradaSoltaDoMyBank(crua) ||
+          saidaDoAutoEmprestimo ||
+          ehJuroPagoDoMyBank(crua)
         ? "mybank"
         : idsDeFixa.has(crua.id)
           ? "fixa"
@@ -1900,45 +1923,10 @@ export function linhasDaTela(
       linhas.push(linhaRealizada(crua, indice, idsDeFixa, meuUserId, tipo));
       continue;
     }
-    // A PARCELA PAGA DO AUTO-EMPRESTIMO ENTRA EM DESPESAS -- HMO-385, armadilha
-    // 8. E a MESMA excecao da fatura paga logo acima, e pela mesma razao: a
-    // perna de saida e `transfer` na coluna, entao o filtro de tipo da linha
-    // abaixo e exatamente quem a mantinha fora da tela de Despesas.
-    //
-    // ANTES DO FILTRO DE TIPO (como a da fatura) e NAO depois (como a da perna
-    // solta, armadilha 7), e a diferenca entre as duas e o que cada uma precisa:
-    // aquela linha ja pertencia a aba em que aparece e so tinha de escapar de um
-    // `continue`; esta precisa alcancar uma aba que o tipo da coluna lhe nega.
-    // A ordem tambem e o que impede a excecao de ter efeito em Receitas -- junto
-    // com o sinal negativo, que e criterio da propria funcao.
-    //
-    // AS TRES PENEIRAS ABAIXO NAO SE APLICAM A ELA, e nenhuma por acaso:
-    //
-    //   * a de tipo e a que ela existe para contornar;
-    //   * a de perna nem seria consultada aqui (a guarda dela e `tipo ===
-    //     "transfer"`), e nao faria falta: esta perna e NEGATIVA e sem elo,
-    //     entao `ehPernaDeEntrada` responde `false` sobre ela;
-    //   * `ehGastoNoCartao` nunca casaria: ela exige `transaction_type` em
-    //     ('expense','income') e esta linha e `transfer`. A parcela nao e um
-    //     gasto no cartao.
-    //
-    // E A PREVISAO JA NAO ESTA NA LISTA, que e o que impede a parcela de contar
-    // DUAS vezes no mes da baixa (o ponto 2 da issue, que pedia assercao e nao
-    // confianca): a baixa leva a conta prevista a `status: 'paid'`, `paid` esta
-    // em `STATUS_QUE_SAI_DO_PREVISTO` (armadilha 2), `linhaPrevista` devolve
-    // `null`, e o `if (!linha) continue;` do laco de baixo roda ANTES da excecao
-    // do auto-emprestimo -- entao a previsao sai sem sequer ser consultada. A
-    // rota NAO filtra `status` no SQL, de proposito, justamente para que esta
-    // cadeia tenha teste.
-    //
-    // UMA POR ABA, E NAO DUAS NA MESMA: esta perna continua em Transferencias
-    // pelo caminho comum (ela e `transfer` e nao e perna de entrada), e nenhum
-    // total soma as duas abas -- a mesma aritmetica da fatura paga e da parcela
-    // prevista.
-    if (tipo === "expense" && ehSaidaDaParcelaDoAutoEmprestimo(crua)) {
-      linhas.push(linhaRealizada(crua, indice, idsDeFixa, meuUserId, tipo));
-      continue;
-    }
+    // A PARCELA PAGA DO AUTO-EMPRESTIMO TEVE UMA EXCECAO AQUI (HMO-385,
+    // armadilha 8), que a trazia para Despesas antes do filtro de tipo. Ela saiu
+    // na fase 5 (RN021.4): as duas pernas sao transferencia e ficam so em
+    // Transferencias, pelo caminho comum.
     if (classificarMovimentacao(crua) !== tipo) continue;
     // A PERNA SOLTA DO MYBANK NAO E DE-DUPLICADA -- HMO-380, armadilha 7. Ela
     // casa com `ehPernaDeEntrada` pelo SINAL (positiva, sem elo) e nao ha
@@ -1981,25 +1969,19 @@ export function linhasDaTela(
     const linha = linhaPrevista(crua, meuUserId, suspeitas);
     if (!linha) continue;
 
-    // A PARCELA DO AUTO-EMPRESTIMO ENTRA EM DESPESAS -- HMO-372, leitura 2 de
-    // 7, e a decisao 1 da HMO-368. E a MESMA excecao da fatura paga logo acima,
-    // do lado previsto: a linha e `transfer` na coluna e tem de aparecer em
-    // DUAS abas, e e `tipo` (nao `direction`) que diz a que aba ela pertence.
+    // A PARCELA DO AUTO-EMPRESTIMO FICA SO EM TRANSFERENCIAS, COM O SELO.
     //
-    // `tipo` SOBRESCRITO AQUI e nao dentro de `linhaPrevista`: aquela funcao ve
-    // UMA linha e nao sabe que tela a esta pedindo -- e e exatamente por isso
-    // que `linhaRealizada` recebe `tela` como parametro desde a HMO-264. Dar o
-    // mesmo parametro a `linhaPrevista` exigiria torna-lo opcional (ha
-    // chamadores com dois argumentos), e opcional ele cairia num default e a
-    // decisao voltaria a ser invisivel.
+    // Da HMO-372 ate a fase 4 ela entrava tambem em Despesas (a decisao 1 da
+    // HMO-368: "quanto sai da sua conta"). Desde a fase 5 (RN021.4) a aba
+    // Despesas e a metade de Despesas do Resultado do mes, e o emprestimo a si
+    // mesmo nao e despesa: o dinheiro volta para a propria conta de
+    // investimento.
     //
-    // `natureza: "mybank"` E O SELO, e ele vale nas duas abas: em Despesas
-    // porque sem ele a linha se le como gasto comum, e em Transferencias porque
-    // "MyBank" e mais informativo que "Despesa" sobre a mesma linha.
+    // `natureza: "mybank"` E O SELO: "MyBank" diz mais que "Despesa" sobre a
+    // mesma linha, e e o mesmo que a perna de saida leva depois de paga
+    // (`ehSaidaDaParcelaDoAutoEmprestimo`).
     if (ehParcelaDoAutoEmprestimo(crua)) {
-      if (tipo === "expense" || linha.tipo === tipo) {
-        linhas.push({ ...linha, tipo, natureza: "mybank" });
-      }
+      if (linha.tipo === tipo) linhas.push({ ...linha, natureza: "mybank" });
       continue;
     }
 

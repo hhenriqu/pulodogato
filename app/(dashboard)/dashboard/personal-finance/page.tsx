@@ -53,6 +53,12 @@ import {
   type ContaDoFechamentoCrua,
   type ContaDoFechamentoRealizada,
 } from "@/lib/fechamento-no-resultado";
+import {
+  COLUNAS_DOS_JUROS_PAGOS,
+  VIEW_DOS_JUROS_PAGOS,
+  jurosPagosComoRealizados,
+  type JuroPagoCru,
+} from "@/lib/leituras-do-mybank";
 import { viewDaParteAusente } from "@/lib/parte-do-grupo-realizada";
 import {
   TAMANHO_DA_PAGINA,
@@ -338,7 +344,8 @@ function Lancamentos() {
   /**
    * As contas do fechamento do grupo ja quitadas no periodo (fase 4, RN017.6):
    * "Pagamento ao grupo" e "A receber do grupo". Entram nos cartoes e na
-   * lista, sem botao -- ver `carregarContasDoFechamento`.
+   * lista, sem botao -- ver `carregarContasDoFechamento`. O juro pago do
+   * MyBank (fase 5) vem junto, com o selo "MyBank".
    */
   const [contasDoFechamento, setContasDoFechamento] = useState<
     ContaDoFechamentoRealizada[]
@@ -834,8 +841,15 @@ function Lancamentos() {
    * Try/catch PROPRIO, pela razao de `carregarPartesDeGrupo`. E a view que
    * ainda nao existe (a 069 e colada a mao depois do deploy) e lista vazia,
    * nao erro: e o comportamento de antes dela.
+   *
+   * O JURO PAGO DO MYBANK (fase 5, RN021.3) vem junto, na mesma forma: quem
+   * pegou nao grava transacao nenhuma quando quem emprestou confirma, e e
+   * `mybank_interest_entries` (071) que o devolve. Cada leitura tem o seu
+   * try/catch, para a falha de uma nao apagar a outra.
    */
   const carregarContasDoFechamento = async (userId: string) => {
+    const contas: ContaDoFechamentoRealizada[] = [];
+
     try {
       const { data, error } = await supabase
         .from(VIEW_DA_CONTA_DO_FECHAMENTO)
@@ -845,21 +859,38 @@ function Lancamentos() {
         .lte("transaction_date", periodo.ate)
         .order("transaction_date", { ascending: false });
 
-      if (error && viewDaParteAusente(error)) {
-        setContasDoFechamento([]);
-        return;
-      }
-      if (error) throw error;
+      if (error && !viewDaParteAusente(error)) throw error;
 
-      setContasDoFechamento(
-        contasDoFechamentoComoRealizadas(
-          (data ?? []) as unknown as ContaDoFechamentoCrua[]
+      contas.push(
+        ...contasDoFechamentoComoRealizadas(
+          (error ? [] : data ?? []) as unknown as ContaDoFechamentoCrua[]
         )
       );
     } catch (erro) {
       console.error("Erro ao carregar as contas do fechamento do grupo:", erro);
-      setContasDoFechamento([]);
     }
+
+    try {
+      const { data, error } = await supabase
+        .from(VIEW_DOS_JUROS_PAGOS)
+        .select(COLUNAS_DOS_JUROS_PAGOS)
+        .eq("user_id", userId)
+        .gte("transaction_date", periodo.de)
+        .lte("transaction_date", periodo.ate)
+        .order("transaction_date", { ascending: false });
+
+      if (error && !viewDaParteAusente(error)) throw error;
+
+      contas.push(
+        ...jurosPagosComoRealizados(
+          (error ? [] : data ?? []) as unknown as JuroPagoCru[]
+        )
+      );
+    } catch (erro) {
+      console.error("Erro ao carregar os juros pagos do MyBank:", erro);
+    }
+
+    setContasDoFechamento(contas);
   };
 
   /**

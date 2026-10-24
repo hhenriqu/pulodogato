@@ -15,6 +15,11 @@
  *   * CHAMAR uma rota por HTTP de dentro da outra troca uma leitura de banco
  *     por uma ida a rede com cookie forjado, e a sessao nao atravessa.
  *
+ * DESDE A FASE 5 (RN021.3) HA TAMBEM AS TRES LEITURAS DO JURO, sobre as views
+ * da 071: o juro a receber (Receitas de quem emprestou), o juro devido e o juro
+ * pago (Despesas de quem pegou). As abas Receitas e Despesas sao o Resultado do
+ * mes, e do emprestimo so o juro entra nele.
+ *
  * A ARITMETICA NAO ESTA AQUI. `parcelasDevidasNoPeriodo`,
  * `parcelasDevidasNaAgenda` e `aReceberDoMyBank` (lib/leituras-do-mybank.ts)
  * sao puras e tem assercao e mutante proprios. Este modulo le e repassa.
@@ -42,18 +47,31 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
+  COLUNAS_DOS_JUROS_PAGOS,
+  VIEW_DOS_JUROS_PAGOS,
   aReceberDoMyBank,
+  jurosDevidosNaAgenda,
   parcelasDevidasNaAgenda,
   parcelasDevidasNoPeriodo,
   type AReceberDoMyBank,
+  type JuroPagoCru,
   type ParcelaAReceber,
+  type ParcelaComJuro,
   type ParcelaDevida,
   type ParcelaDevidaNaAgenda,
 } from "@/lib/leituras-do-mybank";
+import { viewDaParteAusente } from "@/lib/parte-do-grupo-realizada";
 
 /** As colunas de `mybank_due_entries` que as quatro leituras usam. */
 const COLUNAS_DA_DIVIDA =
   "id, loan_id, lender_user_id, description, amount, due_date, status, installment_number, installment_total, reported_at";
+
+/** A view do juro de cada parcela, dos dois lados (071). */
+const VIEW_DO_JURO_DA_PARCELA = "mybank_installment_interest";
+
+/** As colunas de `mybank_installment_interest` que as duas leituras do juro usam. */
+const COLUNAS_DO_JURO_DA_PARCELA =
+  "id, loan_id, lender_user_id, borrower_user_id, loan_status, description, installment_number, installment_total, amount, due_date, status, interest_amount";
 
 /** A divida lida, ou a mensagem do erro -- nunca um `throw`. */
 export type LeituraDaDivida =
@@ -111,80 +129,132 @@ export type LeituraDoAReceber =
   | { ok: false; mensagem: string };
 
 /**
- * O que as minhas conexoes ainda me devem, na janela -- o lado do CREDOR.
+ * O JURO que as minhas conexoes ainda me devem, na janela -- o lado do CREDOR.
  *
- * DUAS CONSULTAS E NAO UM EMBED, e a razao e a RLS e nao estilo. A policy de
- * SELECT de `mybank_installments` e um `EXISTS` no emprestimo que libera os
- * DOIS lados (credor e devedor), entao uma leitura de `mybank_installments`
- * sem filtro traria tambem as parcelas que EU devo a outra pessoa -- que sao
- * exatamente o oposto de "a receber". O filtro que separa os dois lados e
- * `mybank_loans.lender_user_id = eu`, e ele precisa de uma consulta propria:
- * um `.eq("loan.lender_user_id", ...)` sobre coluna de embed transforma o LEFT
- * JOIN em INNER no PostgREST, e a 053 deu a `mybank_installments` uma FK unica
- * para `mybank_loans` mas o embed curto ainda seria mais um nome para manter
- * sincronizado com a migration (`embed-de-fk-composta-resolve-no-postgrest`).
+ * Desde a fase 5 (RN021.3) o «Previsto» de Receitas soma so o juro: o
+ * principal que volta e transferencia. O juro de cada parcela sai de
+ * `mybank_installment_interest` (071), pelo rateio da serie que a confirmacao
+ * usa, e a view tem `lender_user_id` -- entao uma consulta basta, sem a
+ * leitura previa dos emprestimos que a de `mybank_installments` precisava.
  *
- * `status = 'active'` NO EMPRESTIMO: o emprestimo `settled` ou `cancelled` nao
- * tem mais nada a receber, e e o mesmo recorte da view do devedor -- as duas
- * pontas da mesma divida tem de concordar sobre ela existir.
+ * `lender_user_id = eu` E OBRIGATORIO NA CONSULTA: a view e dos dois lados
+ * (a RLS das tabelas entrega a parcela a quem emprestou e a quem pegou), e sem
+ * o filtro o juro que EU devo entraria como juro a receber.
+ *
+ * `loan_status = 'active'`: o emprestimo `settled` ou `cancelled` nao tem mais
+ * nada a receber, e e o mesmo recorte da view do devedor.
+ *
+ * A JANELA ENTRE O DEPLOY E A COLAGEM DA 071: a view nao existe e o «a receber»
+ * fica `null`, como na conta sem MyBank. Os numeros ficam menores ate a
+ * colagem, e nenhum soma a parcela cheia como receita.
  */
 export async function lerAReceberDoMyBank(
   supabase: SupabaseClient,
   meuUserId: string,
   janela: { de: string; ate: string }
 ): Promise<LeituraDoAReceber> {
-  const { data: emprestimos, error: erroEmprestimos } = await supabase
-    .from("mybank_loans")
-    .select("id, borrower_user_id")
+  const { data, error } = await supabase
+    .from(VIEW_DO_JURO_DA_PARCELA)
+    .select(COLUNAS_DO_JURO_DA_PARCELA)
     .eq("lender_user_id", meuUserId)
-    .eq("status", "active");
-
-  if (erroEmprestimos) {
-    return {
-      ok: false,
-      mensagem: `Não foi possível ler os empréstimos do MyBank: ${erroEmprestimos.message}`,
-    };
-  }
-
-  const meus = (emprestimos ?? []) as { id: string; borrower_user_id: string }[];
-
-  // Sem emprestimo nenhum a segunda consulta nao e feita. Nao e so economia: um
-  // `.in("loan_id", [])` no PostgREST e uma clausula vazia, e o comportamento
-  // dela nao e o que se le -- a consulta sem filtro efetivo devolveria TODA
-  // parcela que a RLS me entrega, inclusive as que EU devo. A conta sem MyBank
-  // e o controle negativo desta issue, e ela passa por aqui.
-  if (meus.length === 0) return { ok: true, aReceber: null };
-
-  const porEmprestimo = new Map(meus.map((e) => [e.id, e.borrower_user_id]));
-
-  const { data: parcelas, error: erroParcelas } = await supabase
-    .from("mybank_installments")
-    .select("id, loan_id, amount, due_date, status")
-    .in(
-      "loan_id",
-      meus.map((e) => e.id)
-    )
+    .eq("loan_status", "active")
+    .in("status", ["pending", "reported"])
     .gte("due_date", janela.de)
     .lte("due_date", janela.ate);
 
-  if (erroParcelas) {
+  if (error && viewDaParteAusente(error)) return { ok: true, aReceber: null };
+  if (error) {
     return {
       ok: false,
-      mensagem: `Não foi possível ler as parcelas a receber do MyBank: ${erroParcelas.message}`,
+      mensagem: `Não foi possível ler os juros a receber do MyBank: ${error.message}`,
     };
   }
 
-  const comODevedor: ParcelaAReceber[] = (
-    (parcelas ?? []) as unknown as Omit<ParcelaAReceber, "borrower_user_id">[]
-  ).map((parcela) => ({
-    ...parcela,
-    // `?? meuUserId` e a direcao SEGURA, e nao defensividade: um `loan_id` que
-    // nao esteja no mapa so pode ter vindo de um emprestimo que nao e meu como
-    // credor, e `aReceberDoMyBank` descarta o que e meu de os dois lados. O
-    // outro default (`""`) faria essa linha ser contada como receita a receber
-    // de um devedor que nao existe.
-    borrower_user_id: porEmprestimo.get(parcela.loan_id) ?? meuUserId,
-  }));
+  return {
+    ok: true,
+    aReceber: aReceberDoMyBank((data ?? []) as unknown as ParcelaAReceber[], meuUserId),
+  };
+}
 
-  return { ok: true, aReceber: aReceberDoMyBank(comODevedor, meuUserId) };
+/**
+ * O juro que EU devo no MyBank, na janela, no formato da agenda -- a linha da
+ * aba Despesas de quem pegou (fase 5, RN021.3).
+ *
+ * Contas a Pagar e o safe-to-spend continuam lendo `lerDividaDoMyBank`, com a
+ * parcela cheia. Esta e so a aba Despesas, que e a metade de Despesas do
+ * Resultado do mes.
+ *
+ * `borrower_user_id = eu` na consulta e na funcao pura, pela razao de sempre:
+ * o daqui e tamanho de payload, e o de `jurosDevidosNaAgenda` e a regra.
+ *
+ * A JANELA ENTRE O DEPLOY E A COLAGEM DA 071: a view nao existe e a lista fica
+ * vazia. O juro previsto some da aba ate a colagem.
+ */
+export async function lerJurosDevidosDoMyBank(
+  supabase: SupabaseClient,
+  meuUserId: string,
+  janela: { de: string; ate: string; hoje: string }
+): Promise<LeituraDaDivida> {
+  const { data, error } = await supabase
+    .from(VIEW_DO_JURO_DA_PARCELA)
+    .select(COLUNAS_DO_JURO_DA_PARCELA)
+    .eq("borrower_user_id", meuUserId)
+    .eq("loan_status", "active")
+    .in("status", ["pending", "reported"])
+    .gte("due_date", janela.de)
+    .lte("due_date", janela.ate);
+
+  if (error && viewDaParteAusente(error)) return { ok: true, linhas: [] };
+  if (error) {
+    return {
+      ok: false,
+      mensagem: `Não foi possível ler os juros do MyBank: ${error.message}`,
+    };
+  }
+
+  return {
+    ok: true,
+    linhas: jurosDevidosNaAgenda(
+      (data ?? []) as unknown as ParcelaComJuro[],
+      meuUserId,
+      { de: janela.de, ate: janela.ate },
+      janela.hoje
+    ),
+  };
+}
+
+export type LeituraDosJurosPagos =
+  | { ok: true; juros: JuroPagoCru[] }
+  | { ok: false; erro: unknown };
+
+/**
+ * O juro que eu ja paguei no MyBank, com a data do pagamento no intervalo --
+ * o realizado de quem pegou (fase 5, RN021.3).
+ *
+ * A forma e a de `lerContasDoFechamentoRealizadas`, e pelas mesmas razoes: erro
+ * de verdade volta como erro, para a rota responder 500 em vez de um realizado
+ * menor sem aviso, e a view que ainda nao existe (a 071 e colada a mao) e lista
+ * vazia.
+ *
+ * A view ja e `user_id = auth.uid()`; o filtro aqui e a convencao de
+ * `group_share_entries`, e nao custa nada.
+ */
+export async function lerJurosPagosDoMyBank(
+  supabase: SupabaseClient,
+  meuUserId: string,
+  de: string,
+  ate: string
+): Promise<LeituraDosJurosPagos> {
+  const { data, error } = await supabase
+    .from(VIEW_DOS_JUROS_PAGOS)
+    .select(COLUNAS_DOS_JUROS_PAGOS)
+    .eq("user_id", meuUserId)
+    .gte("transaction_date", de)
+    .lte("transaction_date", ate)
+    .order("transaction_date", { ascending: true })
+    .order("id", { ascending: true });
+
+  if (error && viewDaParteAusente(error)) return { ok: true, juros: [] };
+  if (error) return { ok: false, erro: error };
+  return { ok: true, juros: (data ?? []) as unknown as JuroPagoCru[] };
 }

@@ -543,6 +543,23 @@
     "status",
     "user_id"
   ],
+  "mybank_installment_interest": [
+    "amount",
+    "borrower_user_id",
+    "description",
+    "due_date",
+    "id",
+    "installment_number",
+    "installment_total",
+    "interest_amount",
+    "interest_by_series",
+    "lender_user_id",
+    "loan_id",
+    "loan_status",
+    "paid_date",
+    "principal_by_series",
+    "status"
+  ],
   "mybank_installments": [
     "amount",
     "created_at",
@@ -550,12 +567,25 @@
     "id",
     "installment_number",
     "installment_total",
+    "interest_paid",
     "loan_id",
     "paid_date",
     "paid_transaction_id",
     "reported_at",
     "status",
     "updated_at"
+  ],
+  "mybank_interest_entries": [
+    "amount",
+    "category_id",
+    "currency",
+    "descricao",
+    "id",
+    "loan_id",
+    "month",
+    "transaction_date",
+    "transaction_type",
+    "user_id"
   ],
   "mybank_loans": [
     "borrower_user_id",

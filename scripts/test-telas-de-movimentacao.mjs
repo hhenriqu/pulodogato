@@ -28,6 +28,7 @@ const {
   ehPagamentoDaFatura,
   ehEntradaSoltaDoMyBank,
   ehSaidaDaParcelaDoAutoEmprestimo,
+  ehJuroPagoDoMyBank,
   ehParcelaDevidaDoMyBank,
   PREFIXO_DO_ELO_DO_MYBANK,
   TIPO_CARTAO,
@@ -1541,6 +1542,11 @@ test("a excecao do MyBank nao afrouxa a de-duplicacao de um Pix comum", () => {
 // A baixa grava o par (`pernasDaTransferencia`, HMO-382) com a MESMA nota
 // `mybank:` nas duas pernas e o elo do 015 na de entrada. A de saida e
 // `transfer` na coluna, entao o filtro de tipo a tirava de Despesas.
+//
+// DESDE A FASE 5 (RN021.4) ESSE E O COMPORTAMENTO CERTO: a aba Despesas e a
+// metade de Despesas do Resultado do mes, e o emprestimo a si mesmo e
+// transferencia nos dois lados. O que a HMO-385 consertou e continua valendo e
+// o SELO em Transferencias.
 
 /** O par que a baixa do Caso A grava, como em prod. Nota igual nas DUAS. */
 const NOTA_DA_PARCELA_PAGA = `${PREFIXO_DO_ELO_DO_MYBANK}parcela-1-de-24`;
@@ -1567,59 +1573,52 @@ const PAR_DA_PARCELA_PAGA = [
   realizada(ENTRADA_DA_PARCELA_PAGA),
 ];
 
-test("a parcela PAGA do Caso A aparece na aba Despesas -- os R$ 10,00 medidos em prod", () => {
-  const linhas = daTela(PAR_DA_PARCELA_PAGA, [], "expense");
+test("a parcela PAGA do Caso A NAO entra na aba Despesas -- o emprestimo a si mesmo e transferencia (RN021.4)", () => {
+  const mercado = realizada({
+    id: "mercado",
+    description: "Mercado",
+    amount: -30,
+    transaction_type: "expense",
+  });
+  const linhas = daTela([...PAR_DA_PARCELA_PAGA, mercado], [], "expense");
 
-  // CONTROLE, e e o defeito medido: o MESMO par sem a chave canonica nao tem
-  // excecao nenhuma, e o filtro de tipo manda as duas pernas embora. Este zero e
-  // o que a aba Despesas respondia em producao depois da baixa.
-  const semAChave = daTela(
-    [
-      realizada({ ...SAIDA_DA_PARCELA_PAGA, notes: null }),
-      realizada({ ...ENTRADA_DA_PARCELA_PAGA, notes: null }),
-    ],
-    [],
-    "expense"
-  );
-  assert.equal(semAChave.length, 0, "o controle precisa sumir para a assercao valer");
-  assert.equal(resumoDaTela(semAChave).realizado, 0);
+  // CONTROLE: a aba nao esta vazia por outro motivo -- a despesa comum do lado
+  // continua nela.
+  assert.equal(linhas.length, 1, "so o mercado: nenhuma das duas pernas da parcela");
+  assert.equal(linhas[0].id, "mercado");
+  assert.equal(resumoDaTela(linhas).realizado, 30);
 
-  // UMA LINHA, E E A DE SAIDA: a de entrada e positiva e nao casa com a excecao.
-  assert.equal(linhas.length, 1, "uma linha por parcela, nao duas");
-  assert.equal(linhas[0].id, "saida-paga");
-  assert.equal(resumoDaTela(linhas).realizado, 10);
-  // O R$ 2.000 DA PARCELA DE R$ 1.000, no tamanho desta montagem: se o criterio
-  // do sinal cair, as DUAS pernas entram e o total dobra.
-  assert.notEqual(resumoDaTela(linhas).realizado, 20);
-  // `tipo` DIZ A QUE ABA ELA PERTENCE, e nao o que a coluna do banco diz.
-  assert.equal(linhas[0].tipo, "expense");
-  // O SELO, o mesmo que o lado previsto poe nas outras 23 parcelas.
-  assert.equal(linhas[0].natureza, "mybank");
+  // CONTROLE: o par e valido, e esta em Transferencias.
+  assert.equal(daTela(PAR_DA_PARCELA_PAGA, [], "transfer").length, 1);
 });
 
-test("o selo vale nas DUAS abas: a mesma perna paga e «MyBank» em Transferencias", () => {
+test("o selo vale em Transferencias: a perna paga e «MyBank»", () => {
   const emTransferencias = daTela(PAR_DA_PARCELA_PAGA, [], "transfer");
 
   // A de-duplicacao da armadilha 3 continua: a de entrada sai, a de saida fica.
   assert.equal(emTransferencias.length, 1);
   assert.equal(emTransferencias[0].id, "saida-paga");
   assert.equal(resumoDaTela(emTransferencias).realizado, 10);
-  // E AQUI ESTAVA A SEGUNDA METADE DO DEFEITO: em producao esta linha vinha
-  // `natureza: "despesa"` depois da baixa. A frase do codigo promete o selo nas
-  // duas abas; antes desta issue ela valia so enquanto a parcela nao fosse paga.
+  // A SEGUNDA METADE DO DEFEITO DA HMO-385: em producao esta linha vinha
+  // `natureza: "despesa"` depois da baixa, e a MESMA serie se apresentava como
+  // «MyBank» nas 23 parcelas pendentes.
   assert.equal(emTransferencias[0].natureza, "mybank");
-  // `tipo` NAO e sobrescrito nesta aba: a linha e a transferencia que ela e.
   assert.equal(emTransferencias[0].tipo, "transfer");
 
-  // E A MESMA LINHA, nos dois lados -- uma por aba, nao duas na mesma.
-  const emDespesas = daTela(PAR_DA_PARCELA_PAGA, [], "expense");
-  assert.equal(emDespesas[0].id, emTransferencias[0].id);
-  assert.equal(emDespesas[0].natureza, emTransferencias[0].natureza);
+  // CONTROLE: o MESMO par sem a chave canonica nao leva o selo.
+  const semAChave = daTela(
+    [
+      realizada({ ...SAIDA_DA_PARCELA_PAGA, notes: null }),
+      realizada({ ...ENTRADA_DA_PARCELA_PAGA, notes: null }),
+    ],
+    [],
+    "transfer"
+  );
+  assert.equal(semAChave.length, 1);
+  assert.equal(semAChave[0].natureza, "despesa");
 });
 
-test("a excecao NAO vaza para Receitas -- a perna de entrada nao e receita nova", () => {
-  // A armadilha 1 da HMO-380, e sao DOIS mecanismos que a impedem: a guarda
-  // `tipo === "expense"` da excecao e o sinal NEGATIVO da propria funcao.
+test("a parcela paga NAO vaza para Receitas -- a perna de entrada nao e receita nova", () => {
   // O principal voltando para a conta de investimento nao e receita
   // (`PARCELA_FORA_DO_REALIZADO`), e a perna positiva e de-duplicada.
   const emReceitas = daTela(PAR_DA_PARCELA_PAGA, [], "income");
@@ -1628,12 +1627,11 @@ test("a excecao NAO vaza para Receitas -- a perna de entrada nao e receita nova"
   assert.equal(resumoDaTela(emReceitas).realizado, 0);
 });
 
-test("no mes da baixa a parcela conta UMA vez: a previsao `paid` nao soma junto", () => {
-  // O PONTO 2 DA ISSUE, que pedia assercao e nao confianca. A rota NAO filtra
-  // `status` no SQL de proposito, entao a previsao PAGA chega aqui junto com as
-  // duas pernas que a baixa gravou -- e e `linhaPrevista` quem a descarta
-  // (`paid` esta em `STATUS_QUE_SAI_DO_PREVISTO`), ANTES da excecao do
-  // auto-emprestimo ser consultada.
+test("no mes da baixa a parcela conta UMA vez em Transferencias: a previsao `paid` nao soma junto", () => {
+  // A rota NAO filtra `status` no SQL de proposito, entao a previsao PAGA chega
+  // aqui junto com as duas pernas que a baixa gravou -- e e `linhaPrevista`
+  // quem a descarta (`paid` esta em `STATUS_QUE_SAI_DO_PREVISTO`), ANTES de
+  // `ehParcelaDoAutoEmprestimo` ser consultada.
   const previsaoPaga = prevista({
     id: "s-mybank",
     description: "SONDA HMO382 moto eletrica (1/24)",
@@ -1644,15 +1642,15 @@ test("no mes da baixa a parcela conta UMA vez: a previsao `paid` nao soma junto"
     my_effective_status: "paid",
   });
 
-  const linhas = daTela(PAR_DA_PARCELA_PAGA, [previsaoPaga], "expense");
+  const linhas = daTela(PAR_DA_PARCELA_PAGA, [previsaoPaga], "transfer");
 
-  // CONTROLE POSITIVO: a MESMA previsao `pending` entra, pela excecao do lado
-  // previsto. Sem ele este teste passaria vacuo se a previsao nunca chegasse a
-  // ser considerada (`sonda-de-horizonte-vence-fora-da-janela-e-mede-zero`).
+  // CONTROLE POSITIVO: a MESMA previsao `pending` entra. Sem ele este teste
+  // passaria vacuo se a previsao nunca chegasse a ser considerada
+  // (`sonda-de-horizonte-vence-fora-da-janela-e-mede-zero`).
   const pendente = daTela(
     PAR_DA_PARCELA_PAGA,
     [{ ...previsaoPaga, my_status: "pending", my_effective_status: "pending" }],
-    "expense"
+    "transfer"
   );
   assert.equal(pendente.length, 2, "pendente, a previsao entra -- o controle");
   assert.equal(resumoDaTela(pendente).previsto, 10);
@@ -1662,8 +1660,10 @@ test("no mes da baixa a parcela conta UMA vez: a previsao `paid` nao soma junto"
   assert.equal(linhas[0].origem, "realizado");
   assert.equal(resumoDaTela(linhas).previsto, 0);
   assert.equal(resumoDaTela(linhas).realizado, 10);
-  // O TOTAL DO MES: R$ 10,00 e nao R$ 20,00. E a aritmetica que a issue pediu.
   assert.equal(resumoDaTela(linhas).total, 10);
+
+  // E EM DESPESAS NENHUMA DAS DUAS (RN021.4).
+  assert.equal(daTela(PAR_DA_PARCELA_PAGA, [previsaoPaga], "expense").length, 0);
 });
 
 test("ehSaidaDaParcelaDoAutoEmprestimo: os TRES criterios, um a um", () => {
@@ -1676,9 +1676,9 @@ test("ehSaidaDaParcelaDoAutoEmprestimo: os TRES criterios, um a um", () => {
 
   assert.equal(ehSaidaDaParcelaDoAutoEmprestimo(saida), true);
 
-  // 1. O `transaction_type` GRAVADO. Sem ele a excecao engoliria linhas que o
-  //    caminho comum deve peneirar -- `ehGastoNoCartao` em particular --, e a
-  //    leitura e da coluna CRUA: pelo SINAL esta linha e uma despesa comum.
+  // 1. O `transaction_type` GRAVADO. Sem ele uma compra no cartao com a chave
+  //    ganharia o selo, e a leitura e da coluna CRUA: pelo SINAL esta linha e
+  //    uma despesa comum.
   assert.equal(
     ehSaidaDaParcelaDoAutoEmprestimo({ ...saida, transaction_type: "expense" }),
     false
@@ -1715,8 +1715,8 @@ test("ehSaidaDaParcelaDoAutoEmprestimo: os TRES criterios, um a um", () => {
 
   // NAO HA CRITERIO DE ELO, e a assercao e o que impede alguem de acrescentar
   // um: a perna de saida ja nunca carrega o elo (o 015 grava so na de entrada),
-  // e exigir `IS NULL` faria a parcela paga sumir de Despesas de novo no dia em
-  // que o elo passasse a ser gravado nas duas.
+  // e exigir `IS NULL` faria a parcela paga perder o selo no dia em que o elo
+  // passasse a ser gravado nas duas.
   assert.equal(
     ehSaidaDaParcelaDoAutoEmprestimo({ ...saida, counterpart_transaction_id: "x" }),
     true
@@ -1814,23 +1814,22 @@ test("a parcela devida NAO aparece em Transferencias nem em Receitas", () => {
 
 test("o Caso A e o Caso B nao se confundem -- a `direction` e o que separa", () => {
   // As duas previsoes carregam a MESMA chave `mybank:`, e sao linhas diferentes
-  // de dinheiro: a de `transfer` e o auto-emprestimo (aparece em Despesas E em
-  // Transferencias, pela excecao de `linhasDaTela`), a de `expense` e a divida
-  // com a conexao (aparece SO em Despesas). Um criterio que lesse apenas a nota
-  // daria o mesmo tratamento as duas -- e poria a divida da conexao na aba de
-  // Transferencias, que e a frase falsa.
+  // de dinheiro: a de `transfer` e o auto-emprestimo (SO em Transferencias,
+  // desde a fase 5), a de `expense` e o juro devido a conexao (SO em
+  // Despesas). Um criterio que lesse apenas a nota daria o mesmo tratamento as
+  // duas.
   const casoA = parcelaDevida({ id: "s1", direction: "transfer" });
   const casoB = parcelaDevida();
 
   assert.equal(ehParcelaDevidaDoMyBank(casoB), true);
   assert.equal(ehParcelaDevidaDoMyBank(casoA), false, "o Caso A nao e parcela DEVIDA");
 
-  // E as duas levam o selo, cada uma pelo seu caminho.
-  assert.equal(daTela([], [casoA], "expense")[0].natureza, "mybank");
+  // E as duas levam o selo, cada uma na sua aba.
+  assert.equal(daTela([], [casoA], "transfer")[0].natureza, "mybank");
   assert.equal(daTela([], [casoB], "expense")[0].natureza, "mybank");
 
-  // A diferenca medida: em Transferencias so o Caso A sobrevive.
-  assert.equal(daTela([], [casoA], "transfer").length, 1);
+  // A diferenca medida: cada uma so na sua aba.
+  assert.equal(daTela([], [casoA], "expense").length, 0);
   assert.equal(daTela([], [casoB], "transfer").length, 0);
 });
 
@@ -1864,6 +1863,62 @@ test("ehParcelaDevidaDoMyBank: os DOIS criterios, um a um", () => {
     ehParcelaDevidaDoMyBank({ ...devida, notes: "fatura:2026-11-01:cartao" }),
     false,
     "a chave da FATURA nao e a chave do MyBank"
+  );
+});
+
+// -----------------------------------------------------
+// O JURO PAGO DO MYBANK -- fase 5, RN021.3
+// -----------------------------------------------------
+// Quem pegou nao grava transacao nenhuma quando quem emprestou confirma. A rota
+// monta a linha a partir de `mybank_interest_entries` (071), na forma de
+// `jurosPagosComoRealizados`: `expense`, valor negativo, a chave `mybank:<id>`.
+
+const JURO_PAGO = {
+  id: "juros-do-mybank:parcela-2",
+  description: "Juros: Moto (2/24)",
+  amount: -50,
+  transaction_date: "2026-10-10",
+  transaction_type: "expense",
+  currency: "BRL",
+  category: { name: "Juros do MyBank", is_expense: true },
+  notes: `${PREFIXO_DO_ELO_DO_MYBANK}parcela-2`,
+  selo: "MyBank",
+};
+
+test("o juro pago entra no Realizado de Despesas com o selo, e sem botao", () => {
+  const linhas = daTela([JURO_PAGO], [], "expense");
+
+  assert.equal(linhas.length, 1);
+  assert.equal(linhas[0].origem, "realizado");
+  assert.equal(resumoDaTela(linhas).realizado, 50);
+  // O MESMO selo do juro previsto (`ehParcelaDevidaDoMyBank`): a linha nao muda
+  // de cara no dia em que e paga.
+  assert.equal(linhas[0].natureza, "mybank");
+  // Sem `user_id`, como a conta do fechamento: nao se edita nem se apaga.
+  assert.equal(linhas[0].posso_editar, false);
+
+  // CONTROLE: a mesma linha sem a chave e uma despesa comum.
+  assert.equal(daTela([{ ...JURO_PAGO, notes: null }], [], "expense")[0].natureza, "despesa");
+
+  // E so em Despesas.
+  assert.equal(daTela([JURO_PAGO], [], "income").length, 0);
+  assert.equal(daTela([JURO_PAGO], [], "transfer").length, 0);
+});
+
+test("ehJuroPagoDoMyBank: os DOIS criterios, um a um", () => {
+  assert.equal(ehJuroPagoDoMyBank(JURO_PAGO), true);
+
+  // 1. `expense`. O juro de quem EMPRESTOU tem a mesma chave e e `income`, e as
+  //    pernas do principal e do Caso A sao `transfer`.
+  assert.equal(ehJuroPagoDoMyBank({ ...JURO_PAGO, transaction_type: "income" }), false);
+  assert.equal(ehJuroPagoDoMyBank({ ...JURO_PAGO, transaction_type: "transfer" }), false);
+  assert.equal(ehJuroPagoDoMyBank({ ...JURO_PAGO, transaction_type: null }), false);
+
+  // 2. A chave, no COMECO da string.
+  assert.equal(ehJuroPagoDoMyBank({ ...JURO_PAGO, notes: null }), false);
+  assert.equal(
+    ehJuroPagoDoMyBank({ ...JURO_PAGO, notes: "paguei fora do mybank: dinheiro" }),
+    false
   );
 });
 

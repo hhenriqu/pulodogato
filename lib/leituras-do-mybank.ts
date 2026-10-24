@@ -48,6 +48,17 @@
 // aceita `de: null` porque o safe-to-spend PRECISA da parcela vencida do mes
 // passado (dinheiro que ainda vai sair).
 //
+// DESDE A FASE 5 DO MODELO NOVO (RN021.3) SO O JURO ENTRA NO RESULTADO
+// ------------------------------------------------------------------
+// As abas Receitas e Despesas sao as duas metades do Resultado do mes (RN016).
+// O principal do emprestimo e transferencia nos dois lados, e o que entra e o
+// juro de cada parcela: receita para quem emprestou (`aReceberDoMyBank`) e
+// despesa para quem pegou (`jurosDevidosNaAgenda` no previsto,
+// `jurosPagosComoRealizados` no realizado). O juro de cada parcela sai da view
+// `mybank_installment_interest` (071), pelo rateio da serie que a confirmacao
+// usa. Contas a Pagar e o safe-to-spend continuam com a parcela cheia, porque
+// la a pergunta e quanto sai da conta.
+//
 // NAO HA IMPORT COM `@/` ALEM DE `emprestimo-do-mybank`, e ele e puro (so
 // `lancamento` e `transferencia`, os dois sem import proprio). E isso que deixa
 // este modulo compilar na suite sem o runtime do Next.
@@ -342,11 +353,11 @@ export function comODonoDaLeitura(
 // `unificar-criterio-duplicado-apaga-a-medicao-do-outro-modulo` --, e a tela
 // perderia a frase que diz de onde vem cada parte.
 
-/** O que a conexao ainda me deve no periodo, para o «Previsto» de Receitas. */
+/** O juro que a conexao ainda me deve no periodo, para o «Previsto» de Receitas. */
 export interface AReceberDoMyBank {
-  /** BRL, POSITIVO. A soma das parcelas em aberto do periodo. */
+  /** BRL, POSITIVO. A soma do juro das parcelas em aberto do periodo. */
   total: number;
-  /** Quantas parcelas. */
+  /** Quantas parcelas com juro. */
   parcelas: number;
   /** De quantas pessoas. */
   devedores: number;
@@ -356,7 +367,7 @@ export interface AReceberDoMyBank {
 
 /**
  * Uma parcela que a conexao me deve -- do lado do CREDOR, lida de
- * `mybank_installments` pelo `loan_id` dos meus emprestimos.
+ * `mybank_installment_interest` (071) com `lender_user_id` = eu.
  *
  * E uma forma diferente de `ParcelaDevida` porque o lado do credor conhece o
  * `borrower_user_id` (quem deve) e nao o `lender_user_id` (que sou eu).
@@ -368,7 +379,24 @@ export interface ParcelaAReceber {
   amount: number | string;
   due_date: string;
   status: string;
+  /**
+   * O juro da parcela, como a view o entrega: nulo quando a ultima parcela da
+   * serie nao cabe a sobra do principal (a confirmacao tambem recusa ratear).
+   */
+  interest_amount: number | string | null;
 }
+
+/**
+ * O juro da parcela em BRL, ou zero quando ele nao existe.
+ *
+ * Nulo e zero sao a mesma resposta para quem soma: a parcela nao tem juro que
+ * entre no Resultado. Negativo tambem, e pela razao de `valorDaParcela`: um
+ * juro negativo que escapasse do rateio DIMINUIRIA a despesa de quem pegou.
+ */
+const juroDaParcela = (parcela: { interest_amount?: number | string | null }): number => {
+  const n = Number(parcela.interest_amount ?? 0);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+};
 
 /**
  * O "a receber" do periodo, ou `null` quando nao ha nada.
@@ -379,12 +407,13 @@ export interface ParcelaAReceber {
  * negativo desta issue. Um objeto zerado mudaria a FORMA da resposta de toda
  * conta do app, e o contrato da tela e medido por forma.
  *
- * AUTO-EMPRESTIMO NAO ENTRA, e nao e so filtro de eficiencia: a parcela do Caso
- * A ja esta no «Previsto» de DESPESAS (ela e uma transferencia prevista minha).
- * Devolve-la aqui como receita a receber poria o mesmo dinheiro nos dois lados
- * do mesmo mes -- eu "receberia" de mim mesmo, o resultado previsto fecharia em
- * zero, e nenhuma das duas linhas estaria errada sozinha. Quem o exclui e
- * `souEuQueDevo`, pelo id do dono da leitura, e nao um `status` ou uma data.
+ * SO O JURO, desde a fase 5 (RN021.3): o principal que volta e transferencia,
+ * e a parcela sem juro (emprestimo sem taxa, ou serie cuja ultima parcela nao
+ * cabe a sobra) nao entra.
+ *
+ * AUTO-EMPRESTIMO NAO ENTRA: o juro que eu pago a mim mesmo nao e receita
+ * nem despesa, o dinheiro volta para a minha conta de investimento. Quem o
+ * exclui e o id do dono da leitura, e nao um `status` ou uma data.
  */
 export function aReceberDoMyBank(
   parcelas: ParcelaAReceber[],
@@ -396,13 +425,14 @@ export function aReceberDoMyBank(
     // esta na minha conta de investimento.
     if (parcela.status !== "pending" && parcela.status !== "reported") return false;
     // O auto-emprestimo. Ver acima.
-    return parcela.borrower_user_id !== meuUserId;
+    if (parcela.borrower_user_id === meuUserId) return false;
+    return juroDaParcela(parcela) > 0;
   });
 
   if (emAberto.length === 0) return null;
 
   const total = centavos(
-    emAberto.reduce((soma, parcela) => soma + valorDaParcela(parcela), 0)
+    emAberto.reduce((soma, parcela) => soma + juroDaParcela(parcela), 0)
   );
 
   // `<= 0` e nao `=== 0`: o CHECK do banco e `amount > 0`, e se um dia uma
@@ -445,3 +475,145 @@ export function aReceberDoMyBank(
  */
 export const LEGENDA_DO_A_RECEBER_DO_MYBANK =
   "é promessa e não dinheiro, então não entra em «Quanto ainda posso gastar».";
+
+// ---------------------------------------------------------------------------
+// O LADO DE QUEM PEGOU: o juro em Despesas (fase 5, RN021.3)
+// ---------------------------------------------------------------------------
+
+/** Uma linha de `mybank_installment_interest` (071), dos dois lados. */
+export interface ParcelaComJuro {
+  id: string;
+  loan_id: string;
+  lender_user_id: string;
+  borrower_user_id: string;
+  loan_status: string;
+  description: string;
+  installment_number: number;
+  installment_total: number;
+  amount: number | string;
+  due_date: string;
+  status: string;
+  interest_amount: number | string | null;
+}
+
+/**
+ * "Juros: Moto (3/24)". O mesmo texto que `mybank_interest_entries` (071)
+ * monta para o juro pago, para a linha nao mudar de nome no dia da baixa.
+ */
+export function descricaoDoJuro(parcela: {
+  description: string;
+  installment_number: number;
+  installment_total: number;
+}): string {
+  return `Juros: ${parcela.description} (${parcela.installment_number}/${parcela.installment_total})`;
+}
+
+/**
+ * O juro que EU devo no MyBank, na janela, no formato da agenda.
+ *
+ * E a linha da aba Despesas de quem pegou: a parcela de R$ 1.000 com R$ 50 de
+ * juro entra como "Juros: Moto (3/24)", R$ 50. Ela passa por
+ * `parcelasDevidasNaAgenda` para ter a mesma forma da parcela de Contas a
+ * Pagar (`id: null`, a chave `mybank:<id>`, o selo), e a tela a trata igual.
+ *
+ * OS RECORTES DA `mybank_due_entries` ESTAO AQUI, porque esta view e dos dois
+ * lados: so o que eu peguei, sem o auto-emprestimo, de emprestimo ativo, em
+ * `pending` ou `reported`. E so a parcela com juro.
+ */
+export function jurosDevidosNaAgenda(
+  parcelas: ParcelaComJuro[],
+  meuUserId: string,
+  janela: { de: string | null; ate: string },
+  hoje: string
+): ParcelaDevidaNaAgenda[] {
+  const devidas: ParcelaDevida[] = [];
+  for (const parcela of parcelas) {
+    if (parcela.borrower_user_id !== meuUserId) continue;
+    if (parcela.lender_user_id === meuUserId) continue;
+    if (parcela.loan_status !== "active") continue;
+    if (parcela.status !== "pending" && parcela.status !== "reported") continue;
+    const juro = juroDaParcela(parcela);
+    if (juro <= 0) continue;
+    devidas.push({
+      id: parcela.id,
+      loan_id: parcela.loan_id,
+      lender_user_id: parcela.lender_user_id,
+      description: descricaoDoJuro(parcela),
+      amount: juro,
+      due_date: parcela.due_date,
+      status: parcela.status,
+      installment_number: parcela.installment_number,
+      installment_total: parcela.installment_total,
+    });
+  }
+  return parcelasDevidasNaAgenda(parcelasDevidasNoPeriodo(devidas, janela), hoje);
+}
+
+/** A view do juro pago, do lado de quem pegou (071). */
+export const VIEW_DOS_JUROS_PAGOS = "mybank_interest_entries";
+
+/**
+ * As colunas que as leituras pedem da view. As quatro primeiras sao as de
+ * `COLUNAS_DA_PARTE_DE_GRUPO`, e e isso que deixa o modo intervalo dos
+ * relatorios somar o juro pela mesma `partesComoTransacoes`.
+ */
+export const COLUNAS_DOS_JUROS_PAGOS =
+  "id, amount, transaction_type, currency, category_id, transaction_date, descricao";
+
+/** Uma linha de `mybank_interest_entries`, como chega do PostgREST. */
+export interface JuroPagoCru {
+  id: string;
+  amount: number | string;
+  transaction_type: string | null;
+  currency?: string | null;
+  category_id?: string | null;
+  transaction_date?: string | null;
+  descricao?: string | null;
+}
+
+/** O prefixo do id da linha sintetizada: o id da parcela nao e uma transacao. */
+export const PREFIXO_DO_JURO_PAGO = "juros-do-mybank:";
+
+/**
+ * O juro pago no formato de uma linha realizada da tela de Receitas e Despesas,
+ * a mesma forma de `ContaDoFechamentoRealizada` (lib/fechamento-no-resultado.ts).
+ *
+ * `amount` NEGATIVO, que e a convencao de despesa em `financial_transactions`.
+ * `notes` leva a chave `mybank:<id da parcela>`, e e ela que da o selo na tela
+ * (`ehJuroPagoDoMyBank`). SEM `user_id`, como a conta do fechamento: a linha
+ * nao se edita nem se apaga, ela some quando quem emprestou desfaz a baixa.
+ */
+export interface JuroPagoRealizado {
+  id: string;
+  description: string;
+  amount: number;
+  transaction_date: string;
+  transaction_type: "expense";
+  currency: string;
+  category: { name: string; is_expense: boolean };
+  notes: string;
+  selo: string;
+}
+
+export function jurosPagosComoRealizados(
+  juros: readonly JuroPagoCru[]
+): JuroPagoRealizado[] {
+  const linhas: JuroPagoRealizado[] = [];
+  for (const juro of juros) {
+    if (juro.transaction_type !== "expense") continue;
+    const valor = Math.abs(Number(juro.amount) || 0);
+    if (!(valor > 0)) continue;
+    linhas.push({
+      id: `${PREFIXO_DO_JURO_PAGO}${juro.id}`,
+      description: juro.descricao ?? "Juros do MyBank",
+      amount: -valor,
+      transaction_date: juro.transaction_date ?? "",
+      transaction_type: "expense",
+      currency: juro.currency ?? "BRL",
+      category: { name: "Juros do MyBank", is_expense: true },
+      notes: chaveDaParcelaDoMyBank(juro.id),
+      selo: SELO_DO_MYBANK,
+    });
+  }
+  return linhas;
+}

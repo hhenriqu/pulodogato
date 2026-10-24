@@ -345,7 +345,7 @@ test("o «a receber» do MyBank aparece como nota do «Previsto», no plural cer
 
   assert.match(
     t,
-    /inclui R\$ 30,00 a receber/,
+    /inclui juros de R\$ 30,00 a receber/,
     "o cartao nao imprime o TOTAL do «a receber» -- uma frase sem o valor nao " +
       "diz quanto do «Previsto» e promessa"
   );
@@ -433,7 +433,7 @@ test("as DUAS promessas se dizem em separado quando as duas existem", () => {
   );
 
   assert.match(t, /inclui R\$ 300,00 de reembolso previsto/);
-  assert.match(t, /inclui R\$ 30,00 a receber/);
+  assert.match(t, /inclui juros de R\$ 30,00 a receber/);
 });
 
 test("a legenda do bruto sai na aba Despesas, e SO nela", () => {
