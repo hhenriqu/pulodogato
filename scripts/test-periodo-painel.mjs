@@ -66,7 +66,6 @@ const {
   presetDoPeriodo,
   rotaDaTelaDoLado,
   rotuloDoPeriodo,
-  rotuloDoSaldo,
   somarPrevistas,
   terminaNoPassado,
   ultimoDiaDoMes,
@@ -772,91 +771,8 @@ test("periodo que termina hoje ainda materializa o dia de hoje", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 10. O tile de saldo nunca aparece rotulado com um periodo que nao e dele
+// 10. O tile de saldo saiu daqui: ver scripts/test-saldo-em-conta.mjs
 // ---------------------------------------------------------------------------
-// O aceite 2 da issue, como assercao: "nenhum bloco sem eixo de tempo fica
-// rotulado com o mes escolhido".
-
-test("periodo passado SEM reconstrucao: o rotulo avisa que o numero e de hoje", () => {
-  const julho = { de: "2026-07-01", ate: "2026-07-31", modo: "mes" };
-  const r = rotuloDoSaldo({
-    periodo: julho,
-    hoje: "2026-09-29",
-    saldoHistorico: null,
-    quantidadeDeContas: 3,
-  });
-
-  assert.equal(r.doPeriodo, false);
-  // Num periodo que ja terminou nao basta dizer "hoje" de passagem: a nota tem
-  // que NEGAR a associacao com o periodo. A contagem de contas ("3 contas
-  // ativas, saldo de hoje") menciona hoje e ainda assim deixa quem passa o
-  // olho concluindo que aquele e o saldo de julho.
-  assert.equal(r.nota, "Saldo de hoje — não é do período escolhido");
-  assert.match(r.nota, /não é do período/);
-  // O ponto exato da issue: o numero de hoje NAO pode carregar o nome do
-  // periodo escolhido.
-  assert.ok(
-    !r.nota.includes("julho") && !r.titulo.includes("julho"),
-    `rotulo de hoje nomeou o periodo: ${r.titulo} / ${r.nota}`
-  );
-});
-
-test("periodo passado COM reconstrucao: o rotulo pode nomear o periodo", () => {
-  const julho = { de: "2026-07-01", ate: "2026-07-31", modo: "mes" };
-  const r = rotuloDoSaldo({
-    periodo: julho,
-    hoje: "2026-09-29",
-    saldoHistorico: 12345.67,
-    quantidadeDeContas: 3,
-  });
-
-  assert.equal(r.doPeriodo, true);
-  assert.match(r.nota, /julho de 2026/);
-  assert.ok(!r.nota.includes("hoje"));
-});
-
-test("periodo que contem hoje: o saldo de hoje e legitimo, e ainda assim dito", () => {
-  const setembro = { de: "2026-09-01", ate: "2026-09-30", modo: "mes" };
-  const r = rotuloDoSaldo({
-    periodo: setembro,
-    hoje: "2026-09-29",
-    saldoHistorico: null,
-    quantidadeDeContas: 1,
-  });
-
-  assert.equal(r.nota, "1 conta ativa, saldo de hoje");
-  assert.equal(r.doPeriodo, false);
-});
-
-test("nenhum rotulo de saldo de hoje nomeia o periodo, em periodo nenhum", () => {
-  // Varredura: o mesmo par de regras para todos os recortes que a tela
-  // consegue produzir. Um caso especifico passaria verde se alguem
-  // reintroduzisse o rotulo implicito em UM dos ramos.
-  const hoje = "2026-09-29";
-  const periodos = [
-    { de: "2026-07-01", ate: "2026-07-31", modo: "mes" },
-    { de: "2026-01-01", ate: "2026-12-31", modo: "mes" },
-    { de: "2025-11-01", ate: "2026-02-28", modo: "mes" },
-    { de: "2026-09-15", ate: "2026-10-20", modo: "intervalo" },
-    { de: "2026-08-15", ate: "2026-08-20", modo: "intervalo" },
-    { de: "2026-12-01", ate: "2026-12-31", modo: "mes" },
-  ];
-
-  for (const periodo of periodos) {
-    const r = rotuloDoSaldo({
-      periodo,
-      hoje,
-      saldoHistorico: null,
-      quantidadeDeContas: 2,
-    });
-    assert.equal(r.doPeriodo, false, JSON.stringify(periodo));
-    assert.match(r.nota, /hoje/, JSON.stringify(periodo));
-    assert.ok(
-      !`${r.titulo} ${r.nota}`.includes(rotuloDoPeriodo(periodo)),
-      `rotulo de hoje nomeou o periodo ${rotuloDoPeriodo(periodo)}`
-    );
-  }
-});
 
 // ---------------------------------------------------------------------------
 // 11. O rotulo -- a unica coisa na tela que diz a que periodo o numero se refere

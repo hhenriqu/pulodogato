@@ -1,0 +1,20 @@
+{
+  "//": "Build so do teste: lib/saldo-em-conta.ts importa @/lib/recurrence e @/lib/contas, e lib/contas.ts importa tipos de @/types -- por isso rootDir e a raiz e o resolve-aliases roda com --espelha-raiz. Ver scripts/test-saldo-em-conta.mjs.",
+  "compilerOptions": {
+    "outDir": "../.tmp-saldo-em-conta",
+    "rootDir": "..",
+    "module": "es2020",
+    "target": "es2020",
+    "moduleResolution": "node",
+    "skipLibCheck": true,
+    "baseUrl": "..",
+    "paths": {
+      "@/*": [
+        "./*"
+      ]
+    }
+  },
+  "include": [
+    "../lib/saldo-em-conta.ts"
+  ]
+}

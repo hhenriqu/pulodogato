@@ -739,65 +739,6 @@ export function agregarTransacoes(linhas: LinhaDeTransacao[]): ResumoDeFluxo {
 }
 
 // -----------------------------------------------------------------------------
-// O ROTULO DO TILE DE SALDO
-// -----------------------------------------------------------------------------
-// Esta funcao existe para que o aceite da issue vire assercao em vez de
-// inspecao visual. A regra e uma frase: um numero que nao tem versao para o
-// periodo escolhido NUNCA pode aparecer debaixo do nome desse periodo.
-//
-// `financial_accounts.current_balance` e o saldo de HOJE -- o banco nao guarda
-// historico de saldo. Navegar para julho e continuar mostrando o mesmo numero
-// sob o rotulo "julho" e uma afirmacao falsa sobre o dinheiro do usuario, e do
-// tipo que nao da erro nem fica vazia. Deixar a decisao no JSX faria dela algo
-// que so um par de olhos conferindo a tela distingue; aqui, o teste distingue.
-
-export interface RotuloDeSaldo {
-  titulo: string;
-  nota: string;
-  /** O numero se refere ao periodo escolhido, ou a hoje? */
-  doPeriodo: boolean;
-}
-
-export function rotuloDoSaldo(opts: {
-  periodo: Periodo;
-  hoje?: string;
-  /** O patrimonio no fim do periodo, quando existe versao historica dele. */
-  saldoHistorico: number | null;
-  quantidadeDeContas: number;
-}): RotuloDeSaldo {
-  const hoje = opts.hoje ?? today();
-
-  // Ha reconstrucao historica: o numero E do periodo, e o rotulo pode nomea-lo.
-  if (opts.saldoHistorico !== null) {
-    return {
-      titulo: "Patrimônio no fim",
-      nota: `Em ${rotuloDoPeriodo(opts.periodo)} — reconstruído a partir das transações`,
-      doPeriodo: true,
-    };
-  }
-
-  // Nao ha, e o periodo ja terminou: o aviso tem que ser a primeira coisa que
-  // a linha diz, nao um detalhe no fim dela.
-  if (terminaNoPassado(opts.periodo, hoje)) {
-    return {
-      titulo: "Saldo das contas",
-      nota: "Saldo de hoje — não é do período escolhido",
-      doPeriodo: false,
-    };
-  }
-
-  // O periodo alcanca hoje: o saldo de hoje e legitimo dentro dele, e a linha
-  // volta a ser a contagem de contas -- com "saldo de hoje" dito assim mesmo,
-  // porque num periodo de tres meses "o saldo" ainda e o de um dia so.
-  const plural = opts.quantidadeDeContas === 1 ? "conta ativa" : "contas ativas";
-  return {
-    titulo: "Saldo das contas",
-    nota: `${opts.quantidadeDeContas} ${plural}, saldo de hoje`,
-    doPeriodo: false,
-  };
-}
-
-// -----------------------------------------------------------------------------
 // O resumo de contas previstas, somado sobre o periodo
 // -----------------------------------------------------------------------------
 // `/api/scheduled-transactions/summary` responde uma linha POR MES. O painel
