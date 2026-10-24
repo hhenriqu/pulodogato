@@ -11,7 +11,7 @@
 // Por que este teste le as migrations
 // -----------------------------------------------------------------------
 // A rota apaga com `.from(etapa.tabela)` -- nome de tabela vindo de variavel.
-// O check-table-drift.mjs le `.from("literal")`, entao NENHUMA das dezesseis
+// O check-table-drift.mjs le `.from("literal")`, entao NENHUMA das dezessete
 // tabelas deste plano esta coberta por ele. Sem este arquivo, um nome de
 // tabela errado no plano passaria pelo tsc, pelo next build e pelo CI inteiro,
 // e apareceria como um passo "falhou" na tela de quem clicou no botao -- com
@@ -48,9 +48,16 @@ import { readFileSync, readdirSync } from "node:fs";
 const {
   PLANO_DE_RESET,
   FRASE_DE_CONFIRMACAO,
+  LIDO_DEPOIS_DE,
   confirmacaoValida,
   resetCompleto,
   totalApagado,
+  totalMantido,
+  motivoDaRecusa,
+  apagarEmLotes,
+  linhaFicaPelasRegras,
+  exclusoesPorColuna,
+  executarPlano,
 } = await import("../.tmp-account-reset/account-reset.js");
 
 const DIR = "database/migrations";
@@ -122,6 +129,20 @@ test("toda tabela do plano existe no schema versionado", () => {
     );
   }
 });
+
+/**
+ * A coluna esta no CREATE TABLE da tabela, ou entrou depois por
+ * `ALTER TABLE ... ADD COLUMN` (`group_closing_id` veio na 067,
+ * `expense_split_id` na 070).
+ */
+function colunaDeclarada(tabela, coluna) {
+  const bloco = blocoDaTabela(tabela);
+  if (bloco && new RegExp(`\\b${coluna}\\b`).test(bloco)) return true;
+  return new RegExp(
+    `ALTER TABLE (?:IF EXISTS )?(?:public\\.)?${tabela}\\s+ADD COLUMN (?:IF NOT EXISTS )?${coluna}\\b`,
+    "i"
+  ).test(SQL);
+}
 
 test("toda tabela do plano tem a coluna de dono declarada", () => {
   for (const passo of PLANO_DE_RESET) {
@@ -238,6 +259,429 @@ test("o plano nao toca em grupo de despesa nem no perfil", () => {
 });
 
 // ---------------------------------------------------------------------------
+// O que fica (24/10/2026): grupo, divisao com pessoa e MyBank
+// ---------------------------------------------------------------------------
+
+test("toda coluna de regra e de elo existe na tabela do passo", () => {
+  // Uma regra sobre coluna inexistente vira `column does not exist` no DELETE
+  // e derruba o passo; um elo sobre coluna inexistente nao exclui nada.
+  for (const passo of PLANO_DE_RESET) {
+    for (const regra of passo.ficam ?? []) {
+      assert.ok(
+        colunaDeclarada(passo.tabela, regra.coluna),
+        `${passo.tabela}.${regra.coluna} (regra "${regra.motivo}") nao existe no schema`
+      );
+    }
+    for (const elo of passo.elos ?? []) {
+      assert.ok(
+        colunaDeclarada(passo.tabela, elo.coluna),
+        `${passo.tabela}.${elo.coluna} (elo "${elo.motivo}") nao existe no schema`
+      );
+    }
+  }
+});
+
+test("a regra de prefixo tem prefixo, e ha no maximo uma por passo", () => {
+  // A rota traduz `comeca_com` num `.or()`; dois na mesma URL nao sao um
+  // contrato do PostgREST.
+  for (const passo of PLANO_DE_RESET) {
+    const prefixos = (passo.ficam ?? []).filter((r) => r.quando === "comeca_com");
+    assert.ok(prefixos.length <= 1, `${passo.tabela} tem ${prefixos.length} regras de prefixo`);
+    for (const r of prefixos) {
+      assert.ok(r.prefixo && !/[%_,()]/.test(r.prefixo), `prefixo invalido em ${passo.tabela}`);
+    }
+  }
+});
+
+test("cada conjunto e lido depois dos passos de que depende", () => {
+  // Lido antes, `contas_que_ficam` ve a conta de um lancamento pessoal que
+  // ainda vai sair -- e a conta fica para sempre, com saldo de lancamento
+  // nenhum.
+  const posicao = new Map(PLANO_DE_RESET.map((p, i) => [p.tabela, i]));
+  for (const [i, passo] of PLANO_DE_RESET.entries()) {
+    for (const elo of passo.elos ?? []) {
+      const dependencias = LIDO_DEPOIS_DE[elo.conjunto];
+      assert.ok(dependencias, `${elo.conjunto} nao tem LIDO_DEPOIS_DE`);
+      for (const tabela of dependencias) {
+        assert.ok(posicao.has(tabela), `${elo.conjunto} depende de ${tabela}, fora do plano`);
+        assert.ok(
+          posicao.get(tabela) < i,
+          `${passo.tabela} le ${elo.conjunto} antes do passo de ${tabela}`
+        );
+      }
+    }
+  }
+});
+
+test("toda trava de DELETE do schema e uma regra de fica do passo", () => {
+  // Lido do schema, e nao da declaracao: a 068 e a 070 recusam apagar a conta
+  // com `group_closing_id` e com `expense_split_id`, e UMA recusa derrubava o
+  // passo inteiro. Uma trava nova sem a regra correspondente volta a isso.
+  const re =
+    /FUNCTION public\.(\w+?)_trava\w*\(\)[\s\S]*?IF TG_OP = 'DELETE' THEN\s*IF OLD\.(\w+) IS NOT NULL THEN\s*RAISE EXCEPTION/g;
+  const travas = [...SQL.matchAll(re)].map((m) => ({ tabela: m[1], coluna: m[2] }));
+  assert.ok(
+    travas.some((t) => t.coluna === "group_closing_id") &&
+      travas.some((t) => t.coluna === "expense_split_id"),
+    "a leitura das travas nao achou as da 068 e da 070 -- o regex quebrou"
+  );
+  for (const trava of travas) {
+    const passo = PLANO_DE_RESET.find((p) => p.tabela === trava.tabela);
+    if (!passo) continue;
+    assert.ok(
+      (passo.ficam ?? []).some((r) => r.coluna === trava.coluna && r.quando === "preenchida"),
+      `${trava.tabela}.${trava.coluna} tem trava de DELETE e nao e regra de fica`
+    );
+  }
+});
+
+test("a conta credora do MyBank segura a conta de banco", () => {
+  // `lender_account_id` e ON DELETE RESTRICT (053): sem o elo, o DELETE das
+  // contas morre inteiro em quem ja emprestou.
+  assert.match(
+    SQL,
+    /lender_account_id\) REFERENCES public\.financial_accounts\(id\) ON DELETE RESTRICT/
+  );
+  const contas = PLANO_DE_RESET.find((p) => p.tabela === "financial_accounts");
+  assert.ok((contas.elos ?? []).some((e) => e.conjunto === "contas_que_ficam"));
+});
+
+test("o que outra pessoa ve esta nas regras", () => {
+  const regras = (tabela) =>
+    (PLANO_DE_RESET.find((p) => p.tabela === tabela)?.ficam ?? []).map(
+      (r) => `${r.coluna}:${r.quando}${r.prefixo ? `:${r.prefixo}` : ""}`
+    );
+  const elos = (tabela) =>
+    (PLANO_DE_RESET.find((p) => p.tabela === tabela)?.elos ?? []).map((e) => e.conjunto);
+
+  for (const tabela of ["financial_transactions", "scheduled_transactions", "recurring_rules", "budgets", "financial_goals"]) {
+    assert.ok(regras(tabela).includes("group_id:preenchida"), `${tabela} sem a regra de grupo`);
+  }
+  assert.ok(regras("scheduled_transactions").includes("notes:comeca_com:mybank:"));
+  assert.ok(regras("financial_transactions").includes("notes:comeca_com:mybank:"));
+  assert.ok(regras("receipts").includes("settlement_id:preenchida"));
+  assert.deepEqual(elos("financial_transactions").sort(), [
+    "lancamentos_das_contas_que_ficam",
+    "lancamentos_divididos",
+  ]);
+  assert.deepEqual(elos("goal_contributions"), ["metas_de_grupo"]);
+});
+
+test("a carteira de investimentos sai, as operacoes antes dos ativos", () => {
+  const i = PLANO_DE_RESET.findIndex((p) => p.tabela === "investment_transactions");
+  const a = PLANO_DE_RESET.findIndex((p) => p.tabela === "investment_assets");
+  assert.ok(i >= 0 && a > i);
+});
+
+test("a regra le a linha como o filtro do banco", () => {
+  const lancamentos = PLANO_DE_RESET.find((p) => p.tabela === "financial_transactions");
+  const fica = (linha) => linhaFicaPelasRegras(lancamentos, linha);
+  assert.equal(fica({ group_id: null, notes: null }), false, "notes nula sai");
+  assert.equal(fica({ group_id: "g1", notes: null }), true);
+  assert.equal(fica({ group_id: null, notes: "mybank:abc" }), true);
+  // A chave e o comeco do texto, como o `LIKE 'mybank:%'`.
+  assert.equal(fica({ group_id: null, notes: "paguei o mybank: 300" }), false);
+  assert.equal(fica({ group_id: null, notes: "acerto:abc" }), false, "a perna de acerto sai");
+});
+
+test("as exclusoes por id juntam por coluna e tiram repeticao", () => {
+  assert.deepEqual(
+    exclusoesPorColuna([
+      { coluna: "id", ids: ["a", "b"] },
+      { coluna: "id", ids: ["b", "c", ""] },
+      { coluna: "goal_id", ids: [] },
+    ]),
+    [{ coluna: "id", ids: ["a", "b", "c"] }]
+  );
+});
+
+// ---------------------------------------------------------------------------
+// O apagamento por lotes
+// ---------------------------------------------------------------------------
+
+const ids = (n) => Array.from({ length: n }, (_, i) => `t${i}`);
+
+test("um lote recusado e partido ate a linha que o banco nao solta", async () => {
+  const chamadas = [];
+  const r = await apagarEmLotes(ids(250), async (lote) => {
+    chamadas.push(lote.length);
+    if (lote.includes("t137")) return { apagadas: null, erro: { code: "23503", message: "fk" } };
+    return { apagadas: lote.length, erro: null };
+  });
+  assert.equal(r.apagadas, 249);
+  assert.deepEqual(r.recusadas, [
+    { id: "t137", motivo: "outro registro que ficou aponta para ele" },
+  ]);
+  assert.equal(r.esgotou, false);
+  // 3 lotes + a bissecao de um lote de 100: bem abaixo de uma chamada por id.
+  assert.ok(chamadas.length < 20, `${chamadas.length} chamadas`);
+});
+
+test("o banco que recusa tudo para na folga, e o resto volta como recusado", async () => {
+  let chamadas = 0;
+  const r = await apagarEmLotes(
+    ids(300),
+    async () => {
+      chamadas += 1;
+      return { apagadas: null, erro: { message: "permission denied" } };
+    },
+    { folga: 10 }
+  );
+  assert.equal(chamadas, 3 + 10);
+  assert.equal(r.esgotou, true);
+  assert.equal(r.apagadas, 0);
+  // Nada some do relatorio: o que nao foi tentado conta como nao apagado.
+  assert.equal(r.recusadas.length, 300);
+});
+
+test("o motivo da recusa", () => {
+  assert.equal(motivoDaRecusa({ code: "23503", message: "x" }), "outro registro que ficou aponta para ele");
+  assert.equal(motivoDaRecusa({ message: "Conta gerada pelo fechamento do grupo nao se apaga" }), "Conta gerada pelo fechamento do grupo nao se apaga");
+  assert.equal(motivoDaRecusa(null), "o banco recusou sem dizer por quê");
+});
+
+// ---------------------------------------------------------------------------
+// O plano inteiro, contra um banco de mentira
+// ---------------------------------------------------------------------------
+// O banco falso faz o que o Postgres faria com estas linhas: o DELETE de um
+// comando so morre inteiro com uma recusa, a conta de banco com lancamento
+// recusa sair (23503), e a trava da 068 recusa a conta do fechamento. Os
+// conjuntos sao lidos das tabelas NO MOMENTO da chamada, como a rota le.
+
+const EU = "u-eu";
+
+function bancoFalso(tabelas, { falhaDeUmaVez = new Set(), conjuntoQueFalha = null } = {}) {
+  const chamadas = [];
+  const doDono = (passo) => (tabelas[passo.tabela] ?? []).filter((l) => l[passo.coluna] === EU);
+  const recusa = (tabela, linha) => {
+    if (tabela === "scheduled_transactions" && linha.group_closing_id) {
+      return { code: "42501", message: "Conta gerada pelo fechamento do grupo nao se apaga" };
+    }
+    if (tabela === "financial_accounts") {
+      const usada = ["financial_transactions", "scheduled_transactions", "recurring_rules"].some(
+        (t) => (tabelas[t] ?? []).some((l) => l.account_id === linha.id)
+      );
+      if (usada) return { code: "23503", message: "violates foreign key constraint" };
+    }
+    return null;
+  };
+  const apagar = (passo, saem) => {
+    for (const l of saem) {
+      const erro = recusa(passo.tabela, l);
+      if (erro) return { apagadas: null, erro };
+    }
+    tabelas[passo.tabela] = (tabelas[passo.tabela] ?? []).filter((l) => !saem.includes(l));
+    return { apagadas: saem.length, erro: null };
+  };
+  const coluna = (tabela, col, filtro = () => true) =>
+    (tabelas[tabela] ?? []).filter(filtro).map((l) => l[col]).filter(Boolean);
+
+  return {
+    chamadas,
+    async apagarDeUmaVez(passo, exclusoes) {
+      chamadas.push(`umaVez:${passo.tabela}`);
+      if (falhaDeUmaVez.has(passo.tabela)) return { apagadas: null, erro: { message: "statement timeout" } };
+      const saem = doDono(passo).filter(
+        (l) => !linhaFicaPelasRegras(passo, l) && !exclusoes.some((e) => e.ids.includes(l[e.coluna]))
+      );
+      return apagar(passo, saem);
+    },
+    async lerLinhasQueSaem(passo) {
+      chamadas.push(`ler:${passo.tabela}`);
+      return { linhas: doDono(passo).filter((l) => !linhaFicaPelasRegras(passo, l)), erro: null };
+    },
+    async apagarIds(passo, lote) {
+      return apagar(passo, doDono(passo).filter((l) => lote.includes(l.id)));
+    },
+    async contarRestantes(passo) {
+      return doDono(passo).length;
+    },
+    async lerConjunto(conjunto) {
+      chamadas.push(`conjunto:${conjunto}`);
+      if (conjunto === conjuntoQueFalha) return { ids: null, erro: { message: "rede" } };
+      switch (conjunto) {
+        case "metas_de_grupo":
+          return { ids: coluna("financial_goals", "id", (l) => l.group_id), erro: null };
+        case "lancamentos_divididos":
+          return { ids: coluna("expense_splits", "transaction_id"), erro: null };
+        case "lancamentos_das_contas_que_ficam":
+          return { ids: coluna("scheduled_transactions", "transaction_id", (l) => l.user_id === EU), erro: null };
+        case "contas_que_ficam":
+          return {
+            ids: [
+              ...coluna("financial_transactions", "account_id", (l) => l.user_id === EU),
+              ...coluna("scheduled_transactions", "account_id", (l) => l.user_id === EU),
+              ...coluna("recurring_rules", "account_id", (l) => l.user_id === EU),
+              ...coluna("mybank_loans", "lender_account_id", (l) => l.lender_user_id === EU),
+            ],
+            erro: null,
+          };
+      }
+      throw new Error(`conjunto desconhecido: ${conjunto}`);
+    },
+  };
+}
+
+/**
+ * Uma conta como a da Leticia, mais o que o Helio tem: o pessoal que sai e o
+ * que envolve outra pessoa, que fica.
+ */
+function contaDeQuemEstaNumGrupo() {
+  return {
+    financial_accounts: [
+      { id: "conta-pessoal", user_id: EU },
+      { id: "conta-do-grupo", user_id: EU },
+      { id: "conta-credora", user_id: EU },
+    ],
+    financial_transactions: [
+      { id: "mercado", user_id: EU, account_id: "conta-pessoal", group_id: null, notes: null },
+      { id: "acerto", user_id: EU, account_id: "conta-pessoal", group_id: null, notes: "acerto:s1" },
+      { id: "aluguel-do-grupo", user_id: EU, account_id: "conta-do-grupo", group_id: "casa", notes: null },
+      { id: "pizza-dividida", user_id: EU, account_id: "conta-do-grupo", group_id: null, notes: null },
+      { id: "paguei-a-lais", user_id: EU, account_id: "conta-do-grupo", group_id: null, notes: null },
+      { id: "parcela-mybank", user_id: EU, account_id: "conta-credora", group_id: null, notes: "mybank:p1" },
+      { id: "da-lais", user_id: "u-lais", account_id: "conta-da-lais", group_id: "casa", notes: null },
+    ],
+    expense_splits: [{ id: "d1", transaction_id: "pizza-dividida" }],
+    scheduled_transactions: [
+      { id: "luz", user_id: EU, account_id: "conta-pessoal", group_id: null, notes: null, transaction_id: null },
+      { id: "luz-do-grupo", user_id: EU, account_id: "conta-do-grupo", group_id: "casa", notes: null, transaction_id: null },
+      { id: "pagamento-ao-grupo", user_id: EU, account_id: null, group_id: null, group_closing_id: "f1", notes: null, transaction_id: null },
+      { id: "pagamento-a-lais", user_id: EU, account_id: "conta-do-grupo", group_id: null, expense_split_id: "d2", notes: null, transaction_id: "paguei-a-lais" },
+      { id: "parcela-prevista", user_id: EU, account_id: "conta-credora", group_id: null, notes: "mybank:p2", transaction_id: null },
+    ],
+    recurring_rules: [
+      { id: "netflix", user_id: EU, account_id: "conta-pessoal", group_id: null },
+    ],
+    budgets: [
+      { id: "b-pessoal", user_id: EU, group_id: null },
+      { id: "b-casa", user_id: EU, group_id: "casa" },
+    ],
+    financial_goals: [
+      { id: "viagem", user_id: EU, group_id: null },
+      { id: "reforma", user_id: "u-lais", group_id: "casa" },
+    ],
+    goal_contributions: [
+      { id: "aporte-viagem", user_id: EU, goal_id: "viagem" },
+      { id: "aporte-reforma", user_id: EU, goal_id: "reforma" },
+    ],
+    receipts: [
+      { id: "r-mercado", user_id: EU, transaction_id: "mercado", settlement_id: null },
+      { id: "r-acerto", user_id: EU, transaction_id: null, settlement_id: "s1" },
+    ],
+    investment_assets: [{ id: "petr4", user_id: EU }],
+    investment_transactions: [{ id: "compra", user_id: EU }],
+    mybank_loans: [{ id: "emprestimo", lender_user_id: EU, lender_account_id: "conta-credora" }],
+  };
+}
+
+const ids_ = (tabelas, tabela) => (tabelas[tabela] ?? []).map((l) => l.id).sort();
+
+test("o plano apaga o pessoal e deixa o que envolve outra pessoa", async () => {
+  const tabelas = contaDeQuemEstaNumGrupo();
+  const passos = await executarPlano(bancoFalso(tabelas));
+
+  assert.deepEqual(ids_(tabelas, "financial_transactions"), [
+    "aluguel-do-grupo",
+    "da-lais",
+    "paguei-a-lais",
+    "parcela-mybank",
+    "pizza-dividida",
+  ]);
+  assert.deepEqual(ids_(tabelas, "scheduled_transactions"), [
+    "luz-do-grupo",
+    "pagamento-a-lais",
+    "pagamento-ao-grupo",
+    "parcela-prevista",
+  ]);
+  assert.deepEqual(ids_(tabelas, "financial_accounts"), ["conta-credora", "conta-do-grupo"]);
+  assert.deepEqual(ids_(tabelas, "budgets"), ["b-casa"]);
+  assert.deepEqual(ids_(tabelas, "financial_goals"), ["reforma"]);
+  assert.deepEqual(ids_(tabelas, "goal_contributions"), ["aporte-reforma"]);
+  assert.deepEqual(ids_(tabelas, "receipts"), ["r-acerto"]);
+  assert.deepEqual(ids_(tabelas, "recurring_rules"), []);
+  assert.deepEqual(ids_(tabelas, "investment_assets"), []);
+
+  // Terminou inteiro: o que ficou e o plano, e nao uma falha.
+  assert.equal(resetCompleto(passos), true);
+  const lancamentos = passos.find((p) => p.tabela === "financial_transactions");
+  assert.equal(lancamentos.apagadas, 2);
+  assert.equal(lancamentos.mantidas, 4);
+  assert.ok(lancamentos.motivos.includes("lançamento de grupo"));
+  const contas = passos.find((p) => p.tabela === "financial_accounts");
+  assert.equal(contas.apagadas, 1);
+  assert.equal(contas.mantidas, 2);
+  // contas 2, lancamentos 4, previstas 4, orcamento 1, aporte 1, comprovante 1.
+  // A meta "reforma" fica, mas e da Lais: nao conta como minha.
+  assert.equal(totalMantido(passos), 2 + 4 + 4 + 1 + 1 + 1);
+});
+
+test("o DELETE que morre inteiro e refeito por lotes, e so a linha recusada fica", async () => {
+  // Uma conta do fechamento sem `group_closing_id` na regra (o plano de antes
+  // de 24/10) derrubava o passo inteiro. Com a regra tirada de proposito, a
+  // trava recusa uma linha so, e o resto do passo sai.
+  const tabelas = contaDeQuemEstaNumGrupo();
+  const plano = PLANO_DE_RESET.map((p) =>
+    p.tabela === "scheduled_transactions"
+      ? { ...p, ficam: p.ficam.filter((r) => r.coluna !== "group_closing_id") }
+      : p
+  );
+  const passos = await executarPlano(bancoFalso(tabelas), plano);
+  const previstas = passos.find((p) => p.tabela === "scheduled_transactions");
+  assert.equal(previstas.apagadas, 1, "a luz pessoal saiu");
+  assert.equal(previstas.recusadas, 1);
+  assert.match(previstas.motivoDaRecusa, /fechamento do grupo/);
+  assert.ok(ids_(tabelas, "scheduled_transactions").includes("pagamento-ao-grupo"));
+  // A recusa tira o "pronto": nao era para ter acontecido.
+  assert.equal(resetCompleto(passos), false);
+});
+
+test("sem o conjunto, o passo nao apaga nada", async () => {
+  // Apagar os lancamentos sem saber quais pagam conta que fica reabriria
+  // "Pagamento a Lais", ja paga.
+  const tabelas = contaDeQuemEstaNumGrupo();
+  const passos = await executarPlano(
+    bancoFalso(tabelas, { conjuntoQueFalha: "lancamentos_das_contas_que_ficam" })
+  );
+  const lancamentos = passos.find((p) => p.tabela === "financial_transactions");
+  assert.equal(lancamentos.apagadas, null);
+  assert.match(lancamentos.erro, /não consegui ler o que fica/);
+  assert.ok(ids_(tabelas, "financial_transactions").includes("mercado"));
+  assert.equal(resetCompleto(passos), false);
+});
+
+test("a falha do DELETE de uma vez cai nos lotes com as mesmas exclusoes", async () => {
+  const tabelas = contaDeQuemEstaNumGrupo();
+  const banco = bancoFalso(tabelas, { falhaDeUmaVez: new Set(["financial_transactions"]) });
+  const passos = await executarPlano(banco);
+  assert.ok(banco.chamadas.includes("ler:financial_transactions"));
+  assert.deepEqual(ids_(tabelas, "financial_transactions"), [
+    "aluguel-do-grupo",
+    "da-lais",
+    "paguei-a-lais",
+    "parcela-mybank",
+    "pizza-dividida",
+  ]);
+  assert.equal(resetCompleto(passos), true);
+});
+
+test("sobra num passo sem regra e erro, e nao 'pronto'", async () => {
+  // O DELETE que a RLS filtra devolve zero e sem erro. A contagem do que
+  // sobrou e o que denuncia.
+  const tabelas = contaDeQuemEstaNumGrupo();
+  const banco = bancoFalso(tabelas);
+  const apagarDeUmaVez = banco.apagarDeUmaVez;
+  banco.apagarDeUmaVez = async (passo, exclusoes) =>
+    passo.tabela === "investment_assets"
+      ? { apagadas: 0, erro: null }
+      : apagarDeUmaVez(passo, exclusoes);
+  const passos = await executarPlano(banco);
+  const ativos = passos.find((p) => p.tabela === "investment_assets");
+  assert.match(ativos.erro, /1 linha não saiu/);
+  assert.equal(resetCompleto(passos), false);
+});
+
+// ---------------------------------------------------------------------------
 // A frase de confirmacao
 // ---------------------------------------------------------------------------
 
@@ -317,4 +761,16 @@ test("relatorio vazio nao conta como sucesso", () => {
   // Nenhum passo executado quer dizer que o laco nao rodou -- nao que a conta
   // ja estava limpa.
   assert.equal(resetCompleto([]), false);
+});
+
+test("o que ficou de proposito nao tira o 'pronto', a recusa tira", () => {
+  assert.equal(
+    resetCompleto([{ tabela: "a", rotulo: "A", apagadas: 3, mantidas: 2, motivos: ["x"] }]),
+    true
+  );
+  assert.equal(
+    resetCompleto([{ tabela: "a", rotulo: "A", apagadas: 3, recusadas: 1, motivoDaRecusa: "x" }]),
+    false
+  );
+  assert.equal(totalMantido([{ apagadas: 1, mantidas: 2 }, { apagadas: null }]), 2);
 });
