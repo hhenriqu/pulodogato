@@ -46,6 +46,7 @@ import type { EstadoDaLeitura } from "@/lib/offline-leitura";
 import type {
   CardInvoice,
   CardInvoiceLine,
+  CobrancaPrevistaNaFatura,
   ScheduledTransaction,
 } from "@/types/financial";
 
@@ -570,6 +571,21 @@ export function previsoesDoCartao(
 ): ScheduledTransaction[] | null {
   if (!fatura?.scheduled_pending) return null;
   return fatura.scheduled_pending.filter((p) => p.account_id === accountId);
+}
+
+/**
+ * As cobrancas PREVISTAS que caem nesta fatura (24/10/2026).
+ *
+ * A despesa fixa no cartao antes do dia dela: ainda nao e compra, mas ja e
+ * parte da fatura. `null` e "nao deu para ler", como em `previsoesDoCartao`;
+ * o filtro por cartao e a mesma afirmacao da tela que ele faz.
+ */
+export function cobrancasDaFatura(
+  fatura: CardInvoice | null,
+  accountId: string
+): CobrancaPrevistaNaFatura[] | null {
+  if (!fatura?.cobrancas_previstas) return null;
+  return fatura.cobrancas_previstas.filter((c) => c.account_id === accountId);
 }
 
 /**

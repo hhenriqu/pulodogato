@@ -26,6 +26,7 @@
 | 2.5 | 24/10/2026 | Fase 6: o cartão pela fatura (RN017.3 e RN017.4). A fatura paga conta no mês do vencimento, pelo total das compras, e a compra e o estorno no cartão saem do Resultado. Conclui o modelo novo | Helio (decisões D1 a D5) |
 | 2.6 | 24/10/2026 | RN004.4 nova: o cartão só recebe dinheiro pelo pagamento da fatura. A transferência avulsa ou mensal para um cartão é recusada | Helio |
 | 2.7 | 24/10/2026 | RN018.7 e RN018.13 reescritas, RN018.15 e RN019.6 novas: a conta do grupo que fecha aparece para os outros membros só na estimativa, no mês do fechamento; a aba Despesas mostra "Despesas do Grupo {nome}" com o detalhe por despesa, e os Pix do acerto com copia e cola | Helio |
+| 2.8 | 24/10/2026 | RN004.5 e RN004.6 novas: a conta prevista no cartão (a despesa fixa e a avulsa) é uma cobrança. Cai na fatura pelo fechamento, soma como prevista antes do dia e vira compra sozinha no dia. Apagar a compra que o app lançou pula a cobrança | Helio |
 
 > **O que a versão 2.0 corrigiu.** Até aqui esta PRD descrevia um app de carteira
 > de investimentos: o problema era "investidores pessoa física", as personas eram
@@ -275,6 +276,24 @@ a tela não pode contorná-las. As marcadas **(tela)** vivem em TypeScript testa
   mensal, e a baixa de uma transferência prevista para um cartão é recusada.
   Pagar antes do vencimento, ou um valor diferente do total, continua pelo
   «Pagar» da fatura.
+- RN004.5 A conta prevista apontada para um cartão é uma **cobrança no
+  cartão**: a despesa fixa no cartão e a conta avulsa com o cartão como conta.
+  Ela cai na fatura pelo fechamento, como uma compra feita no dia dela. Antes
+  do dia ela é **prevista**: aparece na fatura com o selo e soma no total
+  previsto dela, e por ele entra em Contas a Pagar, no Previsto da aba
+  Despesas e na previsão do painel. No dia, ou na primeira leitura da fatura
+  depois dele, o app lança a compra no cartão sozinho, com a data da
+  cobrança, e a conta prevista fica paga. Não há botão de pagar a cobrança:
+  ela sai com o pagamento da fatura (RN004.4). Na tela do cartão o total da
+  fatura continua sendo só o que foi lançado, para bater com a fatura do
+  banco, e o total previsto aparece ao lado. Fatura, transferência, parcela do
+  MyBank e as contas do grupo não são cobrança.
+- RN004.6 Apagar a compra que o app lançou de uma cobrança **pula** a
+  cobrança daquele mês: ela não volta a ser lançada. É a exceção à RN006.5,
+  que continua valendo para o lançamento ligado à mão. Mudar o valor, pular
+  um mês (excluir "só esta") ou encerrar fica na tela do cartão, com a
+  pergunta do alcance; a compra já lançada se edita na fatura, como qualquer
+  compra.
 
 ### RN005 — Parcelamento ✅
 
@@ -296,7 +315,8 @@ a tela não pode contorná-las. As marcadas **(tela)** vivem em TypeScript testa
   (valor ±1%, vencimento ±7 dias, mesma categoria ou descrição), o app
   **pergunta**. Nenhum vínculo é criado sem confirmação.
 - RN006.5 Excluir o lançamento vinculado devolve a prevista para pendente
-  (migration 065).
+  (migration 065). A exceção é a compra que o app lançou de uma cobrança no
+  cartão: apagá-la pula a cobrança (RN004.6).
 - RN006.6 Conta prevista de grupo que o dono já quitou sai da **Previsão** do
   painel de todos os membros: a parte de cada um já está no Realizado pelo
   rateio. O que o membro ainda deve ao dono continua no «A pagar» da agenda.
