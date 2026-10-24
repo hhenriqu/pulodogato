@@ -4347,7 +4347,10 @@ jobs:
           #    no realizado faz uma compra de R$ 400 fechar o mes em R$ 800 --
           #    com as DUAS linhas visiveis na lista, o que faz a soma "fechar"
           #    com a tela.
-          sed -i 's|if (tipo === "expense" \&\& ehGastoNoCartao(crua)) continue;|if (false) continue;|' $LIB
+          #
+          #    SEM A CONDICAO DE TELA desde a fase 6 (RN017.4): a peneira vale
+          #    tambem em Receitas, onde o estorno no cartao abate a fatura.
+          sed -i 's|if (ehGastoNoCartao(crua)) continue;|if (false) continue;|' $LIB
           mutou $LIB 5
           if npm run test:telas-de-movimentacao > /dev/null 2>&1; then
             echo "::error::Verde com a compra no cartao somando junto da FATURA que ja a contem: R\$ 800 de uma compra de R\$ 400."
@@ -4909,16 +4912,16 @@ jobs:
         run: |
           set -uo pipefail
           LIB=lib/realizado-do-caixa.ts
-          # O DONO do criterio "esta linha e pagamento de fatura" (HMO-265). O
-          # sinal estrito do mutante 3 mora AQUI desde que a copia local saiu
-          # deste arquivo -- ver o cabecalho de `ehPagamentoDaFatura`.
-          DONO=lib/telas-de-movimentacao.ts
+          # A SOMA da fatura paga (fase 6, RN017.4). O estorno que abate a
+          # fatura, mutante 3, mora AQUI -- ver o cabecalho de
+          # lib/fatura-paga-no-resultado.ts.
+          SOMA=lib/fatura-paga-no-resultado.ts
           cp $LIB $LIB.orig
-          cp $DONO $DONO.orig
-          trap 'mv $LIB.orig $LIB; mv $DONO.orig $DONO' EXIT
+          cp $SOMA $SOMA.orig
+          trap 'mv $LIB.orig $LIB; mv $SOMA.orig $SOMA' EXIT
 
           # Recebe o ARQUIVO, porque os mutantes desta sonda nao estao todos no
-          # mesmo: o 3 planta no dono do criterio, nao em `realizado-do-caixa`.
+          # mesmo: o 3 planta na soma da fatura, nao em `realizado-do-caixa`.
           mutou() {
             if cmp -s "$1" "$1.orig"; then
               echo "::error::o sed de '$2' nao casou nada em $1 -- o mutante nao foi aplicado e o passo mediria a fonte intacta"
@@ -4937,13 +4940,12 @@ jobs:
           cp $LIB.orig $LIB
 
           # 2) O CARTAO DESAPARECIDO (HMO-264). A fatura paga nao entra em lugar
-          #    nenhum: o mes em que se pagou R$ 1.290 fica R$ 1.290 mais barato.
+          #    nenhum: o mes em que ela vence fica R$ 1.290 mais barato.
           #
-          #    O ancora era `ehSaidaDePagamentoDeFatura`, a copia LOCAL do
-          #    criterio, que a HMO-265 apagou deste arquivo em favor do dono
-          #    unico (`ehPagamentoDaFatura`, importado). Renomeou-se a chamada,
-          #    e o ancora ficou para tras.
-          sed -i 's|if (ehPagamentoDaFatura(linha)) {|if (false) {|' $LIB
+          #    O ancora era `ehPagamentoDaFatura(linha)`, a perna de saida do
+          #    pagamento promovida a despesa. Desde a fase 6 quem entra e a
+          #    FATURA, somada das linhas de `card_invoice_paid_entries`.
+          sed -i 's|saida.push(fatura);|void fatura;|' $LIB
           mutou $LIB "fatura paga nao entra"
           if npm run test:realizado-do-caixa > /dev/null 2>&1; then
             echo "::error::Verde com a fatura PAGA fora do Realizado: o cartao sumiu dos dois lados."
@@ -4951,23 +4953,23 @@ jobs:
           fi
           cp $LIB.orig $LIB
 
-          # 3) A FATURA EM DOBRO. As duas pernas do pagamento tem a mesma data,
-          #    a mesma chave e o mesmo tipo, e `agregarTransacoes` aplica
-          #    Math.abs antes de somar -- entao elas NAO se anulam.
+          # 3) O ESTORNO QUE SOMA. `invoice_amount` e negativo no estorno, e a
+          #    fatura de R$ 300 com um estorno de R$ 40 e de R$ 260. Com
+          #    Math.abs na soma ela sai R$ 340 -- e um total maior nao parece
+          #    erro.
           #
-          #    PLANTA NO $DONO, E NAO EM $LIB. O sinal estrito era
-          #    `Number(linha.amount) < 0` dentro da copia local que a HMO-265
-          #    apagou; hoje a decisao e uma so, a ultima linha de
-          #    `ehPagamentoDaFatura`, e `crua` e o nome do parametro la.
-          sed -i 's|  return Number(crua.amount) < 0;|  return true;|' $DONO
-          mutou $DONO "as duas pernas entram"
+          #    PLANTA NA $SOMA, E NAO EM $LIB. Ate a fase 5 este mutante era a
+          #    fatura em dobro (as duas pernas do pagamento), plantado no dono
+          #    de `ehPagamentoDaFatura`; a 072 tirou as pernas do Realizado.
+          sed -i 's|fatura.total += valorDaLinha(linha);|fatura.total += Math.abs(valorDaLinha(linha));|' $SOMA
+          mutou $SOMA "o estorno soma na fatura"
           if npm run test:realizado-do-caixa > /dev/null 2>&1; then
-            echo "::error::Verde com as DUAS pernas do pagamento somando: a fatura em dobro no total de despesas."
+            echo "::error::Verde com o estorno SOMANDO na fatura em vez de abater."
             exit 1
           fi
-          # Restaura o $DONO, que foi quem este mutante plantou. Restaurar $LIB
+          # Restaura a $SOMA, que foi quem este mutante plantou. Restaurar $LIB
           # aqui deixaria o mutante 4 medindo uma arvore AINDA mutada.
-          cp $DONO.orig $DONO
+          cp $SOMA.orig $SOMA
 
           # 4) A COLUNA QUE NINGUEM VE. `account_type` nao aparece na tela, e
           #    tirar do `select` nao quebra tsc nem assercao de unidade: a regra
@@ -5026,9 +5028,9 @@ jobs:
             echo "  vermelho em: $rotulo"
           }
 
-          desligar 'app/(dashboard)/dashboard/page.tsx' '\&cartao=fatura' '' \
-            'o painel para de PEDIR a regra -- a rota responde o total antigo'
-          desligar 'app/api/reports/cash-flow/route.ts' 'realizadoComCartaoPelaFatura(linhas)' 'linhas.slice()' \
+          desligar 'app/(dashboard)/dashboard/page.tsx' '\&faturaAte=' '\&' \
+            'o painel para de pedir a fatura paga ate o fim do periodo -- a paga adiantada some'
+          desligar 'app/api/reports/cash-flow/route.ts' 'realizadoComCartaoPelaFatura(linhas, faturasPagas)' 'linhas.slice()' \
             'a rota importa a regra e NAO a chama'
           desligar 'app/api/dashboard/previsao/route.ts' 'agendaSemCompraNoCartao(' 'Array.from(' \
             'a Previsao para de tirar a compra no cartao -- o cartao em dobro'
@@ -5040,9 +5042,10 @@ jobs:
           # `ehPagamentoDaFatura(linha)`, a exigencia ficou no nome antigo, e o
           # guard entrou VERMELHO na main na #211. O vermelho so apareceu quando
           # o Actions voltou a iniciar job (HMO-242) -- dez controles negativos
-          # aqui e nenhum cobria estas duas linhas.
-          desligar 'lib/realizado-do-caixa.ts' 'if (ehPagamentoDaFatura(linha)) {' 'if (false) {' \
-            'a fatura PAGA para de virar despesa do mes em que o dinheiro saiu'
+          # aqui e nenhum cobria estas duas linhas. Desde a fase 6 a chamada e
+          # `faturasPagasComoTransacoes`, e a exigencia mudou com ela.
+          desligar 'lib/realizado-do-caixa.ts' 'faturasPagasComoTransacoes(faturasPagas)' 'naoChama(faturasPagas)' \
+            'a fatura PAGA para de entrar no mes do vencimento'
           desligar 'lib/realizado-do-caixa.ts' ', account:financial_accounts(account_type)"' '"' \
             'a consulta para de pedir account_type -- a regra nao sabe o que esta na fatura'
 
@@ -5052,19 +5055,22 @@ jobs:
           # OS QUATRO DA HMO-266: a legenda que separa as duas leituras.
           #
           # A HMO-266 decidiu NAO estender a regra do cartao a tela de
-          # relatorios, e o preco e que as duas telas divergem de proposito --
-          # medidos R$ 3.345 no painel contra R$ 7.545 nos relatorios, na fixture
-          # de 6 meses. A legenda e o que separa isso de um defeito aos olhos de
-          # quem compara, e ela e tao muda quanto a fiacao acima quando quebra.
-          desligar 'app/api/reports/cash-flow/route.ts' 'cartao: "compra",' '' \
-            'o ramo mensal da rota para de dizer qual criterio usou'
+          # relatorios; a fase 6 (D1) estendeu, e o par que diverge de proposito
+          # passou a ser o relatorio PESSOAL (fatura) e o do GRUPO (compra). A
+          # legenda e o que separa isso de um defeito aos olhos de quem compara,
+          # e ela e tao muda quanto a fiacao acima quando quebra.
+          #
+          # O `sed` deste helper troca a primeira ocorrencia de CADA linha, e a
+          # condicional aparece nos dois ramos da rota: os dois saem juntos.
+          desligar 'app/api/reports/cash-flow/route.ts' 'cartao: groupId ? "compra" : "fatura",' '' \
+            'a rota para de dizer qual criterio usou'
 
           # O RENOMEIO, e nao a remocao. Este e o caso que passou VERDE na
           # primeira versao da exigencia: a tela le `d.cartao`, entao renomear o
-          # campo quebra a legenda -- e `includes('cartao: "compra"')` casa DENTRO
-          # de `grao_do_cartao: "compra"`. Por isso aquela exigencia e a unica da
+          # campo quebra a legenda -- e `includes('cartao: ...')` casa DENTRO
+          # de `grao_do_cartao: ...`. Por isso aquela exigencia e a unica da
           # lista escrita como regex.
-          desligar 'app/api/reports/cash-flow/route.ts' 'cartao: "compra",' 'grao_do_cartao: "compra",' \
+          desligar 'app/api/reports/cash-flow/route.ts' 'cartao: groupId ? "compra" : "fatura",' 'grao_do_cartao: groupId ? "compra" : "fatura",' \
             'o campo do criterio e RENOMEADO -- a tela le d.cartao e nao acha nada'
 
           desligar 'app/(dashboard)/dashboard/reports/page.tsx' 'legendaDoCartao(fluxo?.cartao)' 'legendaDoCartao("compra")' \
@@ -5158,18 +5164,19 @@ jobs:
 
           # 3) A LEGENDA PARA DE NOMEAR A OUTRA TELA. O defeito que parece
           #    inofensivo: a frase continua verdadeira e deixa de resolver o
-          #    problema de quem esta comparando as duas telas.
-          estragar 'O painel conta no mês ' 'Este total conta no mês ' \
-            'a legenda dos relatorios para de nomear o painel'
+          #    problema de quem esta comparando o painel pessoal com o do grupo.
+          estragar 'No painel do grupo é diferente' 'Aqui é diferente' \
+            'a legenda pessoal para de nomear o painel do grupo'
 
-          # 4) A DIRECAO INVERTIDA EM UM LADO SO.
-          estragar 'menor enquanto houver fatura' 'maior enquanto houver fatura' \
-            'a legenda dos relatorios inverte a direcao da diferenca'
+          # 4) O MES ERRADO EM UM LADO SO. A fatura conta no mes em que VENCE
+          #    (RN017.4), e nao no do pagamento: pagar adiantado nao muda o mes.
+          estragar 'no mês em que a fatura vence, pelo' 'no mês em que a fatura foi paga, pelo' \
+            'a legenda pessoal diz o mes do pagamento, e nao o do vencimento'
 
-          # 5) "OS DOIS ESTAO CERTOS" SAI DO TEXTO. Sem isso a legenda explica a
-          #    divergencia e deixa de pe a pergunta que a pessoa foi fazer.
-          estragar 'os dois estão certos, e são ' 'são ' \
-            'a legenda para de dizer que os dois totais estao certos'
+          # 5) A FATURA EM ABERTO SAI DO TEXTO. Sem isso a pessoa ve a compra de
+          #    hoje fora do Realizado e nao tem como saber por que.
+          estragar 'Fatura em aberto ainda não ' '' \
+            'a legenda para de dizer que a fatura em aberto ainda nao entra'
 
           # 6 e 7) O CONTRATO COM A ROTA, que e a unica assercao da suite que
           #    nao e sobre texto. O arquivo mutado aqui e a ROTA, nao o modulo,
@@ -5202,10 +5209,10 @@ jobs:
             echo "  vermelho em: $rotulo"
           }
 
-          estragar_rota 'cartao: "compra",' 'cartao: "consumo",' \
-            'o ramo mensal renomeia o VALOR para "consumo" -- a tela fica sem legenda'
-          estragar_rota 'cartao: cartaoPelaFatura ? "fatura" : "compra",' 'cartao: cartaoPelaFatura ? "caixa" : "compra",' \
-            'o ramo de intervalo renomeia o valor para "caixa" -- o painel fica sem legenda'
+          estragar_rota 'cartao: groupId ? "compra" : "fatura",' 'cartao: groupId ? "consumo" : "fatura",' \
+            'o grupo renomeia o VALOR para "consumo" -- a tela fica sem legenda'
+          estragar_rota 'cartao: groupId ? "compra" : "fatura",' 'cartao: groupId ? "compra" : "caixa",' \
+            'o pessoal renomeia o valor para "caixa" -- a tela fica sem legenda'
 
           echo "A verificacao fica vermelha nos sete modos de falha do par de legendas."
 

@@ -21,10 +21,10 @@
 // A migration 046 pos o criterio aprovado nas views e declarou no cabecalho dela
 // "painel ... 950,00 -> 1.010,00". O commit dela (b9fb8c4) nao toca um unico
 // arquivo de `app/` -- e O PAINEL NAO LE VIEW NENHUMA. Ele chama
-// `/api/reports/cash-flow?de=&ate=&cartao=fatura`, e `cartao=fatura` cai no ramo
-// `periodo.modo === "intervalo" || cartaoPelaFatura`, que soma as linhas CRUAS
-// no JavaScript mesmo quando o periodo e um mes inteiro. Nenhuma migration pode
-// mudar o numero daquela tela.
+// `/api/reports/cash-flow?de=&ate=&faturaAte=` (ate a fase 6, `&cartao=fatura`),
+// e o parametro cai no ramo `periodo.modo === "intervalo" || faturaAte !== null`,
+// que soma as linhas CRUAS no JavaScript mesmo quando o periodo e um mes
+// inteiro. Nenhuma migration pode mudar o numero daquela tela.
 //
 // O medidor (scripts/medidor-hmo258.sql) tambem mediu a view no lugar do painel
 // por nove dias, e com isso o contador de respostas distintas dele imprimia 2
@@ -99,16 +99,16 @@ const MERCADO_DO_GRUPO = "c0000000-0000-0000-0000-000000000004";
 /**
  * MAIO INTEIRO, que e como o painel pergunta.
  *
- * Um mes fechado cairia no ramo dos rollups do 008 se nao fosse `cartao=fatura`
+ * Um mes fechado cairia no ramo dos rollups do 008 se nao fosse `faturaAte`
  * -- e esse e o ponto: o painel manda sempre o parametro, e com ele o mes
  * inteiro cai no ramo que soma as linhas cruas. A secao 2 repete a medida num
  * periodo que NAO e mes inteiro, para o criterio nao ficar amarrado ao
- * parametro do cartao.
+ * parametro do painel.
  */
 const DE = "2026-05-01";
 const ATE = "2026-05-31";
 
-/** Um periodo que corta meses pela metade: cai no ramo de intervalo sem o cartao. */
+/** Um periodo que corta meses pela metade: cai no ramo de intervalo sem o parametro. */
 const DE_PARTIDO = "2026-04-20";
 const ATE_PARTIDO = "2026-05-31";
 
@@ -399,7 +399,7 @@ const temFiltro = (consulta, op, coluna, valor) =>
     ([o, c, v]) => o === op && c === coluna && v === valor
   );
 
-const urlDoPainel = `https://exemplo.test/api/reports/cash-flow?de=${DE}&ate=${ATE}&cartao=fatura`;
+const urlDoPainel = `https://exemplo.test/api/reports/cash-flow?de=${DE}&ate=${ATE}&faturaAte=${ATE}`;
 
 // ===========================================================================
 // SECAO 0 - a fixture DISCRIMINA as quatro combinacoes (anti-vacuidade)
@@ -437,9 +437,10 @@ test("secao 0: os quatro criterios dao quatro numeros distintos nesta fixture", 
 });
 
 // ===========================================================================
-// SECAO 1 - O PAINEL: `?de=&ate=&cartao=fatura` sobre maio inteiro
+// SECAO 1 - O PAINEL: `?de=&ate=&faturaAte=` sobre maio inteiro
 // ===========================================================================
-// A URL e a de app/(dashboard)/dashboard/page.tsx. `cartao=fatura` nao e
+// A URL e a de app/(dashboard)/dashboard/page.tsx, com o periodo inteiro no
+// passado (o Realizado e o periodo terminam no mesmo dia). `faturaAte` nao e
 // opcional naquela tela, e e ele que faz o mes inteiro cair no ramo que soma as
 // linhas cruas -- entao nao existe caminho em que o painel leia a view que a 046
 // consertou.
@@ -449,7 +450,7 @@ test("secao 1: o painel soma bruto + reembolso", async () => {
   assert.equal(resposta.status, 200, await textoDoErro(resposta));
   const corpo = await resposta.json();
 
-  assert.equal(corpo.grao, "intervalo", "`cartao=fatura` responde um BALDE");
+  assert.equal(corpo.grao, "intervalo", "`faturaAte` responde um BALDE");
   assert.equal(corpo.cartao, "fatura");
 
   assert.equal(
@@ -476,13 +477,13 @@ test("secao 1: o painel soma bruto + reembolso", async () => {
 // ===========================================================================
 // SECAO 2 - o MESMO criterio num periodo que corta meses pela metade
 // ===========================================================================
-// Sem `cartao=fatura`, e com `de` que nao e dia 1: o ramo e o mesmo e o criterio
-// nao pode depender do parametro do cartao. Se dependesse, a tela que um dia
+// Sem `faturaAte`, e com `de` que nao e dia 1: o ramo e o mesmo e o criterio
+// nao pode depender do parametro do painel. Se dependesse, a tela que um dia
 // pedir um intervalo sem o parametro veria o 950 de volta.
 //
 // O periodo comeca em 20/04, antes das quatro despesas, entao o total e o mesmo
 // da secao 1 -- o que muda e por qual porta a rota entrou no ramo.
-test("secao 2: o criterio nao depende de `cartao=fatura`", async () => {
+test("secao 2: o criterio nao depende de `faturaAte`", async () => {
   const { resposta } = await chamar(
     FLUXO,
     `https://exemplo.test/api/reports/cash-flow?de=${DE_PARTIDO}&ate=${ATE_PARTIDO}`
@@ -492,7 +493,9 @@ test("secao 2: o criterio nao depende de `cartao=fatura`", async () => {
   const corpo = await resposta.json();
 
   assert.equal(corpo.grao, "intervalo");
-  assert.equal(corpo.cartao, "compra", "sem o parametro, a regra do cartao nao roda");
+  // E A REGRA DO CARTAO TAMBEM NAO: desde a fase 6 (072) o relatorio pessoal
+  // inteiro conta o cartao pela fatura, com ou sem o parametro do painel.
+  assert.equal(corpo.cartao, "fatura");
 
   assert.equal(
     corpo.summary.total_expense,
@@ -685,17 +688,20 @@ test("secao 5: com groupId o total continua sendo o do grupo inteiro", async () 
 // SECAO 6 - a despesa de grupo lancada NO CARTAO
 // ===========================================================================
 // O efeito colateral que a HMO-418 tinha de conferir: as linhas de grupo passam
-// a atravessar `realizadoComCartaoPelaFatura`, e a regra do cartao cruza o tipo
-// da CONTA com a chave em `notes`.
+// a atravessar `realizadoComCartaoPelaFatura`, e a regra do cartao olha o tipo
+// da CONTA.
 //
 // A resposta certa e que ela SAI do realizado: a compra esta dentro da fatura, e
-// a fatura e que vai contar no mes em que for paga. E a mesma resposta que uma
-// despesa pessoal no cartao recebe -- o que nao podia acontecer era a linha sair
-// da conta por um criterio (grupo) e voltar por outro (fatura).
+// a fatura e que conta, no mes em que vence, quando for paga (RN017.4). E a
+// mesma resposta que uma despesa pessoal no cartao recebe -- o que nao podia
+// acontecer era a linha sair da conta por um criterio (grupo) e voltar por
+// outro (fatura).
 //
-// E SEM `cartao=fatura` ELA FICA, pelo mesmo motivo que toda compra fica nesse
-// caminho: a regra nao roda. Os dois casos juntos sao o que separa "a linha de
-// grupo atravessa a regra" de "a linha de grupo some".
+// E COM A FATURA PAGA ELA VOLTA, pela fatura: os 90 sao uma linha de
+// `card_invoice_paid_entries`, e o total de maio fecha no criterio aprovado. Os
+// dois casos juntos sao o que separa "a linha de grupo atravessa a regra" de "a
+// linha de grupo some". Ate a fase 6 o controle era a mesma consulta SEM
+// `cartao=fatura`, quando a regra nao rodava.
 test("secao 6: a despesa de grupo no cartao conta pela fatura, como qualquer outra", async () => {
   const JANTAR_NO_CARTAO = transacao({
     ...JANTAR_QUE_EU_PAGUEI,
@@ -719,31 +725,46 @@ test("secao 6: a despesa de grupo no cartao conta pela fatura, como qualquer out
   assert.equal(
     corpoComFatura.summary.total_expense,
     APROVADO - 90,
-    `com \`cartao=fatura\` o jantar de 90 no cartao sai do realizado: ${APROVADO - 90} ` +
+    `sem a fatura paga o jantar de 90 no cartao sai do realizado: ${APROVADO - 90} ` +
       `(= ${APROVADO} menos os 90). ${APROVADO} significa que a linha de grupo ` +
       "nao atravessou a regra do cartao, e a compra conta no dia da compra E de " +
       "novo quando a fatura for paga"
   );
 
-  // O PERIODO AQUI E O PARTIDO, E NAO MAIO INTEIRO. Sem `cartao=fatura`, um mes
-  // fechado cai no ramo dos rollups do 008 -- `personal_monthly_cash_flow`, que
-  // este fixture nao preenche -- e a resposta sai 0,00 com status 200. Medido ao
-  // escrever esta secao: o zero se le como "a linha de grupo desapareceu", que e
-  // justamente a hipotese que a secao existe para distinguir.
-  const semFatura = await chamar(
-    FLUXO,
-    `https://exemplo.test/api/reports/cash-flow?de=${DE_PARTIDO}&ate=${ATE_PARTIDO}`,
-    { tabelas }
+  // A FATURA DE ABRIL, QUE CONTEM O JANTAR, VENCE EM MAIO E FOI PAGA. A linha
+  // dela tem a categoria e o valor do jantar, como a view da 072 entrega.
+  const FATURA_PAGA_COM_O_JANTAR = {
+    id: JANTAR_NO_CARTAO.id,
+    user_id: EU,
+    account_id: CARTAO_MEU,
+    account_name: "Cartão",
+    invoice_month: "2026-04-01",
+    invoice_description: "Fatura Cartão abr/2026",
+    due_date: "2026-05-10",
+    paid_date: "2026-05-09",
+    category_id: JANTAR,
+    invoice_amount: "90.00",
+    currency: "BRL",
+    include_in_total: true,
+  };
+
+  const comAFaturaPaga = await chamar(FLUXO, urlDoPainel, {
+    tabelas: { ...tabelas, card_invoice_paid_entries: [FATURA_PAGA_COM_O_JANTAR] },
+  });
+  assert.equal(
+    comAFaturaPaga.resposta.status,
+    200,
+    await textoDoErro(comAFaturaPaga.resposta)
   );
-  assert.equal(semFatura.resposta.status, 200, await textoDoErro(semFatura.resposta));
-  const corpoSemFatura = await semFatura.resposta.json();
+  const corpoComAFaturaPaga = await comAFaturaPaga.resposta.json();
 
   assert.equal(
-    corpoSemFatura.summary.total_expense,
+    corpoComAFaturaPaga.summary.total_expense,
     APROVADO,
-    "sem o parametro a regra do cartao nao roda, e a compra no cartao conta no " +
-      "dia da compra -- inclusive a de grupo. Um numero menor aqui significa " +
-      "que a linha de grupo esta sendo descartada por outro motivo"
+    "com a fatura paga vencendo em maio, os 90 do jantar voltam pela FATURA. Um " +
+      "numero menor aqui significa que a linha de grupo esta sendo descartada " +
+      `por outro motivo; ${APROVADO + 90} significa que a compra ficou e a ` +
+      "fatura entrou, o cartao em dobro"
   );
 });
 

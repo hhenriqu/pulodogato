@@ -568,9 +568,9 @@ test("as duas listas de colunas pedem include_in_total ao banco", () => {
   // mensagem -- sem elas, "esperado 577, obtido 777" nao diz se o que caiu foi
   // o `select` ou o laco.
   //
-  // `COLUNAS_DO_REALIZADO_DE_CAIXA` nao tem a mesma rede: ela so e usada no
-  // caminho `cartao=fatura`, e la a compra no cartao sai pela regra da fatura
-  // de qualquer jeito. Esta e a unica medida dela nesta suite.
+  // `COLUNAS_DO_REALIZADO_DE_CAIXA` tem a mesma rede desde a fase 6: e ela que
+  // o ramo de intervalo PESSOAL pede (o `URL_FLUXO` deste arquivo). Antes so o
+  // painel a pedia, por `cartao=fatura`, e esta linha era a unica medida dela.
   assert.match(COLUNAS_DO_REALIZADO_DE_CAIXA, /include_in_total/);
   assert.match(COLUNAS_DA_TRANSACAO, /include_in_total/);
 });
@@ -618,16 +618,16 @@ test("AS DUAS ROTAS FECHAM ENTRE SI na mesma fixture", async () => {
   assert.equal(somaDasCategorias, fluxo.summary.total_expense);
 });
 
-test("cartao=fatura: o mes inteiro cai no ramo de intervalo, e o filtro vale la tambem", async () => {
+test("faturaAte: o mes inteiro cai no ramo de intervalo, e o filtro vale la tambem", async () => {
   // A OUTRA PORTA PARA O RAMO DE INTERVALO, e e como o painel principal
-  // pergunta. Ela entra porque e o UNICO caminho que usa
-  // `COLUNAS_DO_REALIZADO_DE_CAIXA` -- se a coluna sair daquela constante, este
-  // bloco e o que fica vermelho.
+  // pergunta: `faturaAte` vai em toda chamada dele, e aqui depois de `ate`,
+  // que e o caso do Realizado que para antes do fim do periodo. Ate a fase 6 a
+  // porta era `cartao=fatura`.
   //
   // A compra no cartao desmarcada e o caso cruzado: ela sairia do total de
   // qualquer jeito (a regra do cartao a tira para a fatura contar), entao a
   // assercao que importa aqui e sobre a CONSULTA e sobre o total das outras.
-  const url = `https://x/api/reports/cash-flow?de=2026-05-01&ate=2026-05-31&cartao=fatura`;
+  const url = `https://x/api/reports/cash-flow?de=2026-05-01&ate=2026-05-31&faturaAte=2026-06-30`;
   const { resposta, lidas } = await chamar(FLUXO, url, {
     financial_transactions: [...TRANSACOES, COMPRA_NO_CARTAO_DESMARCADA],
   });
@@ -647,8 +647,8 @@ test("cartao=fatura: o mes inteiro cai no ramo de intervalo, e o filtro vale la 
   // metade, nao sobra de refatoracao. O comentario no topo deste bloco ja dizia
   // qual era ("a assercao que importa aqui e sobre a CONSULTA"); faltava ela.
   //
-  // O RAMO E ESCOLHIDO EM route.ts:211, por
-  // `periodo.modo === "intervalo" || cartaoPelaFatura`. Os dois ramos leem
+  // O RAMO E ESCOLHIDO NA ROTA, por `periodo.modo === "intervalo" ||
+  // faturaAte !== null`. Os dois ramos leem
   // lugares DIFERENTES, e e isso que torna a escolha observavel: o mensal
   // responde pela view `monthly_cash_flow`, e este soma `financial_transactions`
   // crua entre duas datas.
@@ -657,7 +657,7 @@ test("cartao=fatura: o mes inteiro cai no ramo de intervalo, e o filtro vale la 
   // SUPOSTO. Rodei os dois mutantes que esta assercao parecia existir para
   // pegar, e o TOTAL pega os dois primeiro:
   //
-  //   `|| cartaoPelaFatura` apagado da condicao do ramo  ->  total 0 (esperado 500)
+  //   a porta do `faturaAte` apagada da condicao do ramo  ->  total 0 (esperado 500)
   //   `.gte("transaction_date", periodo.de)` apagado     ->  total 577 (esperado 500)
   //
   // Ou seja: isto NAO e um detector novo, e escrever que era seria assercao que
@@ -673,7 +673,7 @@ test("cartao=fatura: o mes inteiro cai no ramo de intervalo, e o filtro vale la 
   const consulta = lidas.find((l) => l.tabela === "financial_transactions");
   assert.ok(
     consulta,
-    "a rota nao leu `financial_transactions`: `cartao=fatura` nao levou ao ramo " +
+    "a rota nao leu `financial_transactions`: `faturaAte` nao levou ao ramo " +
       "de intervalo, e o total abaixo seria medido sobre outro caminho"
   );
   assert.ok(

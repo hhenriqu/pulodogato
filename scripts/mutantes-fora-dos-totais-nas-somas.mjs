@@ -104,17 +104,14 @@ const COLUNAS_MENSAL =
   '  "transaction_date, amount, transaction_type, category_id, description, include_in_total";';
 
 const COLUNAS_CAIXA =
-  '  "amount, transaction_type, currency, notes, counterpart_transaction_id, include_in_total, account:financial_accounts(account_type)";';
-
-const SELECT_DO_FLUXO =
-  '              : "amount, transaction_type, currency, include_in_total"';
+  '  "amount, transaction_type, currency, include_in_total, account:financial_accounts(account_type)";';
 
 const SELECT_DAS_CATEGORIAS =
-  '            "category_id, amount, transaction_type, currency, include_in_total"';
+  '              : "category_id, amount, transaction_type, currency, include_in_total, account:financial_accounts(account_type)"';
 
 const PROMOCAO_DO_CAIXA =
   "    if (ehCompraNoCartao(linha)) continue;\n" +
-  "    if (ehPagamentoDaFatura(linha)) {";
+  "    saida.push(linha);";
 
 const CONTAGEM_DA_TELA =
   "    if (linha.origem === \"previsto\") {\n" +
@@ -228,23 +225,21 @@ const mutantes = [
   ],
   [
     CAIXA,
-    "`COLUNAS_DO_REALIZADO_DE_CAIXA` perde a coluna: o Realizado do painel volta",
+    "`COLUNAS_DO_REALIZADO_DE_CAIXA` perde a coluna: o ramo de intervalo pessoal volta ao de antes",
     COLUNAS_CAIXA,
-    '  "amount, transaction_type, currency, notes, counterpart_transaction_id, account:financial_accounts(account_type)";',
+    '  "amount, transaction_type, currency, account:financial_accounts(account_type)";',
     SOMAS,
   ],
-  [
-    ROTA_FLUXO,
-    "o `select` do ramo de intervalo perde a coluna: o total volta ao de antes",
-    SELECT_DO_FLUXO,
-    '              : "amount, transaction_type, currency"',
-    SOMAS,
-  ],
+  // O `select` LITERAL DO FLUXO SAIU DESTA LISTA NA FASE 6. Ate ali o relatorio
+  // pessoal de intervalo (o `URL_FLUXO` da suite) lia aquele literal, e so o
+  // painel lia `COLUNAS_DO_REALIZADO_DE_CAIXA`; desde a 072 os dois leem a
+  // constante, e o literal ficou so no relatorio do GRUPO, que esta suite nao
+  // chama. O mutante de cima mede o caminho que o literal media.
   [
     ROTA_CATEGORIAS,
     "o `select` de Categorias perde a coluna: a pizza discorda do fluxo ao lado",
     SELECT_DAS_CATEGORIAS,
-    '            "category_id, amount, transaction_type, currency"',
+    '              : "category_id, amount, transaction_type, currency, account:financial_accounts(account_type)"',
     SOMAS,
   ],
 
@@ -257,7 +252,7 @@ const mutantes = [
     PROMOCAO_DO_CAIXA,
     "    if (linha.include_in_total === false) continue;\n" +
       "    if (ehCompraNoCartao(linha)) continue;\n" +
-      "    if (ehPagamentoDaFatura(linha)) {",
+      "    saida.push(linha);",
     REALIZADO,
   ],
   [

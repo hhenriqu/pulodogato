@@ -443,7 +443,13 @@ test("a Previsao do painel soma a estimativa, e so a do grupo que fecha", async 
 });
 
 test("o relatorio de fluxo de caixa soma a conta quitada no intervalo", async () => {
-  const url = `http://t/api/reports/cash-flow?de=${DE}&ate=${ATE}&cartao=fatura`;
+  // `faturaAte` depois de `ate` leva o periodo de meses inteiros ao ramo de
+  // intervalo, que e o que soma `group_closing_entries` no JavaScript (o ramo
+  // de mes le as views, e o duble nao tem view). E a porta do painel quando o
+  // Realizado dele para antes do fim do periodo; ate a fase 6 era
+  // `cartao=fatura`.
+  const faturaAte = VM === 12 ? doMes(VA + 1, 1, 1) : doMes(VA, VM + 1, 1);
+  const url = `http://t/api/reports/cash-flow?de=${DE}&ate=${ATE}&faturaAte=${faturaAte}`;
   const extra = { group_closing_entries: [quitada(LAIS, "expense", 100)] };
   const com = await chamar(FLUXO.GET, { quem: LAIS, tabelas: tabelas({ extra }), url });
   const sem = await chamar(FLUXO.GET, { quem: LAIS, tabelas: tabelas(), url });

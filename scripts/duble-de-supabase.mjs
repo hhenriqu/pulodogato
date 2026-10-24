@@ -927,7 +927,7 @@ function consulta(
      *
      * Faltava, e a falta tirava do alcance de qualquer sonda o ramo de INTERVALO
      * de /api/reports/cash-flow e /api/reports/categories -- o ramo que o painel
-     * principal usa, porque `cartao=fatura` sempre cai nele. As duas rotas
+     * principal usa (ate a fase 6 por `cartao=fatura`). As duas rotas
      * paginam as DUAS consultas que elas somam no JavaScript
      * (`financial_transactions` e `group_share_entries`), entao
      * `api.range is not a function` estourava dentro do `try` da rota, o `catch`

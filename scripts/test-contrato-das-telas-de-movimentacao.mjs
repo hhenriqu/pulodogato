@@ -465,7 +465,8 @@ test("a rota TRAZ `account_type` no embed -- sem ele o filtro do cartao é vácu
     "o `select` do realizado nao pede `account_type` no embed da conta"
   );
 
-  // E a lib de fato decide por ele, no lado realizado e so na tela de Despesas.
+  // E a lib de fato decide por ele, no lado realizado, nas telas de Despesas e
+  // de Receitas (fase 6: o estorno no cartao abate a fatura).
   // O `===`/`!==` nao esta na regex de proposito: a comparacao ja mudou de
   // sentido uma vez (quando o segundo criterio entrou) e um teste que cobra a
   // forma da expressao fica vermelho numa refatoracao que nao muda nada.
@@ -476,8 +477,8 @@ test("a rota TRAZ `account_type` no embed -- sem ele o filtro do cartao é vácu
   );
   assert.match(
     lib,
-    /tipo === "expense" && ehGastoNoCartao\(crua\)/,
-    "o gasto no cartao nao esta sendo tirado do realizado da tela de Despesas"
+    /if \(ehGastoNoCartao\(crua\)\) continue;/,
+    "o gasto no cartao nao esta sendo tirado do realizado das telas de Despesas e Receitas"
   );
 
   // O SEGUNDO CRITERIO, que e o que impede o conserto de APAGAR dinheiro.
@@ -499,14 +500,16 @@ test("a rota TRAZ `account_type` no embed -- sem ele o filtro do cartao é vácu
   assert.match(lib, /"expense",\s*\n\s*"income",/);
 });
 
-test("a rota TRAZ `notes` do realizado -- sem ele a fatura PAGA desaparece", () => {
+test("a rota TRAZ `notes` do realizado, e a fatura PAGA entra pela soma", () => {
   // HMO-264, e a MESMA familia de `account_type` e `recurring_rule_id`: o campo
   // e OPCIONAL em `RealizadaCrua` (a ausencia e o estado da maioria das linhas),
   // entao o `tsc` nao pode cobrar. Tirar `notes` deste `select` numa limpeza de
   // "campos nao usados na tela" nao quebra compilacao nem teste de unidade:
-  // `ehPagamentoDaFatura` recebe `undefined` em toda linha, para de casar, e o
-  // mes em que a fatura foi paga volta a fechar mais barato pelo valor dela
-  // inteiro -- no Previsto, no Realizado e no Total.
+  // `ehPagamentoDaFatura` recebe `undefined` em toda linha e para de casar.
+  // Ate a fase 5 isso tirava a fatura paga de Despesas inteira; desde a 072 a
+  // fatura entra pela soma de `card_invoice_paid_entries`, e o que se perde e
+  // o selo «Fatura» da perna de saida em Transferencias, o caminho de volta
+  // para o cartao, e as chaves do MyBank que moram no mesmo campo.
   //
   // A SONDA E ANCORADA NO `select` DE `financial_transactions`, e nao no
   // arquivo: `notes` aparece tambem no `select` da view do lado previsto, e uma
@@ -566,42 +569,52 @@ test("a rota TRAZ `notes` do realizado -- sem ele a fatura PAGA desaparece", () 
     lib,
     /if \(!faturaDaChave\(crua\.notes\)\) return false;/,
     "`ehPagamentoDaFatura` nao confere mais a chave canonica: toda perna de " +
-      "saida de transferencia passa a entrar na tela de Despesas"
+      "saida de transferencia passa a ser o pagamento de uma fatura"
   );
   assert.match(
     lib,
     /crua\.transaction_type\) !== TIPO_DA_PERNA_DE_PAGAMENTO/,
     "`ehPagamentoDaFatura` nao confere mais o `transaction_type` GRAVADO: a " +
-      "despesa nascida do elo da fatura (HMO-305) entra pelo ramo da fatura, " +
-      "perde o Editar/Excluir e passa POR CIMA de `ehGastoNoCartao`"
+      "despesa nascida do elo da fatura (HMO-305) vira fatura e perde o " +
+      "Editar/Excluir"
   );
   assert.match(
     lib,
     /if \(ehPernaDeEntrada\(crua\)\) return false;/,
     "`ehPagamentoDaFatura` nao distingue mais as duas pernas pelo dono unico " +
-      "de 'qual das duas e esta': as duas tem a mesma chave e `valorEmReais` " +
-      "passa `Math.abs`, entao o mes fecha no DOBRO"
+      "de 'qual das duas e esta': as duas tem a mesma chave e ganham o selo"
   );
   // E O SINAL ESTRITO, QUE E ONDE MORA A DECISAO DO `amount === 0` -- HMO-317.
-  // Ela tem de ser UMA, porque a MESMA funcao responde pela tela de Despesas e
-  // pelo Realizado do painel (`realizadoComCartaoPelaFatura`,
-  // lib/realizado-do-caixa.ts). As duas copias que existiam ate aquela issue
-  // divergiam exatamente aqui, e nenhum total mudava -- que e por que a
-  // divergencia podia durar.
+  // Ate a fase 5 a mesma funcao respondia tambem pelo Realizado do painel;
+  // desde a 072 ela decide so o selo, e a decisao continua UMA.
   assert.match(
     lib,
     /return Number\(crua\.amount\) < 0;/,
     "`ehPagamentoDaFatura` perdeu o sinal ESTRITO: o par de pagamento de valor " +
-      "zero volta a ser fatura paga na tela de Despesas e a ser promovido no " +
-      "painel, onde soma R$ 0,00 e sobe DOIS no `transaction_count`"
+      "zero ganha o selo «Fatura» em Transferencias"
   );
 
-  // E O RAMO EXISTE, e so na tela de Despesas. Sem a guarda de `tipo`, a chave
-  // canonica poe o pagamento da fatura no total de Receitas.
+  // E O RAMO DA FATURA SOMADA EXISTE, e so na tela de Despesas (fase 6). Sem a
+  // guarda de `tipo`, a fatura paga entra no total de Receitas.
   assert.match(
     lib,
-    /tipo === "expense" && ehPagamentoDaFatura\(crua\)/,
-    "a fatura paga nao esta mais entrando no realizado da tela de Despesas"
+    /if \(ehFaturaPagaNoResultado\(crua\)\) \{\s*if \(tipo === "expense"\) \{/,
+    "a fatura paga nao esta mais entrando no realizado da tela de Despesas, ou entra em toda tela"
+  );
+
+  // E A ROTA A LE E A ENTREGA. As duas metades: a leitura de
+  // `card_invoice_paid_entries` e a soma que vira linha. A lib pode estar
+  // perfeita com a rota sem chamar nenhuma das duas, e o sintoma seria o mes em
+  // que vence a fatura fechando mais barato pelo valor dela inteiro.
+  assert.match(
+    rota,
+    /await lerFaturasPagas\(/,
+    `${ROTA} nao le mais a fatura paga: ela some da aba Despesas`
+  );
+  assert.match(
+    rota,
+    /faturasPagasComoRealizadas\(/,
+    `${ROTA} le a fatura paga e nao a entrega a tela`
   );
 });
 
@@ -984,86 +997,85 @@ test("o mutador nao tem lista de dependencia a mao para envelhecer", () => {
   );
 });
 
-test("o criterio da fatura paga tem UM dono, e o painel o IMPORTA", () => {
-  // HMO-317. `ehPagamentoDaFatura` responde pelos DOIS leitores do pagamento da
-  // fatura -- a tela de Despesas (`linhasDaTela`) e o Realizado do painel
-  // (`realizadoComCartaoPelaFatura`, lib/realizado-do-caixa.ts). Ate aquela
-  // issue cada um tinha a sua copia dos tres criterios, e as duas JA DIVERGIAM
-  // em `amount === 0` sem que nenhum total mudasse -- que e exatamente por que a
-  // divergencia podia durar: duas copias de um criterio de DINHEIRO que ninguem
-  // compara.
+test("a soma da fatura paga tem UM dono, e o painel a IMPORTA", () => {
+  // HMO-317, refeito na fase 6. Ate a 072 o criterio dono era
+  // `ehPagamentoDaFatura`, a perna de saida do pagamento promovida a despesa, e
+  // a tela de Despesas e o Realizado do painel o importavam. Desde a fase 6 os
+  // dois leitores somam a FATURA, e o dono e `faturasPagas`
+  // (lib/fatura-paga-no-resultado.ts): a aba Despesas a recebe por
+  // `faturasPagasComoRealizadas`, o painel por `faturasPagasComoTransacoes`, e
+  // as duas saem da mesma soma. Duas copias de uma soma de DINHEIRO divergem na
+  // primeira mudanca de um dos lados -- o estorno, a linha fora dos totais --
+  // sem que nenhum dos dois pareca errado sozinho.
   //
-  // QUEM PROVA QUE OS DOIS CONCORDAM e o bloco "os dois leitores da fatura paga
-  // concordam, linha por linha" de scripts/test-realizado-do-caixa.mjs, que
-  // passa a MESMA matriz pelos dois. O QUE ESTE TESTE TRANCA e a outra metade: o
-  // dia em que alguem puser uma segunda copia do criterio de volta no painel, o
-  // controle de comportamento la continuaria VERDE -- ele compara a funcao dona
-  // com o que o leitor faz, e um leitor que decide por conta propria passa a
-  // discordar so nos casos que a matriz ainda nao tem.
+  // O QUE ESTE TESTE TRANCA e que o painel nao volte a somar a fatura por conta
+  // propria.
   const CAIXA = "lib/realizado-do-caixa.ts";
+  const SOMA = "lib/fatura-paga-no-resultado.ts";
   const caixa = semComentarios(readFileSync(CAIXA, "utf8"));
+  const soma = semComentarios(readFileSync(SOMA, "utf8"));
 
   // A ANCORA E O CALL SITE, e nao o import: um import pode ficar para tras de um
   // `const` local que reimplementa a regra, e a assercao passaria verde casando
   // com a linha do `import`.
   assert.match(
     caixa,
-    /if \(ehPagamentoDaFatura\(linha\)\) \{/,
-    `${CAIXA} nao promove mais a fatura paga pela funcao dona: ou o Realizado ` +
-      `do painel perdeu a fatura inteira, ou ele voltou a decidir por conta ` +
-      `propria -- e as duas copias divergem na primeira mudanca de um dos lados`
+    /for \(const fatura of faturasPagasComoTransacoes\(faturasPagas\)\) \{/,
+    `${CAIXA} nao recebe mais a fatura paga da soma dona: ou o Realizado do ` +
+      `painel perdeu a fatura inteira, ou ele voltou a somar por conta propria`
   );
 
-  // E NENHUM CRITERIO DA CHAVE E LIDO AQUI. Mesma trava que a regex da chave
-  // canonica ja tem em `card-invoice`: duas leituras do mesmo criterio nao dao
-  // erro nenhum, uma das duas so para de casar.
+  // E NENHUMA LINHA DA FATURA E SOMADA AQUI. `invoice_amount` e o campo que so
+  // a soma le; ele aparecer neste arquivo e a segunda copia chegando. E a chave
+  // canonica tambem nao e lida: a fatura ja chega com ela.
   assert.ok(
-    !/\b(ehFatura|faturaDaChave)\(/.test(caixa),
-    `${CAIXA} voltou a ler a chave canonica da fatura por conta propria: o ` +
-      `criterio tem um dono (ehPagamentoDaFatura, em ${LIB}), e uma segunda ` +
-      `copia dele e o defeito que a HMO-317 fechou`
+    !/invoice_amount/.test(caixa),
+    `${CAIXA} voltou a ler \`invoice_amount\`: a soma da fatura tem um dono ` +
+      `(${SOMA}), e uma segunda copia dela e o defeito que a HMO-317 fechou`
   );
-  // A CHAVE E O CRITERIO QUE NAO DA PARA CONTORNAR: nao existe segunda copia de
-  // "esta linha e uma fatura" que nao leia a chave canonica. Trancar a leitura
-  // dela aqui tranca a duplicacao inteira, sem depender do NOME que a copia
-  // nova receberia.
+  assert.ok(
+    !/\b(ehFatura|faturaDaChave|chaveFatura)\(/.test(caixa),
+    `${CAIXA} voltou a ler a chave canonica da fatura por conta propria`
+  );
 
-  // E O MUTADOR DO PAINEL COPIA TODA DEPENDENCIA DELE, incluindo o dono: ele e
-  // dependencia E alvo de mutante la (os criterios do dono tem de continuar
-  // medidos CONTRA O TOTAL DO PAINEL, que a suite da tela nao soma).
+  // E O MUTADOR DO PAINEL COPIA TODA DEPENDENCIA DELE, incluindo a soma: ela e
+  // dependencia E alvo de mutante la (as decisoes da soma tem de continuar
+  // medidas CONTRA O TOTAL DO PAINEL).
   const MUTADOR = "scripts/mutantes-realizado-do-caixa.mjs";
   const mutador = semComentarios(readFileSync(MUTADOR, "utf8"));
-  const dono = mutador.match(/const DONO_DO_CRITERIO = "([^"]+)";/);
-  assert.ok(dono, `nao achei DONO_DO_CRITERIO em ${MUTADOR}`);
+  const alvo = mutador.match(/const SOMA_DA_FATURA = "([^"]+)";/);
+  assert.ok(alvo, `nao achei SOMA_DA_FATURA em ${MUTADOR}`);
   assert.equal(
-    dono[1],
-    `${LIB}`,
-    `o alvo de mutante do mutador do painel nao e mais ${LIB}`
+    alvo[1],
+    SOMA,
+    `o alvo de mutante do mutador do painel nao e mais ${SOMA}`
   );
   const cru = mutador.match(/const DEPENDENCIAS = \[([\s\S]*?)\];/);
   assert.ok(cru, `nao achei DEPENDENCIAS em ${MUTADOR}`);
-  // `DONO_DO_CRITERIO` entra na lista pelo nome da constante, e nao pela string:
+  // `SOMA_DA_FATURA` entra na lista pelo nome da constante, e nao pela string:
   // resolve-la aqui e o que impede este laco de reprovar a arvore certa.
   const dependencias = cru[1].replace(
-    /\bDONO_DO_CRITERIO\b/g,
-    JSON.stringify(dono[1])
+    /\bSOMA_DA_FATURA\b/g,
+    JSON.stringify(alvo[1])
   );
 
-  const importados = [...caixa.matchAll(/from "@\/(lib\/[a-z0-9-]+)"/g)].map(
-    (m) => m[1]
-  );
+  const importados = (fonte) =>
+    [...fonte.matchAll(/from "@\/(lib\/[a-z0-9-]+)"/g)].map((m) => m[1]);
+  const doCaixa = importados(caixa);
   // Controle da extracao: sem pelo menos um import, o laco abaixo passaria por
-  // vacuidade -- e `realizado-do-caixa` TEM de importar o dono.
+  // vacuidade -- e `realizado-do-caixa` TEM de importar a soma.
   assert.ok(
-    importados.includes("lib/telas-de-movimentacao"),
-    `${CAIXA} nao importa mais ${LIB}: o criterio da fatura paga perdeu o dono`
+    doCaixa.includes("lib/fatura-paga-no-resultado"),
+    `${CAIXA} nao importa mais ${SOMA}: a fatura paga perdeu o dono`
   );
 
-  for (const dep of importados) {
+  // AS DEPENDENCIAS DA SOMA TAMBEM: ela e copiada para a arvore, e um import
+  // dela que falte faz o arquivo mutado parar de compilar.
+  for (const dep of [...doCaixa, ...importados(soma)]) {
     assert.match(
       dependencias,
       new RegExp(`"${dep}\\.ts"`),
-      `${dep}.ts e importado por ${CAIXA} e nao esta em DEPENDENCIAS de ` +
+      `${dep}.ts e importado por ${CAIXA} ou ${SOMA} e nao esta em DEPENDENCIAS de ` +
         `${MUTADOR}: o arquivo mutado para de compilar e TODO mutante "morre"`
     );
   }

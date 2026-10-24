@@ -52,7 +52,8 @@
 // Ate a HMO-265 a fatura ficava FORA desta conta, e o argumento era que cada
 // compra do cartao ja tinha entrado como despesa no dia em que aconteceu -- do
 // lado do Realizado. Essa premissa morreu: o Realizado do painel passou a contar
-// o cartao pela fatura PAGA (`?cartao=fatura` em /api/reports/cash-flow). Manter
+// o cartao pela fatura PAGA (HMO-265; desde a fase 6, a 072, no mes do
+// vencimento e em todo o relatorio pessoal de /api/reports/cash-flow). Manter
 // a fatura fora daqui faria o cartao sumir dos dois lados do "Total esperado".
 //
 // Entao a Previsao faz, do lado do que ainda vai acontecer, as mesmas tres

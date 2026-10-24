@@ -2782,6 +2782,12 @@ mes barato -- HMO-264), e por a fatura sem tirar a compra faz o cartao
 contar DUAS vezes (a HMO-149 de volta). Os dois numeros errados sao
 plausiveis e nenhum levanta excecao.
 
+DESDE A FASE 6 (072, RN017.3 e RN017.4) a fatura conta no mes do
+VENCIMENTO e pelo TOTAL DAS COMPRAS, somada das linhas de
+`card_invoice_paid_entries` por lib/fatura-paga-no-resultado.ts -- e nao
+mais pela perna de saida do pagamento, no dia e pelo valor pago. O
+estorno no cartao abate a fatura, e a linha fora dos totais fica fora.
+
 SEM FILTRO DE `paths`, como todo bloco deste arquivo: a suite roda em
 milissegundos, nao precisa de banco, e um filtro escrito hoje perde o dia
 em que alguem mexer no arquivo de amanha.
@@ -2795,8 +2801,9 @@ porque todos os erros desta regra produzem a lista "certa" e o numero
 errado. Uma verificacao que nunca viu vermelho nao e verificacao.
 
 A prova de mutacao completa e `npm run mutantes:realizado-do-caixa`
-(12 mutantes, ferramenta de quem escreve o teste). Aqui ficam os quatro
-que mais custam, plantados um por vez.
+(11 mutantes desde a fase 6, ferramenta de quem escreve o teste). Aqui
+ficam os quatro que mais custam, plantados um por vez -- o terceiro na
+soma da fatura (lib/fatura-paga-no-resultado.ts), e nao na regra.
 
 O `cmp` DEPOIS DE CADA `sed` NAO E ZELO. Um `sed -i` cujo padrao nao casa
 SAI 0 e nao muda nada: o `npm run` seguinte roda a fonte INTACTA, passa,
@@ -2810,11 +2817,12 @@ repositorio parou de aplicar quando uma issue renomeou a ancora dele.
 ~~~~~~
 A REGRA PODE ESTAR PERFEITA E NAO ESTAR LIGADA.
 
-As 15 assercoes e os 12 mutantes acima provam `lib/realizado-do-caixa.ts`
-e nao olham quem o chama. O defeito que sobra e de fiacao, e e mudo: o
-painel para de mandar `&cartao=fatura`, ou a rota para de aplicar a regra,
-e /api/reports/cash-flow responde 200 com o total de ANTES desta issue --
-sem erro, sem campo faltando, sem log, e com a suite inteira verde.
+As assercoes e os mutantes acima provam `lib/realizado-do-caixa.ts` e nao
+olham quem o chama. O defeito que sobra e de fiacao, e e mudo: o painel
+para de mandar `&faturaAte=` (ate a fase 6, `&cartao=fatura`), ou a rota
+para de ler a fatura paga ou de aplicar a regra, e /api/reports/cash-flow
+responde 200 com um total errado -- sem erro, sem campo faltando, sem
+log, e com a suite inteira verde.
 
 O guard varre o fonte SEM comentario e SEM a lista de imports. As duas
 remocoes foram medidas: sem a primeira ele le a prosa que descreve o
@@ -2843,9 +2851,12 @@ formas que o `tsc` nao ve, porque sao strings:
     numeros e chegou na legenda ja sabe o que aquela tela mostra; o que
     ele nao sabe e qual das duas esta errada (nenhuma esta).
 
-A suite afirma sobre as propriedades do PAR -- cada legenda nomeia a
-outra tela, a direcao da diferenca e oposta nas duas, e as duas dizem que
-os dois totais estao certos -- e nao sobre o texto literal. A comparacao
+DESDE A FASE 6 (072) o par e outro: o relatorio PESSOAL conta o cartao
+pela fatura, no mes do vencimento, e o do GRUPO pela compra. A suite
+afirma sobre as propriedades do PAR -- cada legenda nomeia a outra
+leitura, a primeira frase de cada uma diz o mes da propria, e a do
+pessoal diz que a fatura conta pelo total das compras e que a fatura em
+aberto ainda nao entra -- e nao sobre o texto literal. A comparacao
 e sem acento e em minusculas de proposito: exigir a grafia faria de
 qualquer revisao de texto uma suite vermelha, e o sintoma disso e a
 proxima pessoa afrouxar a assercao inteira para parar o vermelho.

@@ -157,6 +157,8 @@ import {
   type AReceberDoMyBank,
   type ParcelaDevidaNaAgenda,
 } from "@/lib/leituras-do-mybank";
+import { faturasPagasComoRealizadas } from "@/lib/fatura-paga-no-resultado";
+import { lerFaturasPagas } from "@/lib/services/fatura-paga-no-resultado";
 
 export async function GET(request: NextRequest) {
   try {
@@ -1013,6 +1015,7 @@ export async function GET(request: NextRequest) {
     let contasDoFechamento: ReturnType<typeof contasDoFechamentoComoRealizadas> = [];
     let estimativasDoFechamento: ReturnType<typeof estimativasComoPrevistas> = [];
     let jurosPagos: ReturnType<typeof jurosPagosComoRealizados> = [];
+    let faturasPagasDoPeriodo: ReturnType<typeof faturasPagasComoRealizadas> = [];
 
     if (tela.tipo !== "transfer") {
       const quitadas = await lerContasDoFechamentoRealizadas(
@@ -1060,6 +1063,31 @@ export async function GET(request: NextRequest) {
         }
 
         jurosPagos = jurosPagosComoRealizados(pagos.juros);
+
+        // A FATURA PAGA (fase 6, RN017.4), no Realizado de Despesas, no mes do
+        // VENCIMENTO e pelo total das compras dela. A compra no cartao sai da
+        // lista por `ehGastoNoCartao`; e esta linha que conta no lugar dela. A
+        // perna que quitou a fatura e transferencia e fica so na aba de
+        // Transferencias. Falhar aqui e 500, pela mesma razao do juro acima.
+        const faturas = await lerFaturasPagas(
+          supabase,
+          user.id,
+          periodo.de,
+          periodo.ate
+        );
+
+        if (!faturas.ok) {
+          console.error(
+            "Erro ao ler as faturas pagas da tela de movimentação:",
+            faturas.erro
+          );
+          return NextResponse.json(
+            { error: "Não foi possível carregar os lançamentos do período" },
+            { status: 500 }
+          );
+        }
+
+        faturasPagasDoPeriodo = faturasPagasComoRealizadas(faturas.linhas);
       }
 
       const estimativas = await lerEstimativasDoFechamento(supabase, user.id, hoje);
@@ -1168,6 +1196,7 @@ export async function GET(request: NextRequest) {
         ...(realizadasCruas ?? []),
         ...contasDoFechamento,
         ...jurosPagos,
+        ...faturasPagasDoPeriodo,
       ] as unknown as RealizadaCrua[],
       previstas,
       tela.tipo,

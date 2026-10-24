@@ -17,53 +17,53 @@
 // Este modulo faz duas coisas sobre a mesma lista, e nenhuma das duas esta certa
 // sozinha:
 //
-//   1. TIRA a compra no cartao. Ela esta DENTRO da fatura, e a fatura e que vai
-//      contar.
-//   2. PROMOVE a perna de saida do pagamento da fatura a despesa realizada. Ela
-//      e gravada como 'transfer' (015), e 'transfer' fica fora de todo agregado
-//      de fluxo -- entao sem este passo o valor da fatura nao entra em lugar
-//      nenhum.
+//   1. TIRA a linha do cartao: a compra e o estorno. Elas estao DENTRO da
+//      fatura, e a fatura e que vai contar.
+//   2. SOMA a fatura paga, uma linha por fatura (`faturasPagasComoTransacoes`,
+//      lib/fatura-paga-no-resultado.ts), com o total das linhas dela.
 //
-// So a 1: o mes em que a fatura foi paga perde o valor dela. Um mes em que se
-// pagou R$ 1.290 de cartao aparece R$ 1.290 MAIS BARATO, e um total menor nao
-// parece erro -- parece um mes barato. E o defeito que a HMO-264 descreve na
-// tela de Despesas, trazido para o painel.
+// So a 1: o mes da fatura perde o valor dela. Um mes em que vencia uma fatura de
+// R$ 1.290 aparece R$ 1.290 MAIS BARATO, e um total menor nao parece erro --
+// parece um mes barato. E o defeito que a HMO-264 descreve na tela de Despesas,
+// trazido para o painel.
 //
 // So a 2: a compra continua somada no dia da compra E a fatura soma de novo no
-// dia do pagamento. O cartao conta DUAS vezes, que e a HMO-149 de volta.
+// vencimento. O cartao conta DUAS vezes, que e a HMO-149 de volta.
 //
-// POR QUE O VALOR SAI DA PERNA DE SAIDA, E NAO DE `scheduled_transactions.amount`
-// ------------------------------------------------------------------------------
-// Porque a baixa aceita um valor diferente do previsto (`valorPago` em
-// app/api/scheduled-transactions/[id]/pay/route.ts) e NAO reescreve o `amount`
-// da linha da agenda -- de proposito, para o relatorio de desvio continuar
-// sabendo quanto se previa. Quem sabe quanto dinheiro de fato saiu e a perna de
-// saida.
-//
-// E ela traz mais duas coisas de graca, que ler a agenda exigiria juntar na mao:
-//
-//   * a DATA. `transaction_date` da perna e o `paid_date`, entao o recorte de
-//     periodo que a rota ja faz por data poe a fatura no mes em que ela foi
-//     PAGA. Pelo `due_date` seria no mes errado toda vez que alguem pagasse
-//     atrasado.
-//   * a MOEDA, que `scheduled_transactions` tem mas o agregado por moeda da
-//     rota precisa na mesma linha.
-//
-// POR QUE A DETECCAO E PELA CHAVE EM `notes`, NUNCA PELO TIPO DA CONTA
+// A FASE 6 DO MODELO NOVO MUDOU A SEGUNDA METADE (RN017.3, RN017.4, 072)
 // --------------------------------------------------------------------
-// Mesma razao que lib/card-invoice.ts e a migration 015 ja registram: a
-// assinatura cobrada no cartao tambem e uma conta prevista com `account_id` de
-// cartao, e pagar aquela conta COM o cartao e despesa de verdade. Quem olhasse
-// so `account_type` promoveria qualquer transferencia que toca um cartao a
-// despesa do mes.
+// Da HMO-265 ate a fase 5 a segunda metade PROMOVIA a perna de saida do
+// pagamento da fatura a despesa: o valor pago, no dia do pagamento. Desde a 072
+// a fatura conta como o banco a conta no modo mes (perna 5 de
+// `personal_category_monthly_totals`):
+//
+//   * no mes do VENCIMENTO, e nao no do pagamento. Pagar adiantado ou atrasado
+//     nao muda o mes;
+//   * pelo TOTAL das linhas que contam nos totais, estornos abatidos, e nao pelo
+//     valor pago. Pagar diferente nao muda a despesa: a diferenca fica no saldo
+//     do cartao;
+//   * realizada quando foi paga no app. A fatura aberta continua no Previsto.
+//
+// A perna de saida volta a ser o que a coluna diz, `transfer`, e todo agregador
+// de fluxo a deixa fora.
+//
+// POR QUE A FATURA SAI DA VIEW, E NAO DAS LINHAS DO PERIODO
+// ---------------------------------------------------------
+// Porque as compras de uma fatura nao estao no periodo dela: a fatura que vence
+// em novembro e feita de compras de outubro. A view `card_invoice_paid_entries`
+// (072) entrega cada linha de fatura paga com o vencimento dela, e e por ele que
+// a rota recorta.
 // -----------------------------------------------------------------------------
 
 import {
-  ehPagamentoDaFatura,
   TIPO_CARTAO,
   TIPOS_QUE_ENTRAM_NA_FATURA,
 } from "@/lib/telas-de-movimentacao";
 import type { LinhaComTotais } from "@/lib/fora-dos-totais";
+import {
+  faturasPagasComoTransacoes,
+  type LinhaDaFaturaPaga,
+} from "@/lib/fatura-paga-no-resultado";
 
 /**
  * Uma linha somavel pelos agregadores de fluxo, com o que esta regra precisa
@@ -71,18 +71,14 @@ import type { LinhaComTotais } from "@/lib/fora-dos-totais";
  *
  * TODOS OS CAMPOS NOVOS SAO OPCIONAIS, e isso nao e frouxidao: a MESMA lista
  * recebe tambem as linhas de `group_share_entries` convertidas por
- * `partesComoTransacoes` (lib/parte-do-grupo-realizada.ts), que nao tem conta,
- * nem `notes`, nem elo. Elas atravessam este modulo intactas -- a minha parte de
- * uma despesa de grupo nao e compra no cartao nem pagamento de fatura.
+ * `partesComoTransacoes` (lib/parte-do-grupo-realizada.ts), que nao tem conta.
+ * Elas atravessam este modulo intactas -- a minha parte de uma despesa de grupo
+ * nao e linha de fatura minha.
  */
 export interface LinhaDoRealizado extends LinhaComTotais {
   amount: number | string;
   transaction_type: string | null;
   currency?: string | null;
-  /** A chave canonica da fatura, quando a linha e um pagamento de fatura. */
-  notes?: string | null;
-  /** O elo do 015. Preenchido APENAS na perna de entrada. */
-  counterpart_transaction_id?: string | null;
   /**
    * O embed da conta. DUAS FORMAS POSSIVEIS, e nao e paranoia -- ver
    * `contaDaLinha`.
@@ -115,6 +111,9 @@ function contaDaLinha(linha: LinhaDoRealizado): ContaDaLinha | null {
 /**
  * Esta linha e uma compra NO CARTAO (e por isso ja esta dentro da fatura)?
  *
+ * O nome diz compra, e a pergunta inclui o ESTORNO no cartao: `income` tambem
+ * esta em `TIPOS_QUE_ENTRAM_NA_FATURA`, e ele abate a fatura que vai contar.
+ *
  * Os dois criterios de `ehGastoNoCartao` (HMO-260), pelas mesmas duas razoes:
  *
  *   * a conta e um cartao de credito;
@@ -135,82 +134,41 @@ export function ehCompraNoCartao(linha: LinhaDoRealizado): boolean {
   return TIPOS_QUE_ENTRAM_NA_FATURA.has(String(linha.transaction_type));
 }
 
-// -----------------------------------------------------------------------------
-// QUEM DECIDE "ESTA LINHA E A PERNA DE SAIDA DO PAGAMENTO DA FATURA" -- HMO-317
-// -----------------------------------------------------------------------------
-// `ehPagamentoDaFatura`, importado de lib/telas-de-movimentacao.ts. ELE E O DONO
-// UNICO DA PERGUNTA, e os tres criterios com o peso de cada um estao no
-// cabecalho DELE -- aqui nao fica resumo nenhum, de proposito: um resumo e a
-// segunda copia voltando pela porta do comentario, e comentario desatualizado
-// nao da erro nenhum.
-//
-// ESTE ARQUIVO TINHA A SUA PROPRIA COPIA (`ehSaidaDePagamentoDeFatura`, HMO-265)
-// com os mesmos tres criterios escritos a mao, e as duas JA DIVERGIAM em
-// `amount === 0`: ficava fora aqui (o sinal estrito) e entrava na tela de
-// Despesas. Nenhum total mudava com isso, e era por isso que importava -- duas
-// copias de um criterio de DINHEIRO que ninguem compara sao a forma exata do
-// defeito que este repositorio ja pagou caro. A decisao unica e a que este lado
-// tomava (o par de zero fica FORA), e as tres razoes dela estao no cabecalho da
-// funcao dona.
-//
-// POR QUE O DONO E LA E NAO AQUI: este arquivo JA importava `TIPO_CARTAO` e
-// `TIPOS_QUE_ENTRAM_NA_FATURA` de la (foi para isso que a segunda deixou de ser
-// privada na HMO-265). Inverter a direcao fecharia um ciclo e poria
-// `realizado-do-caixa` -- e `card-invoice` -> `transferencia` -> `lancamento`
-// atras dele -- dentro da arvore que scripts/mutantes-telas-de-movimentacao.mjs
-// copia: todo mutante daquele modulo deixaria de COMPILAR, "morreria" por motivo
-// errado, e o placar viraria 100% sem medir nada.
-//
-// O IMPORT E A FIACAO, E E ELE QUE O `tsc` COBRA. Nao ha mais copia local para
-// divergir; o que ainda pode divergir e o CAMINHO DE DINHEIRO, e e isso que o
-// bloco "os dois leitores da fatura paga concordam, linha por linha" de
-// scripts/test-realizado-do-caixa.mjs mede: a MESMA matriz de linhas pelos dois
-// leitores, afirmando que a resposta da funcao dona e exatamente o que cada um
-// faz com a linha. Era o controle que nao existia em lugar nenhum.
-//
-// E O CRITERIO DO `transaction_type` CONTINUA SENDO UM INVARIANTE DESTE LADO,
-// nao um ramo com teste. Nenhum caminho de escrita do app produz a chave
-// `fatura:` com tipo diferente de 'transfer', e para a PROMOCAO daqui ele e
-// invisivel por um motivo a mais: a unica linha que ele separa (a despesa
-// nascida do elo da HMO-305) ja e `expense`, entao reescreve-la para `expense`
-// nao mudaria um centavo. O mutante que o removia sobreviveu, a conclusao foi
-// escrever isto em vez de forjar estado que o app nao alcanca, e a unificacao
-// nao mudou a decisao -- mudou que agora ele TEM teste, do OUTRO lado: na tela
-// de Despesas ele decide `natureza`, e la o mutante morre. Ver o bloco de notas
-// de scripts/mutantes-realizado-do-caixa.mjs.
-
 /**
- * A lista do realizado com o cartao contado pela FATURA, e nao pela compra.
+ * A lista do realizado com o cartao contado pela FATURA PAGA, e nao pela compra.
  *
- * Devolve uma lista nova com a compra no cartao FORA e a perna de saida do
- * pagamento da fatura reescrita como `'expense'`.
+ * Devolve uma lista nova com a linha do cartao FORA e uma linha por fatura paga
+ * no fim, `expense` com o total negativo, como `financial_transactions` grava.
+ * `faturasPagas` sao as linhas de `card_invoice_paid_entries` que vencem no
+ * periodo, e quem recorta e a rota (`lerFaturasPagas`).
  *
- * POR QUE REESCREVER O TIPO, EM VEZ DE SOMAR A FATURA A PARTE
- * -----------------------------------------------------------
+ * POR QUE A FATURA ENTRA COMO LINHA, EM VEZ DE SOMAR A PARTE
+ * ----------------------------------------------------------
  * Porque assim nenhuma aritmetica muda. `agregarTransacoes` /
  * `agregarTransacoesPorMoeda` (lib/periodo-do-painel.ts) continuam sendo as
  * unicas funcoes que somam -- as que ja sabem que despesa e gravada negativa,
  * que o `Math.abs` vem antes de tudo e que cada moeda e um bloco proprio. Uma
  * segunda soma aqui seria uma segunda versao do mesmo numero, e as duas
- * divergiriam na primeira mudanca.
+ * divergiriam na primeira mudanca. A fatura cujo total e negativo (um estorno
+ * maior que as compras) sai `income`, pelo `Math.abs` delas: o Resultado fica o
+ * do banco.
  *
- * O objeto e COPIADO (`{ ...linha, transaction_type: "expense" }`) e nao mutado:
- * as linhas chegam do PostgREST e a mesma lista e lida mais de uma vez na rota
- * (uma vez por moeda). Mutar aqui seria um efeito a distancia que nao aparece em
- * nenhuma das duas funcoes.
+ * A `transaction_count` e a unica diferenca para o modo mes: aqui a fatura conta
+ * UMA linha, e no banco cada compra dela conta uma.
  */
-export function realizadoComCartaoPelaFatura<T extends LinhaDoRealizado>(
-  linhas: readonly T[]
-): T[] {
-  const saida: T[] = [];
+export function realizadoComCartaoPelaFatura(
+  linhas: readonly LinhaDoRealizado[],
+  faturasPagas: readonly LinhaDaFaturaPaga[]
+): LinhaDoRealizado[] {
+  const saida: LinhaDoRealizado[] = [];
 
   for (const linha of linhas) {
     if (ehCompraNoCartao(linha)) continue;
-    if (ehPagamentoDaFatura(linha)) {
-      saida.push({ ...linha, transaction_type: "expense" });
-      continue;
-    }
     saida.push(linha);
+  }
+
+  for (const fatura of faturasPagasComoTransacoes(faturasPagas)) {
+    saida.push(fatura);
   }
 
   return saida;
@@ -219,20 +177,21 @@ export function realizadoComCartaoPelaFatura<T extends LinhaDoRealizado>(
 /**
  * As colunas que a consulta do realizado precisa pedir para esta regra funcionar.
  *
- * NUMA CONSTANTE PORQUE AS QUATRO SAO LOAD-BEARING E NENHUMA APARECE NA TELA.
- * Uma limpeza de "campos nao usados" tira qualquer uma delas sem quebrar tsc nem
- * teste de unidade, e o efeito e sempre o mesmo: a regra recebe `undefined`,
- * para de casar, e o painel volta a contar o cartao no dia da compra (ou a
- * perder a fatura paga). Ver HMO-260, onde `account_type` foi exatamente isso.
+ * NUMA CONSTANTE PORQUE O EMBED DA CONTA E LOAD-BEARING E NAO APARECE NA TELA.
+ * Uma limpeza de "campos nao usados" o tira sem quebrar tsc nem teste de
+ * unidade, e o efeito e o de sempre: a regra recebe `undefined`, para de casar,
+ * e o painel volta a contar o cartao no dia da compra E na fatura. Ver HMO-260,
+ * onde `account_type` foi exatamente isso.
  *
  * `amount`, `transaction_type` e `currency` eram o que a rota ja pedia.
  * `transaction_date` nao entra aqui: ela nao e desta regra -- e o recorte de
- * periodo da rota, que existia antes.
+ * periodo da rota, que existia antes. `notes` e o elo do 015 sairam na fase 6:
+ * eram da promocao da perna de saida, que deixou de existir.
  *
  * `include_in_total` (060, HMO-453) e a QUINTA, e ela e load-bearing do mesmo
  * jeito e por quem NAO esta neste arquivo: quem filtra e a rota, no laco de
- * paginacao (`apenasNosTotais`). Sem a coluna aqui, o caminho `cartao=fatura`
- * -- e SO ele, porque e o unico que usa esta lista -- receberia o campo
+ * paginacao (`apenasNosTotais`). Sem a coluna aqui, o ramo de intervalo do
+ * relatorio PESSOAL -- e SO ele, porque e o unico que usa esta lista -- receberia o campo
  * `undefined` em toda linha, o predicado `!== false` deixaria tudo passar, e o
  * Realizado do painel voltaria a contar a linha desmarcada. Nenhum `tsc`
  * reclama (o campo e opcional) e nenhum teste de unidade desta funcao nota, o
@@ -240,4 +199,4 @@ export function realizadoComCartaoPelaFatura<T extends LinhaDoRealizado>(
  * exatamente o que aconteceu com `account_type` na HMO-260.
  */
 export const COLUNAS_DO_REALIZADO_DE_CAIXA =
-  "amount, transaction_type, currency, notes, counterpart_transaction_id, include_in_total, account:financial_accounts(account_type)";
+  "amount, transaction_type, currency, include_in_total, account:financial_accounts(account_type)";
