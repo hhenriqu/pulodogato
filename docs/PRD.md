@@ -395,6 +395,14 @@ nas contas que o fechamento gerou.
   despesas realizadas (com o sinal da RN002), somado nas contas que entram nos
   totais (migration 058). É o `current_balance` mantido por trigger, e não
   muda.
+- RN016.1.1 No painel, o tile **Saldo em conta** soma só as contas que guardam
+  dinheiro: o **cartão de crédito fica de fora**. O cartão pesa no saldo quando
+  a fatura é paga, pela saída da conta que pagou (RN004.4, RN017.4). O tile
+  mostra o saldo no começo do período, as entradas realizadas e as saídas
+  pagas até hoje, e o saldo no fim (ou hoje, se o fim ainda não chegou). O
+  saldo no fim de um mês é o saldo do começo do mês seguinte. Lançamento com
+  data futura não conta. A lista de contas do painel continua mostrando o
+  cartão com a dívida dele (`lib/saldo-em-conta.ts`).
 - RN016.2 **Resultado do mês** = Total de Receitas − Total de Despesas do mês,
   com a composição da RN017.
 - RN016.3 Cada movimentação entra no mês da sua data: a data do lançamento

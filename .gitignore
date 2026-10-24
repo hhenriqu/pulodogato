@@ -166,6 +166,7 @@ next-env.d.ts
 /.tmp-tela-do-cartao/
 # saida do `npm run test:periodo-painel` (HMO-173)
 /.tmp-periodo-painel/
+/.tmp-saldo-em-conta/
 # saida do `npm run test:parte-realizada` (HMO-202)
 /.tmp-parte-realizada/
 # saida do `npm run test:categorias-do-periodo` (HMO-201, parte 3 -- ficou de fora)

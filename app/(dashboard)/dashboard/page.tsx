@@ -44,9 +44,9 @@
 //
 // Por isso:
 //   * resumo de entrada/saida e contas previstas -> passam o periodo adiante
-//   * saldo das contas, em periodo que ja terminou -> vem de `net_worth_history`
-//     (patrimonio no fim daquele mes); quando nao da, o numero de hoje aparece
-//     com o rotulo "hoje", explicitamente FORA do periodo
+//   * saldo em conta -> o saldo fora do cartao no fim do periodo, ou hoje se
+//     o fim ainda nao chegou, reconstruido dos lancamentos
+//     (lib/saldo-em-conta.ts); o rotulo diz qual dos dois
 //   * custo fixo mensal -> e uma definicao do presente, rotulado como tal
 //   * "quanto posso gastar" e metas -> falam do mes corrente por definicao;
 //     fora dele, somem e explicam por que sumiram
@@ -93,11 +93,13 @@ import {
   periodoParaQuery,
   rotaDaTelaDoLado,
   rotuloDoPeriodo,
-  rotuloDoSaldo,
   somarPrevistas,
-  terminaNoPassado,
   type Periodo,
 } from "@/lib/periodo-do-painel";
+import {
+  rotuloDoSaldoEmConta,
+  type SaldoEmConta,
+} from "@/lib/saldo-em-conta";
 import { SeletorDePeriodo } from "@/components/dashboard/SeletorDePeriodo";
 import { NumeroIndisponivel } from "@/components/SemRede";
 import { PrevistoXRealizado } from "@/components/dashboard/PrevistoXRealizado";
@@ -349,10 +351,10 @@ function PainelCompleto() {
   const [gastoDiario, setGastoDiario] = useState<number | null>(null);
   const [metas, setMetas] = useState<Meta[]>([]);
   const [possoGastar, setPossoGastar] = useState<PossoGastar | null>(null);
-  // O patrimonio no fim de um periodo que ja terminou, de `net_worth_history`.
-  // `null` significa "nao existe versao historica deste numero" -- e nesse caso
-  // o tile mostra o saldo de HOJE, dizendo que e de hoje.
-  const [saldoNoFim, setSaldoNoFim] = useState<number | null>(null);
+  // O saldo em conta do periodo (lib/saldo-em-conta.ts): o dinheiro fora do
+  // cartao no comeco e no fim, com o que entrou e saiu entre os dois. `null` =
+  // a rota nao respondeu, e o tile diz "indisponivel" em vez de zero.
+  const [saldoEmConta, setSaldoEmConta] = useState<SaldoEmConta | null>(null);
   // A rota nao conseguiu ler as metas -- e o caso, por exemplo, da janela entre
   // o merge do codigo e a migration 018 rodar no banco de producao. O tile
   // escreve "indisponivel" em vez de R$ 0,00: zero seria uma afirmacao sobre o
@@ -398,12 +400,6 @@ function PainelCompleto() {
     // responder: ele fala do que sobra ate o fim do MES CORRENTE. Nem se
     // pergunta.
     const periodoTemHoje = contemHoje(periodo, hoje);
-    // Em periodo encerrado E alinhado a mes, existe um saldo historico de
-    // verdade: `net_worth_history` (008) reconstroi o patrimonio no fim de
-    // cada mes. Em modo intervalo nao existe -- a view tem grao de mes --, e
-    // ai o tile mostra o numero de hoje dizendo que e de hoje.
-    const temSaldoHistorico =
-      periodo.modo === "mes" && terminaNoPassado(periodo, hoje);
     // A fatia do periodo em que algo pode JA ter acontecido. `null` em periodo
     // inteiramente futuro -- e ai nao ha realizado nenhum para pedir.
     const janelaRealizado = janelaDoRealizado(periodo, hoje);
@@ -420,7 +416,7 @@ function PainelCompleto() {
         rMetas,
         rPossoGastar,
         rLayout,
-        rPatrimonio,
+        rSaldoEmConta,
       ] = await Promise.all([
         fetch("/api/financial-accounts"),
         // O REALIZADO PARA EM HOJE, e e por isso que a janela nao e `query`
@@ -454,7 +450,7 @@ function PainelCompleto() {
         fetch("/api/goals?status=active"),
         periodoTemHoje ? fetch("/api/safe-to-spend") : null,
         fetch("/api/settings/dashboard"),
-        temSaldoHistorico ? fetch(`/api/reports/net-worth?${query}`) : null,
+        fetch(`/api/dashboard/saldo-em-conta?${query}`),
       ]);
 
       if (rContas.ok) {
@@ -483,17 +479,11 @@ function PainelCompleto() {
         setGastoDiario(null);
       }
 
-      // O patrimonio no fim do periodo e a ULTIMA linha da janela, nao a
-      // primeira: a janela vai do comeco do periodo ate o mes em que ele
-      // termina, e e esse fim que o tile rotula.
-      if (rPatrimonio?.ok) {
-        const d = await rPatrimonio.json();
-        const meses = d.months ?? [];
-        setSaldoNoFim(
-          meses.length ? Number(meses[meses.length - 1].net_worth) : null
-        );
+      if (rSaldoEmConta.ok) {
+        const d = await rSaldoEmConta.json();
+        setSaldoEmConta(d.saldo ?? null);
       } else {
-        setSaldoNoFim(null);
+        setSaldoEmConta(null);
       }
 
       if (rPrevistas.ok) {
@@ -555,11 +545,6 @@ function PainelCompleto() {
     }
   };
 
-  const saldoTotal = contas.reduce(
-    (soma, c) => soma + Number(c.current_balance ?? 0),
-    0
-  );
-
   if (carregando) return <Girando />;
 
   // "Voce ainda nao cadastrou nada." As DUAS pernas entram: quem so cadastrou
@@ -579,14 +564,13 @@ function PainelCompleto() {
   const temHoje = contemHoje(periodo, hoje);
 
   // O titulo e a nota do tile de saldo saem da lib, nao de um ternario aqui:
-  // a regra que eles carregam -- numero sem versao historica nunca aparece
-  // debaixo do nome do periodo -- e o aceite da issue, e no JSX ela seria
-  // conferida por inspecao visual em vez de por teste.
-  const rotuloSaldo = rotuloDoSaldo({
-    periodo,
+  // a regra deles -- o rotulo diz se o numero e do fim do periodo ou de hoje --
+  // e conferida por teste (scripts/test-saldo-em-conta.mjs).
+  const rotuloSaldo = rotuloDoSaldoEmConta({
+    de: periodo.de,
+    ate: periodo.ate,
     hoje,
-    saldoHistorico: saldoNoFim,
-    quantidadeDeContas: contas.length,
+    nomeDoPeriodo: rotulo,
   });
 
   // ------------------------------------------------------------------------
@@ -653,19 +637,17 @@ function PainelCompleto() {
             ganha rolagem horizontal (HMO-181). */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* ----------------------------------------------------------------
-            O TILE QUE NAO TEM EIXO DE TEMPO
+            O SALDO EM CONTA
             ----------------------------------------------------------------
-            `current_balance` e o saldo de HOJE -- o banco nao guarda historico
-            de saldo. Sao dois numeros diferentes debaixo do mesmo icone, e o
-            que muda entre eles e a FRASE, nunca o silencio:
-
-              * periodo encerrado e alinhado a mes -> o patrimonio no fim
-                daquele mes, reconstruido por `net_worth_history`
-              * qualquer outro caso -> o saldo de hoje, dito com todas as
-                letras, e o rotulo avisa que ele esta FORA do periodo
-
-            O que nao pode existir e a terceira versao, que era a de antes
-            desta issue: o numero de hoje debaixo de uma tela que diz julho. */}
+            Ate aqui era a soma de `current_balance` de toda conta ativa, com
+            o cartao dentro: a divida de cada compra, parcelas futuras
+            incluidas, puxava o tile para baixo antes de a fatura vencer.
+            Agora e o dinheiro fora do cartao -- saldo no comeco do periodo,
+            mais o que entrou, menos o que saiu, ate hoje --, e o fim de um
+            mes e o comeco do seguinte. O cartao entra quando a fatura e
+            paga, pela saida da conta corrente. A regra mora em
+            lib/saldo-em-conta.ts; a lista "Suas contas", mais abaixo,
+            continua mostrando o cartao com a divida dele. */}
         <Card>
           <CardHeader className="pb-2">
             <CardDescription className="flex items-center gap-2">
@@ -676,14 +658,25 @@ function PainelCompleto() {
           <CardContent>
             <div
               className={`text-2xl font-bold ${
-                (saldoNoFim ?? saldoTotal) < 0 ? "text-destructive" : ""
+                (saldoEmConta?.saldo_final ?? 0) < 0 ? "text-destructive" : ""
               }`}
             >
-              {moeda(saldoNoFim ?? saldoTotal)}
+              {saldoEmConta ? (
+                moeda(saldoEmConta.saldo_final)
+              ) : (
+                <NumeroIndisponivel />
+              )}
             </div>
             <p className="text-xs text-muted-foreground mt-1">
               {rotuloSaldo.nota}
             </p>
+            {saldoEmConta && rotuloSaldo.mostrarMovimento && (
+              <p className="text-xs text-muted-foreground mt-1">
+                Começou com {moeda(saldoEmConta.saldo_inicial)} · entrou{" "}
+                {moeda(saldoEmConta.entradas)} · saiu{" "}
+                {moeda(saldoEmConta.saidas)}
+              </p>
+            )}
           </CardContent>
         </Card>
 
