@@ -18,6 +18,10 @@ const {
   formatarChavePix,
   chaveParaCopiar,
   tabelaDePixAusente,
+  codigoPixCopiaECola,
+  crcDoPix,
+  CIDADE_DO_PIX,
+  NOME_DO_PIX_SEM_NOME,
 } = await import("../.tmp-chave-pix/chave-pix.js");
 
 // ---------------------------------------------------------------------------
@@ -244,5 +248,70 @@ test("erro de verdade NAO e confundido com tabela ausente", () => {
 test("entrada estranha nao quebra a checagem", () => {
   for (const v of [null, undefined, "42P01", 42, {}]) {
     assert.equal(tabelaDePixAusente(v), false, String(v));
+  }
+});
+
+// ---------------------------------------------------------------------------
+// O PIX COPIA E COLA DO ACERTO
+// ---------------------------------------------------------------------------
+// O codigo vai para o app do banco de OUTRA pessoa. Um campo com o tamanho
+// errado ou um CRC errado e um codigo que o banco recusa -- e a tela do Pulo do
+// Gato nao tem como saber. Por isso o primeiro caso e o exemplo do proprio
+// manual do BR Code do Banco Central, byte a byte.
+
+const EXEMPLO_DO_BANCO_CENTRAL =
+  "00020126580014br.gov.bcb.pix0136123e4567-e12b-12d1-a456-426655440000" +
+  "5204000053039865802BR5913Fulano de Tal6008BRASILIA62070503***63041D3D";
+
+test("o codigo sem valor e o exemplo do manual do BR Code, byte a byte", () => {
+  assert.equal(
+    codigoPixCopiaECola({
+      chave: "123e4567-e12b-12d1-a456-426655440000",
+      nome: "Fulano de Tal",
+      cidade: "BRASILIA",
+    }),
+    EXEMPLO_DO_BANCO_CENTRAL
+  );
+  // O CRC e o CRC16/CCITT-FALSE: o valor de conferencia do algoritmo.
+  assert.equal(crcDoPix("123456789"), "29B1");
+});
+
+test("o valor entra no campo 54 e o CRC continua batendo", () => {
+  const codigo = codigoPixCopiaECola({
+    chave: "52998224725",
+    valor: 250,
+    nome: "Helio",
+  });
+  assert.ok(codigo.includes("5406250.00"), codigo);
+  // A chave CRUA, como o banco aceita -- nunca a formatada da tela.
+  assert.ok(codigo.includes("011152998224725"), codigo);
+  assert.ok(codigo.includes(`60${String(CIDADE_DO_PIX.length).padStart(2, "0")}${CIDADE_DO_PIX}`));
+  const semCrc = codigo.slice(0, -4);
+  assert.ok(semCrc.endsWith("6304"));
+  assert.equal(codigo.slice(-4), crcDoPix(semCrc));
+  // Centavos: 78,39 sai com ponto e duas casas.
+  assert.ok(
+    codigoPixCopiaECola({ chave: "52998224725", valor: 78.39 }).includes("540578.39")
+  );
+});
+
+test("nome com acento e emoji vira ASCII; sem nome vai o rotulo do padrao", () => {
+  const codigo = codigoPixCopiaECola({ chave: "a@b.co", valor: 10, nome: "Letícia 🌸" });
+  assert.ok(codigo.includes("5907Leticia"), codigo);
+  const longo = codigoPixCopiaECola({ chave: "a@b.co", nome: "Maria Aparecida dos Santos Oliveira" });
+  assert.ok(longo.includes("5925Maria Aparecida dos Sant"), longo);
+  const semNome = codigoPixCopiaECola({ chave: "a@b.co", nome: "  " });
+  assert.ok(
+    semNome.includes(`59${String(NOME_DO_PIX_SEM_NOME.length).padStart(2, "0")}${NOME_DO_PIX_SEM_NOME}`)
+  );
+});
+
+test("sem chave nao ha codigo; valor zero ou invalido sai sem o campo 54", () => {
+  assert.equal(codigoPixCopiaECola({ chave: "", valor: 10 }), null);
+  assert.equal(codigoPixCopiaECola({ chave: "   ", valor: 10 }), null);
+  for (const valor of [0, -5, Number.NaN, null, undefined]) {
+    const codigo = codigoPixCopiaECola({ chave: "a@b.co", valor });
+    // O 54 fica entre o 53 e o 58: sem ele, o 58 vem colado no 53.
+    assert.ok(codigo.includes("53039865802BR"), String(valor));
   }
 });

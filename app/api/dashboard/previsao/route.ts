@@ -121,14 +121,16 @@ import {
   MAX_TRANSACOES,
   nomesDasCategorias,
 } from "@/lib/services/monthly-summary";
-import { lerEstimativasDoFechamento } from "@/lib/services/fechamento-no-resultado";
 import {
-  descricaoDaEstimativa,
-  PREFIXO_DA_ESTIMATIVA_DO_FECHAMENTO,
-} from "@/lib/fechamento-no-resultado";
+  lerEstimativasDoFechamento,
+  lerGruposQueFecham,
+} from "@/lib/services/fechamento-no-resultado";
+import { chaveDaEstimativa, descricaoDaEstimativa } from "@/lib/fechamento-no-resultado";
 
 interface LinhaPrevistaEfetiva {
   id: string;
+  /** O dono: no grupo que fecha, so a conta minha entra (ver o laco abaixo). */
+  user_id?: string | null;
   description: string | null;
   notes: string | null;
   amount: number | string;
@@ -260,7 +262,7 @@ export async function GET(request: NextRequest) {
     const { data: previstas, error: erroPrevistas } = await supabase
       .from("scheduled_transactions_effective")
       .select(
-        "id, description, notes, amount, due_date, direction, group_id, account:financial_accounts(account_type)"
+        "id, user_id, description, notes, amount, due_date, direction, group_id, account:financial_accounts(account_type)"
       )
       .eq("my_status", "pending")
       .eq("status", "pending")
@@ -308,21 +310,39 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    // O GRUPO QUE FECHA (24/10/2026), pela regra da aba Despesas
+    // (`previstasNoGrupoQueFecha`): a conta que EU lancei entra cheia, e a que
+    // outro membro lancou fica fora -- ela entra na estimativa do fechamento,
+    // logo abaixo, no dia do fechamento. Pela parte aqui e pela estimativa la
+    // ela contaria duas vezes, em dois dias.
+    //
+    // FALHAR AQUI NAO DERRUBA A PREVISAO: sem saber quais grupos fecham, toda
+    // conta de grupo segue pela minha parte, como antes.
+    let gruposQueFecham: ReadonlySet<string> = new Set();
+    if (gruposEnvolvidos.length > 0) {
+      const leitura = await lerGruposQueFecham(supabase, gruposEnvolvidos);
+      if (!leitura.ok) {
+        console.error("Previsao seguiu sem saber quais grupos fecham:", leitura.mensagem);
+      } else {
+        gruposQueFecham = leitura.ids;
+      }
+    }
+
     const paraCalculo: PrevistaParaFluxo[] = [];
 
     for (const p of linhas) {
       const lado = direcaoNoPainel(p.direction);
       if (lado === null) continue;
 
+      const doGrupoQueFecha = Boolean(p.group_id && gruposQueFecham.has(p.group_id));
+      if (doGrupoQueFecha && p.user_id !== user.id) continue;
+
       paraCalculo.push({
         id: p.id,
         description: p.description,
-        amount: parteConfiguradaDoMembro(
-          p.amount,
-          p.group_id,
-          pesosPorGrupo,
-          user.id
-        ),
+        amount: doGrupoQueFecha
+          ? Math.abs(Number(p.amount) || 0)
+          : parteConfiguradaDoMembro(p.amount, p.group_id, pesosPorGrupo, user.id),
         due_date: p.due_date,
         tipo: lado,
       });
@@ -382,7 +402,12 @@ export async function GET(request: NextRequest) {
     // A conta e a da previa da tela do grupo e a do cron
     // (`lerEstimativasDoFechamento`). Falhar nao derruba a Previsao: ela segue
     // sem a estimativa e registra o motivo, como a fatura aberta acima.
-    const estimativas = await lerEstimativasDoFechamento(supabase, user.id, hoje);
+    const estimativas = await lerEstimativasDoFechamento(
+      supabase,
+      user.id,
+      hoje,
+      janela.ate
+    );
     if (!estimativas.ok) {
       console.error("Previsao seguiu sem a estimativa do fechamento:", estimativas.mensagem);
     } else {
@@ -391,7 +416,7 @@ export async function GET(request: NextRequest) {
         paraCalculo.push({
           // Chave com prefixo, como a da fatura aberta: nao colide com o uuid
           // de nenhuma linha gravada nem com as assinaturas detectadas.
-          id: `${PREFIXO_DA_ESTIMATIVA_DO_FECHAMENTO}${e.group_id}:${e.vencimento}`,
+          id: chaveDaEstimativa(e),
           description: descricaoDaEstimativa(e),
           // Sem `parteConfiguradaDoMembro`: a estimativa JA e a minha posicao
           // no grupo, e dividi-la de novo pelo rateio a encolheria.

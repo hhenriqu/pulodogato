@@ -79,6 +79,8 @@ import { CartoesDaTela } from "@/components/movimentacoes/CartoesDaTela";
 import { PainelPraQuemPagar } from "@/components/movimentacoes/PainelPraQuemPagar";
 import { PainelQuemMePaga } from "@/components/movimentacoes/PainelQuemMePaga";
 import type { DestinoDoPagamento } from "@/lib/pra-quem-pagar";
+import type { GrupoNaLista } from "@/lib/despesas-do-grupo";
+import type { PixParaCopiar } from "@/components/movimentacoes/CopiarPix";
 import type { CreditoAReceber } from "@/lib/credito-de-grupo";
 import {
   SecaoDaTela,
@@ -196,6 +198,14 @@ interface RespostaDaTela {
    * cartao «Previsto» que esta somando o reembolso.
    */
   quem_me_paga?: CreditoAReceber | null;
+  /**
+   * AS LINHAS DE GRUPO -- "Despesas do Grupo {nome}" (24/10/2026). Ausente no
+   * corpo guardado de antes desta mudanca: a lista sai com as linhas soltas,
+   * que e a tela de antes, e nenhum numero muda.
+   */
+  grupos_na_lista?: GrupoNaLista[];
+  /** A chave Pix de quem recebe, por `user_id`, para o copia e cola. */
+  chaves_pix?: Record<string, PixParaCopiar>;
 }
 
 /** 'AAAA-MM-DD' -> 'DD/MM/AAAA', por fatia. Nunca `new Date`. */
@@ -292,6 +302,9 @@ export function ListaDeMovimentacao({
    * mas o tipo preserva a diferenca para quem vier depois.
    */
   const [quemMePaga, setQuemMePaga] = useState<CreditoAReceber | null>(null);
+  /** As linhas de grupo e as chaves Pix. `[]`/`{}`: sem elas, a lista de antes. */
+  const [gruposNaLista, setGruposNaLista] = useState<GrupoNaLista[]>([]);
+  const [chavesPix, setChavesPix] = useState<Record<string, PixParaCopiar>>({});
   const [estado, setEstado] = useState<EstadoDaLeitura | null>(null);
   const [guardadoEm, setGuardadoEm] = useState<Date | null>(null);
   const [carregando, setCarregando] = useState(true);
@@ -410,6 +423,8 @@ export function ListaDeMovimentacao({
         // `?? null` pelo motivo de `setSemVencimento` e de `setAcertos`: resposta
         // antiga do aparelho nao tem o campo.
         setQuemMePaga(leitura.dados.quem_me_paga ?? null);
+        setGruposNaLista(leitura.dados.grupos_na_lista ?? []);
+        setChavesPix(leitura.dados.chaves_pix ?? {});
       } else {
         // A leitura falhou: a lista SAI da tela. Deixar a do periodo anterior
         // seria a tela mostrando setembro com o titulo de outubro.
@@ -424,6 +439,10 @@ export function ListaDeMovimentacao({
         // uma leitura que falhou e um credito afirmado sobre o periodo ANTERIOR,
         // debaixo do titulo do novo.
         setQuemMePaga(null);
+        // Pelo MESMO motivo: um "Transferir R$ 250 para Helio" sobrevivendo a
+        // uma leitura que falhou e uma divida do periodo ANTERIOR.
+        setGruposNaLista([]);
+        setChavesPix({});
       }
 
       setCarregando(false);
@@ -832,7 +851,7 @@ export function ListaDeMovimentacao({
             `null` com a lista vazia, entao quem nao tem grupo nao ve nada.
           */}
           {tipo === "expense" && podeMostrarNumero(estado) && (
-            <PainelPraQuemPagar destinos={praQuemPagar} />
+            <PainelPraQuemPagar destinos={praQuemPagar} chavesPix={chavesPix} />
           )}
 
           {/*
@@ -1049,6 +1068,8 @@ export function ListaDeMovimentacao({
             icone={<CalendarClock className="h-4 w-4 text-warning" />}
             subtitulo={tela.oQueOPrevistoE}
             linhas={previstas}
+            grupos={gruposNaLista}
+            chavesPix={chavesPix}
             carregando={carregando}
             /*
               A FRASE DE VAZIO TEM DE CONCORDAR COM O CARTAO -- HMO-379.

@@ -1451,3 +1451,167 @@ test("sem rede o botao dos totais trava junto, e com motivo", () => {
   assert.ok(botao, [...porRotulo.keys()].join(" | "));
   assert.match(botao.titulo, /Sem rede/);
 });
+
+// =====================================================
+// "DESPESAS DO GRUPO {NOME}" -- a linha de grupo (24/10/2026)
+// =====================================================
+// "Deve ser exibido o total nomeado Despesas do Grupo {nome}, e um chevron que
+// mostra os custos detalhados por despesa, ou clica em cima e te leva ao grupo.
+// Abaixo, onde tem os Pagamentos ao grupo, exibe as transferencias, e um icone
+// de copia e cola que ja gera o valor e o Pix da pessoa."
+const { DetalheDoGrupo } = await import(
+  "../.tmp-secao-da-tela/components/movimentacoes/LinhaDoGrupo.js"
+);
+
+const CASA = "cccccccc-cccc-cccc-cccc-cccccccccccc";
+const HELIO = "11111111-1111-1111-1111-111111111111";
+
+/** A estimativa da Leticia: tres despesas, nada pago, fecha dia 01/11. */
+const ESTIMATIVA = {
+  chave: `estimativa-do-fechamento:${CASA}:2026-11-01`,
+  tipo: "estimativa",
+  group_id: CASA,
+  nome: "Casa",
+  direcao: "expense",
+  linhas: [`estimativa-do-fechamento:${CASA}:2026-11-01`],
+  fechamento: "2026-11-01",
+  itens: [
+    { descricao: "Aluguel", data: "2026-10-05", quem_lancou: HELIO, nome_de_quem_lancou: "Helio", valor_cheio: 2000, minha_parte: 155, prevista: true },
+    { descricao: "Internet", data: "2026-10-10", quem_lancou: HELIO, nome_de_quem_lancou: "Helio", valor_cheio: 159.9, minha_parte: 12.39, prevista: false },
+  ],
+  abatimentos: [],
+  transferencias: [],
+};
+const LINHA_DA_ESTIMATIVA = linha({
+  id: ESTIMATIVA.linhas[0],
+  gravada: false,
+  posso_editar: false,
+  descricao: "Despesas do Grupo Casa",
+  valor: 167.39,
+  data: "2026-11-01",
+});
+
+test("a estimativa sai como 'Despesas do Grupo Casa', com o link do grupo e o selo de previsto", () => {
+  const html = render({ linhas: [LINHA_DA_ESTIMATIVA, linha({})], grupos: [ESTIMATIVA] });
+  const t = texto(html);
+  assert.match(t, /Despesas do Grupo Casa/);
+  assert.match(t, /previsto até o fechamento de 01\/11/);
+  assert.match(t, /2 despesas/);
+  assert.match(html, new RegExp(`href="/dashboard/expense-groups/${CASA}"`));
+  // O chevron, fechado: o detalhe so entra no DOM quando aberto.
+  assert.match(html, /aria-expanded="false"/);
+  assert.match(html, /aria-label="Ver as despesas de Despesas do Grupo Casa"/);
+  assert.doesNotMatch(html, /data-detalhe-do-grupo/);
+  // Sem Pix antes do fechamento.
+  assert.doesNotMatch(html, /data-transferencias/);
+  // O subtotal e o contador da secao continuam sobre as linhas: nenhum numero muda.
+  assert.match(t, /\(2\)/);
+  assert.match(t, /327,29/);
+
+  // Controle: sem `grupos`, a mesma lista desenha as linhas soltas, como antes.
+  const antes = texto(render({ linhas: [LINHA_DA_ESTIMATIVA, linha({})] }));
+  assert.doesNotMatch(antes, /previsto até o fechamento/);
+});
+
+test("as contas dos outros no grupo sem fechamento viram UMA linha com a soma delas", () => {
+  const SEM = {
+    ...ESTIMATIVA,
+    chave: `grupo:${CASA}:2026-10`,
+    tipo: "sem_fechamento",
+    fechamento: null,
+    linhas: ["a", "b"],
+  };
+  const html = render({
+    linhas: [
+      linha({ id: "a", descricao: "Aluguel", valor: 155, posso_editar: false, de_grupo: true }),
+      linha({}),
+      linha({ id: "b", descricao: "Internet", valor: 12.39, posso_editar: false, de_grupo: true }),
+    ],
+    grupos: [SEM],
+  });
+  const t = texto(html);
+  assert.equal((html.match(/data-grupo-na-lista=/g) ?? []).length, 1);
+  assert.match(html, /data-valor-do-grupo="167.39"/);
+  // As duas linhas soltas sairam; a do Mercado, que nao e do grupo, ficou.
+  assert.doesNotMatch(t, /minha parte do grupo/);
+  assert.match(t, /Mercado/);
+  assert.doesNotMatch(t, /previsto até o fechamento/);
+});
+
+test("debaixo do 'Pagamento ao grupo' vem o Pix a fazer, com o copia e cola de verdade", () => {
+  const CONTA = {
+    ...ESTIMATIVA,
+    chave: "fechamento:conta",
+    tipo: "conta_do_fechamento",
+    linhas: ["conta"],
+    transferencias: [{ para_user_id: HELIO, nome: "Helio", valor: 250 }],
+  };
+  const pagamento = linha({ id: "conta", descricao: "Pagamento ao grupo Casa", valor: 250 });
+
+  const comChave = render({
+    linhas: [pagamento],
+    grupos: [CONTA],
+    chavesPix: { [HELIO]: { chave: "52998224725", tipo: "cpf" } },
+  });
+  const t = texto(comChave);
+  // O nome da linha e o da conta, e o selo diz de qual fechamento.
+  assert.match(t, /Pagamento ao grupo Casa/);
+  assert.match(t, /fechamento de 01\/11/);
+  assert.match(t, /Transferir R\$ 250,00 para Helio/);
+  assert.match(comChave, /aria-label="Copiar o Pix copia e cola para Helio"/);
+  // O que o botao copia e o BR Code: a chave crua e o valor no campo 54.
+  const codigo = /data-copia-e-cola="([^"]*)"/.exec(comChave)?.[1] ?? "";
+  assert.match(codigo, /^000201/);
+  assert.match(codigo, /br\.gov\.bcb\.pix/);
+  assert.match(codigo, /011152998224725/);
+  assert.match(codigo, /5406250\.00/);
+  assert.match(t, /registre o acerto na tela do grupo/);
+  // A linha de grupo nao tem os botoes da conta (ela se quita pelo acerto):
+  // so o chevron e o copia e cola.
+  assert.deepEqual(rotulosDeAcao(comChave), [
+    "Ver as despesas de Pagamento ao grupo Casa",
+    "Copiar o Pix copia e cola para Helio",
+  ]);
+
+  // Sem chave: o botao copia so o valor, e a linha diz por que.
+  const semChave = render({ linhas: [pagamento], grupos: [CONTA] });
+  assert.match(texto(semChave), /Helio não cadastrou chave Pix/);
+  assert.match(semChave, /data-copia-e-cola="250,00"/);
+});
+
+test("o detalhe do chevron: cada despesa com a minha parte, o abatido e o total", () => {
+  const html = renderToStaticMarkup(
+    h(DetalheDoGrupo, {
+      grupo: { ...ESTIMATIVA, abatimentos: [{ rotulo: "Você já pagou", valor: 50 }] },
+      total: 117.39,
+    })
+  );
+  const t = texto(html);
+  assert.match(t, /Aluguel 05\/10 · lançada por Helio · prevista · total R\$ 2\.000,00 R\$ 155,00/);
+  assert.match(t, /Internet 10\/10 · lançada por Helio · total R\$ 159,90 R\$ 12,39/);
+  assert.match(t, /Você já pagou − R\$ 50,00/);
+  assert.match(t, /Sua parte R\$ 117,39/);
+
+  // Do lado de quem recebe o sinal inverte: o que eu paguei soma, a minha parte
+  // desconta -- 1.700 - 1.100 = 600.
+  const aReceber = texto(
+    renderToStaticMarkup(
+      h(DetalheDoGrupo, {
+        grupo: {
+          ...ESTIMATIVA,
+          direcao: "income",
+          itens: [{ ...ESTIMATIVA.itens[0], minha_parte: 1100 }],
+          abatimentos: [
+            { rotulo: "Você já pagou", valor: 1500 },
+            { rotulo: "Contas que você lançou", valor: 200 },
+          ],
+        },
+        total: 600,
+      })
+    )
+  );
+  assert.match(aReceber, /R\$ 2\.000,00 − R\$ 1\.100,00/);
+  assert.match(aReceber, /Você já pagou R\$ 1\.500,00/);
+  assert.match(aReceber, /Contas que você lançou R\$ 200,00/);
+  assert.match(aReceber, /A receber R\$ 600,00/);
+});

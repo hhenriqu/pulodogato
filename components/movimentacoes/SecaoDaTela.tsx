@@ -96,6 +96,9 @@ import {
 } from "@/lib/acoes-da-linha";
 import { caminhoDoCartaoNoMes } from "@/lib/fatura-do-cartao";
 import { EloDaFatura } from "@/components/fatura/EloDaFatura";
+import { LinhaDoGrupo } from "@/components/movimentacoes/LinhaDoGrupo";
+import type { PixParaCopiar } from "@/components/movimentacoes/CopiarPix";
+import type { GrupoNaLista } from "@/lib/despesas-do-grupo";
 import type { LinhaDaTela } from "@/lib/telas-de-movimentacao";
 
 const moeda = (valor: number) =>
@@ -788,6 +791,8 @@ export function SecaoDaTela({
   vazio,
   aparencia,
   acoes,
+  grupos = [],
+  chavesPix = {},
 }: {
   titulo: string;
   subtitulo: string;
@@ -805,8 +810,33 @@ export function SecaoDaTela({
    * `tsc` verde. Obrigatorio, o compilador cobra a fiacao.
    */
   acoes: AcoesDaLinha;
+  /**
+   * AS LINHAS DE GRUPO -- "Despesas do Grupo {nome}" (24/10/2026).
+   *
+   * Cada uma agrega linhas desta lista pelo id: a linha do grupo e desenhada no
+   * lugar da PRIMEIRA delas, com a soma delas, e as outras saem. O subtotal e o
+   * contador continuam sobre `linhas`, entao o numero da secao nao muda -- so
+   * a forma. Opcional: sem ele a lista e a de antes.
+   */
+  grupos?: readonly GrupoNaLista[];
+  /** A chave Pix de quem recebe, para o copia e cola das transferencias. */
+  chavesPix?: Readonly<Record<string, PixParaCopiar>>;
 }) {
   const subtotal = linhas.reduce((soma, l) => soma + l.valor, 0);
+
+  // Qual linha de grupo cobre cada linha, a soma de cada uma e onde ela entra.
+  const grupoDaLinha = new Map<string, GrupoNaLista>();
+  for (const g of grupos) for (const id of g.linhas) grupoDaLinha.set(id, g);
+  const somaDoGrupo = new Map<string, number>();
+  const linhasDoGrupo = new Map<string, LinhaDaTela[]>();
+  for (const l of linhas) {
+    const g = grupoDaLinha.get(l.id);
+    if (!g) continue;
+    // Em centavos: dez partes de R$ 0,10 somadas em ponto flutuante nao dao
+    // R$ 1,00, e a linha do grupo mostraria um centavo a menos que o detalhe.
+    somaDoGrupo.set(g.chave, (somaDoGrupo.get(g.chave) ?? 0) + Math.round(l.valor * 100));
+    linhasDoGrupo.set(g.chave, [...(linhasDoGrupo.get(g.chave) ?? []), l]);
+  }
 
   /**
    * O VALOR DA FATURA ABERTA DE CADA CARTAO/MES, LIDO DA PROPRIA LISTA -- HMO-305.
@@ -856,19 +886,36 @@ export function SecaoDaTela({
           <p className="py-4 text-sm text-muted-foreground">{vazio}</p>
         ) : (
           <div className="space-y-1">
-            {linhas.map((linha) => (
-              <LinhaDaSecao
-                key={linha.id}
-                linha={linha}
-                aparencia={aparencia}
-                acoes={acoes}
-                valorDaFatura={(() => {
-                  const alvo = linha.fatura_suspeita ?? linha.elo_da_fatura;
-                  if (!alvo) return null;
-                  return faturaPorChave.get(`${alvo.accountId}:${alvo.mes}`) ?? null;
-                })()}
-              />
-            ))}
+            {linhas.map((linha) => {
+              const grupo = grupoDaLinha.get(linha.id);
+              if (grupo) {
+                const dele = linhasDoGrupo.get(grupo.chave) ?? [];
+                if (dele[0]?.id !== linha.id) return null;
+                return (
+                  <LinhaDoGrupo
+                    key={grupo.chave}
+                    grupo={grupo}
+                    valor={(somaDoGrupo.get(grupo.chave) ?? 0) / 100}
+                    descricao={dele.length === 1 ? linha.descricao : null}
+                    vencida={dele.some((l) => l.situacao === "overdue")}
+                    chavesPix={chavesPix}
+                  />
+                );
+              }
+              return (
+                <LinhaDaSecao
+                  key={linha.id}
+                  linha={linha}
+                  aparencia={aparencia}
+                  acoes={acoes}
+                  valorDaFatura={(() => {
+                    const alvo = linha.fatura_suspeita ?? linha.elo_da_fatura;
+                    if (!alvo) return null;
+                    return faturaPorChave.get(`${alvo.accountId}:${alvo.mes}`) ?? null;
+                  })()}
+                />
+              );
+            })}
           </div>
         )}
       </CardContent>
