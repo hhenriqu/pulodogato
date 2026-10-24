@@ -166,9 +166,9 @@ export async function lerCreditoDosGrupos(
   // me devem nele vira UMA conta "A receber do grupo" no dia do fechamento, e
   // antes disso a estimativa do periodo (lib/services/fechamento-no-resultado.ts).
   // Somar o credito daqui tambem seria cobrar a mesma divida duas vezes no
-  // «Previsto» de Receitas. E a conta prevista desse grupo ja entra pela minha
-  // parte na aba Despesas (`previstasNoGrupoQueFecha`), entao nao ha reembolso
-  // a contrapor.
+  // «Previsto» de Receitas. E a conta prevista que eu lancei nesse grupo entra
+  // cheia na aba Despesas (`previstasNoGrupoQueFecha`), com a parte dos outros
+  // dentro da estimativa a receber -- nao ha reembolso por conta a contrapor.
   //
   // O filtro e pela PRESENCA do dia, como a 069 decide no banco.
   const ativos = (grupos ?? []).filter(

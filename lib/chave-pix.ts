@@ -302,3 +302,116 @@ export function tabelaDePixAusente(erro: unknown): boolean {
   const codigo = (erro as { code?: unknown }).code;
   return codigo === "42P01" || codigo === "PGRST205";
 }
+
+// ---------------------------------------------------------------------------
+// O PIX COPIA E COLA (BR Code) -- a transferencia do acerto com um toque
+// ---------------------------------------------------------------------------
+// "um icone de copia e cola que ja gera uma linha de valor e pix da pessoa pra
+// ela pagar no banco." A chave sozinha (`chaveParaCopiar`) obriga a pessoa a
+// digitar o valor no app do banco, e e no valor digitado que o acerto erra. O
+// codigo copia e cola leva os DOIS: o banco le a chave e o valor, mostra o nome
+// do dono da chave e pede so a confirmacao.
+//
+// O formato e o BR Code estatico do Banco Central (EMV QRCPS-MPM): campos
+// `ID + tamanho + valor`, o arranjo `br.gov.bcb.pix` com a chave no campo 26, o
+// valor no 54 e o CRC16 no 63. Nada aqui fala com rede ou banco.
+//
+// O NOME E A CIDADE SAO EXIGIDOS PELO PADRAO, E SO A CHAVE DECIDE O DESTINO
+// ------------------------------------------------------------------------
+// Os campos 59 (nome, ate 25) e 60 (cidade, ate 15) sao obrigatorios. O app nao
+// guarda cidade; vai `BRASIL`. O banco nao paga pelo nome nem pela cidade: ele
+// busca a chave no DICT e mostra o nome de quem e dono dela antes da
+// confirmacao. Por isso os dois sao normalizados para o que o padrao aceita
+// (sem acento, sem simbolo) em vez de recusados: um nome com emoji nao pode
+// impedir o acerto.
+
+/** O que vai no campo 60 quando o app nao sabe a cidade. */
+export const CIDADE_DO_PIX = "BRASIL";
+
+/** O que vai no campo 59 quando o nome de quem recebe nao esta legivel. */
+export const NOME_DO_PIX_SEM_NOME = "RECEBEDOR";
+
+/** Um campo EMV: ID de 2 digitos, tamanho de 2 digitos, valor. */
+function campoEmv(id: string, valor: string): string {
+  return `${id}${String(valor.length).padStart(2, "0")}${valor}`;
+}
+
+/**
+ * O texto que o padrao aceita: ASCII, sem acento, sem simbolo, cortado.
+ * `Letícia 🌸` vira `Leticia`.
+ */
+function textoDoPix(texto: string, maximo: number): string {
+  return texto
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^A-Za-z0-9 ]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maximo)
+    .trim();
+}
+
+/**
+ * CRC16/CCITT-FALSE (polinomio 0x1021, inicio 0xFFFF), em 4 hex maiusculos --
+ * o que o campo 63 exige. Calculado sobre o codigo INTEIRO, inclusive o
+ * `6304` do proprio campo.
+ */
+export function crcDoPix(texto: string): string {
+  let crc = 0xffff;
+  for (let i = 0; i < texto.length; i++) {
+    crc ^= texto.charCodeAt(i) << 8;
+    for (let b = 0; b < 8; b++) {
+      crc = crc & 0x8000 ? ((crc << 1) ^ 0x1021) & 0xffff : (crc << 1) & 0xffff;
+    }
+  }
+  return crc.toString(16).toUpperCase().padStart(4, "0");
+}
+
+/**
+ * O codigo Pix copia e cola de uma transferencia.
+ *
+ * `valor` em reais; sem valor positivo o campo 54 sai do codigo e o banco pede
+ * o valor na tela -- o mesmo comportamento de um QR estatico sem valor. `null`
+ * quando a chave esta vazia: um codigo sem chave nao paga ninguem, e a tela
+ * mostra que a pessoa nao cadastrou chave em vez de copiar lixo.
+ */
+export function codigoPixCopiaECola(entrada: {
+  chave: string;
+  valor?: number | null;
+  nome?: string | null;
+  cidade?: string | null;
+}): string | null {
+  const chave = chaveParaCopiar((entrada.chave ?? "").trim());
+  if (!chave) return null;
+
+  const arranjo =
+    campoEmv("00", "br.gov.bcb.pix") + campoEmv("01", chave);
+  // O campo 26 inteiro cabe em 99: o arranjo tem 18 e a chave mais longa (a
+  // aleatoria, 36; o email, ate 77) cabe no que sobra. Email maior que isso nao
+  // e chave Pix valida.
+  if (arranjo.length > 99) return null;
+
+  const nome = textoDoPix(entrada.nome ?? "", 25) || NOME_DO_PIX_SEM_NOME;
+  const cidade = textoDoPix(entrada.cidade ?? "", 15) || CIDADE_DO_PIX;
+
+  const valor =
+    typeof entrada.valor === "number" &&
+    Number.isFinite(entrada.valor) &&
+    entrada.valor > 0
+      ? campoEmv("54", entrada.valor.toFixed(2))
+      : "";
+
+  const semCrc =
+    campoEmv("00", "01") +
+    campoEmv("26", arranjo) +
+    campoEmv("52", "0000") +
+    campoEmv("53", "986") +
+    valor +
+    campoEmv("58", "BR") +
+    campoEmv("59", nome) +
+    campoEmv("60", cidade) +
+    campoEmv("62", campoEmv("05", "***")) +
+    "6304";
+
+  return semCrc + crcDoPix(semCrc);
+}

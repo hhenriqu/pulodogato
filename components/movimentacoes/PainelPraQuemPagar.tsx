@@ -53,6 +53,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { formatCurrency } from "@/lib/utils";
 import { LinhaDeDetalhe } from "@/components/papel-de-pao/LinhaDeDetalhe";
+import { CopiarPix, type PixParaCopiar } from "@/components/movimentacoes/CopiarPix";
 import type { DestinoDoPagamento } from "@/lib/pra-quem-pagar";
 
 /**
@@ -83,8 +84,16 @@ export const NOTA_PRA_QUEM_PAGAR =
  */
 export function PainelPraQuemPagar({
   destinos,
+  chavesPix,
 }: {
   destinos: readonly DestinoDoPagamento[];
+  /**
+   * A chave Pix de cada destinatario, por `user_id` (24/10/2026): o botao de
+   * copia e cola leva o valor e a chave. Sem o mapa o painel e o de antes,
+   * sem botao; com ele, quem nao cadastrou chave ganha o botao que copia so o
+   * valor, e a frase dizendo por que.
+   */
+  chavesPix?: Readonly<Record<string, PixParaCopiar>>;
 }) {
   if (destinos.length === 0) return null;
 
@@ -106,6 +115,7 @@ export function PainelPraQuemPagar({
               // homonimos num rotulo so.
               key={destino.user_id ?? "sem-dono"}
               destino={destino}
+              chavesPix={chavesPix}
             />
           ))}
         </div>
@@ -123,7 +133,13 @@ export function PainelPraQuemPagar({
  * painel ("abrir as contas nao e pedir para abrir o salario"). Fechado por
  * padrao.
  */
-function Destinatario({ destino }: { destino: DestinoDoPagamento }) {
+function Destinatario({
+  destino,
+  chavesPix,
+}: {
+  destino: DestinoDoPagamento;
+  chavesPix?: Readonly<Record<string, PixParaCopiar>>;
+}) {
   const [aberto, setAberto] = useState(false);
 
   // `""` nao e um uuid possivel, entao o balde sem dono nao pode colidir com o
@@ -198,6 +214,18 @@ function Destinatario({ destino }: { destino: DestinoDoPagamento }) {
           </Button>
         )}
       </div>
+
+      {/* O COPIA E COLA, so com o mapa de chaves e so para quem tem `user_id`:
+          o destinatario sem dono legivel nao tem chave a ler. */}
+      {chavesPix && destino.user_id && (
+        <div className="mt-1 flex justify-end">
+          <CopiarPix
+            pix={chavesPix[destino.user_id] ?? null}
+            valor={destino.total}
+            nome={destino.nome}
+          />
+        </div>
+      )}
 
       {podeAbrir && aberto && (
         <ul

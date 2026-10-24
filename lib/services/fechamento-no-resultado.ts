@@ -19,9 +19,11 @@
  * ---------------------------------------------------
  * `calcularPeriodo` (lib/services/fechamento-dos-grupos.ts) e o que a rota
  * GET .../fechamento-do-periodo mostra como previa e o que o cron grava no
- * dia. A estimativa e a mesma chamada, com o mesmo cliente do usuario e a
- * mesma RLS de membro: o painel nao pode prometer R$ 100 e o fechamento gerar
- * R$ 120.
+ * dia. A estimativa le pelas mesmas duas funcoes (`lerOQueNaoFechou`,
+ * `lerMembrosComPeso`) e faz a mesma conta (`fecharPeriodo`), com o mesmo
+ * cliente do usuario e a mesma RLS de membro: o painel nao pode prometer
+ * R$ 100 e o fechamento gerar R$ 120 sobre o mesmo dinheiro. O que ela soma a
+ * mais e a conta prevista ainda nao paga -- ver abaixo.
  *
  * O vencimento e o fim do periodo aberto -- o dia em que o fechamento vai
  * gerar a conta (decisao D3). Entao a estimativa cai no mes do PROXIMO
@@ -33,14 +35,39 @@
  * responder outros numeros (a previsao do painel, a tela de Receitas e
  * Despesas), e trocar todos eles por um 500 por causa da estimativa seria o
  * pior dos dois. Elas seguem sem ela e registram o motivo.
+ *
+ * COM AS CONTAS PREVISTAS DO GRUPO (24/10/2026)
+ * ---------------------------------------------
+ * "O lancamento no grupo de outubro deveria fechar dia 01 e aparecer pras
+ * pessoas em novembro apenas. Pode aparecer, mas como previsto." A conta que
+ * outro membro lancou no grupo que fecha saiu da aba Despesas do mes em que
+ * vence (`previstasNoGrupoQueFecha`), e e AQUI que ela volta: a conta prevista
+ * em aberto entra na estimativa como se ja estivesse paga por quem a lancou,
+ * no vencimento dela. Sem isso a Leticia nao veria nada do aluguel do grupo
+ * ate o Helio dar baixa nele.
+ *
+ * A previa da tela do grupo e o cron continuam so com o realizado: o
+ * fechamento leva o que foi pago. A diferenca entre os dois numeros e
+ * exatamente a conta prevista que ainda nao foi paga, e o detalhe da linha a
+ * marca como "prevista". Se ela nao for paga ate o fechamento, ela fica para o
+ * proximo -- e a estimativa seguinte a mostra.
+ *
+ * UM PERIODO POR FECHAMENTO, ATE O FIM DA TELA
+ * -------------------------------------------
+ * Com `ate`, a leitura segue alem do periodo aberto: os periodos seguintes so
+ * tem conta prevista (o realizado e de hoje para tras), e cada um vira a
+ * estimativa do fechamento dele. Sem isso a aba Despesas de dezembro nao
+ * mostraria nada do grupo, quando antes mostrava a minha parte de cada conta.
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
   diaDeFechamento,
+  fecharPeriodo,
   periodoQueTerminaEm,
   proximoFechamento,
+  type DespesaDoPeriodo,
 } from "@/lib/fechamento-por-periodo";
 import { addDays } from "@/lib/recurrence-detector";
 import {
@@ -50,9 +77,14 @@ import {
   type ContaDoFechamentoCrua,
   type EstimativaDoGrupo,
 } from "@/lib/fechamento-no-resultado";
+import {
+  detalheDoPeriodo,
+  PREFIXO_DA_PREVISTA_NA_ESTIMATIVA,
+} from "@/lib/despesas-do-grupo";
 import { viewDaParteAusente } from "@/lib/parte-do-grupo-realizada";
 import {
-  calcularPeriodo,
+  lerMembrosComPeso,
+  lerOQueNaoFechou,
   ultimoFimFechado,
 } from "@/lib/services/fechamento-dos-grupos";
 
@@ -61,16 +93,78 @@ export type LeituraDaEstimativa =
   | { ok: false; mensagem: string };
 
 /**
- * As estimativas do usuario, uma por grupo que fecha em que ele tem saldo.
+ * Quantos periodos uma leitura atravessa, no maximo. A tela pede um mes e o
+ * painel de previsao alguns; o teto so existe para um `ate` absurdo nao virar
+ * um laco de anos.
+ */
+export const MAXIMO_DE_PERIODOS_DA_ESTIMATIVA = 24;
+
+/** Uma conta prevista do grupo, como a estimativa a le. */
+interface PrevistaDoGrupoCrua {
+  id: string;
+  user_id: string | null;
+  description: string | null;
+  amount: number | string | null;
+  due_date: string | null;
+  direction: string | null;
+}
+
+/**
+ * As contas previstas EM ABERTO do grupo, com vencimento ate `ate`, como
+ * despesa do periodo: o pagador e quem a lancou, a data e o vencimento.
+ *
+ * `status = 'pending'` e o status do DONO, e e ele que importa: no grupo que
+ * fecha nao ha baixa por membro (069), e a conta que o dono pagou ja virou
+ * despesa realizada em `lerOQueNaoFechou`. Contar as duas seria o aluguel em
+ * dobro.
+ *
+ * So despesa: receita prevista de grupo nao e conta do grupo, pela mesma regra
+ * de `lerOQueNaoFechou`.
+ */
+async function lerPrevistasDoGrupo(
+  supabase: SupabaseClient,
+  groupId: string,
+  ate: string
+): Promise<DespesaDoPeriodo[]> {
+  const { data, error } = await supabase
+    .from("scheduled_transactions_effective")
+    .select("id, user_id, description, amount, due_date, direction")
+    .eq("group_id", groupId)
+    .eq("status", "pending")
+    .lte("due_date", ate);
+  if (error) throw new Error(`scheduled_transactions_effective: ${error.message}`);
+
+  return ((data ?? []) as PrevistaDoGrupoCrua[])
+    .filter((p) => p.direction === "expense" && p.user_id && p.due_date)
+    .map((p) => ({
+      transaction_id: `${PREFIXO_DA_PREVISTA_NA_ESTIMATIVA}${p.id}`,
+      pagador_user_id: p.user_id as string,
+      // `scheduled_transactions.amount` e positivo por CHECK; o `abs` e o mesmo
+      // de `valorDoFechamento`, para nenhuma linha antiga inverter o sinal.
+      valor: Math.round(Math.abs(Number(p.amount) || 0) * 100) / 100,
+      data: p.due_date as string,
+      descricao: p.description ?? null,
+    }));
+}
+
+/**
+ * As estimativas do usuario, uma por grupo que fecha e por fechamento em que
+ * ele tem saldo.
  *
  * So grupo ATIVO (nao arquivado) e participacao ATIVA: o arquivado nao fecha
  * mais, e quem saiu nao responde pelo periodo (RN018.4 reparte entre os
  * membros ativos).
+ *
+ * Sem `ate`, so o periodo aberto, como antes. Com `ate`, todo fechamento ate
+ * aquele dia -- o primeiro e sempre o aberto, que leva tudo o que ainda nao
+ * fechou, de qualquer data (RN018.3); os seguintes levam so o que vence dentro
+ * deles.
  */
 export async function lerEstimativasDoFechamento(
   supabase: SupabaseClient,
   userId: string,
-  hoje: string
+  hoje: string,
+  ate?: string
 ): Promise<LeituraDaEstimativa> {
   try {
     const { data: minhas, error: erroMinhas } = await supabase
@@ -109,15 +203,40 @@ export async function lerEstimativasDoFechamento(
       }
       const periodo = periodoQueTerminaEm(fim, fimAnterior);
 
-      const fechamento = await calcularPeriodo(supabase, grupo.id, periodo.fim);
-      const minha = estimativaDoMembro(fechamento, userId);
-      if (!minha) continue;
+      // Os fechamentos que a leitura cobre: o aberto, e os seguintes ate `ate`.
+      const fins: string[] = [periodo.fim];
+      while (ate && fins.length < MAXIMO_DE_PERIODOS_DA_ESTIMATIVA) {
+        const seguinte = proximoFechamento(dia, addDays(fins[fins.length - 1], 1));
+        if (seguinte > ate) break;
+        fins.push(seguinte);
+      }
 
-      estimativas.push({
-        ...minha,
-        group_id: grupo.id,
-        nome: grupo.name ?? "",
-        vencimento: periodo.fim,
+      const [{ despesas, acertos }, { membros }, previstas] = await Promise.all([
+        lerOQueNaoFechou(supabase, grupo.id),
+        lerMembrosComPeso(supabase, grupo.id),
+        lerPrevistasDoGrupo(supabase, grupo.id, fins[fins.length - 1]),
+      ]);
+      const todas = [...despesas, ...previstas];
+
+      fins.forEach((fimDoPeriodo, k) => {
+        const desde = k === 0 ? null : fins[k - 1];
+        const fechamento = fecharPeriodo({
+          despesas: desde === null ? todas : todas.filter((d) => d.data > desde),
+          // O acerto antigo e de hoje para tras: ele so pesa no periodo aberto.
+          acertos: k === 0 ? acertos : [],
+          membros,
+          fim: fimDoPeriodo,
+        });
+        const minha = estimativaDoMembro(fechamento, userId);
+        if (!minha) return;
+
+        estimativas.push({
+          ...minha,
+          group_id: grupo.id,
+          nome: grupo.name ?? "",
+          vencimento: fimDoPeriodo,
+          detalhe: detalheDoPeriodo(fechamento, userId),
+        });
       });
     }
 

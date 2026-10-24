@@ -124,6 +124,20 @@ import {
   lerEstimativasDoFechamento,
   lerGruposQueFecham,
 } from "@/lib/services/fechamento-no-resultado";
+import {
+  comOsNomes,
+  gruposDasEstimativas,
+  gruposSemFechamento,
+  type ContaDeOutroMembro,
+  type GrupoNaLista,
+} from "@/lib/despesas-do-grupo";
+import {
+  lerChavesPix,
+  lerContasDoFechamentoEmAberto,
+  lerNomesDasLinhasDeGrupo,
+  type ChavePixDaLista,
+} from "@/lib/services/despesas-do-grupo";
+import type { EstimativaDoGrupo } from "@/lib/fechamento-no-resultado";
 import { chaveDoAcerto } from "@/lib/acerto-em-lancamento";
 import {
   acertosNaAbaReceitas,
@@ -503,10 +517,11 @@ export async function GET(request: NextRequest) {
     }
 
     // O GRUPO QUE FECHA SAI DA REGRA DO PAGADOR (fase 4, RN018). A conta
-    // prevista dele entra pela parte de cada membro, inclusive a de quem a
-    // lancou, e nao ha reembolso por conta: o que cada um deve ou recebe vem do
-    // fechamento. O porque inteiro esta em `previstasNoGrupoQueFecha`
-    // (lib/fechamento-no-resultado.ts).
+    // prevista que EU lancei entra pelo valor cheio; a que outro membro lancou
+    // sai daqui e volta na estimativa do fechamento (3e), no mes do
+    // fechamento, como previsto. Nao ha reembolso por conta: o que cada um deve
+    // ou recebe vem do fechamento. O porque inteiro esta em
+    // `previstasNoGrupoQueFecha` (lib/fechamento-no-resultado.ts).
     //
     // FALHAR AQUI NAO DERRUBA A LEITURA: sem saber quais grupos fecham, toda
     // conta de grupo segue pela regra do pagador, que e a leitura de antes da
@@ -535,7 +550,7 @@ export async function GET(request: NextRequest) {
 
     const agendaPelaRegraDoPagador = [
       ...previstasPelaRegraDoPagador(demais, pesosPorGrupo, user.id),
-      ...previstasNoGrupoQueFecha(doGrupoQueFecha, pesosPorGrupo, user.id),
+      ...previstasNoGrupoQueFecha(doGrupoQueFecha, user.id),
     ];
 
     // ----------------------------------------------------------------
@@ -1014,6 +1029,7 @@ export async function GET(request: NextRequest) {
     // tipo de `linhasDaTela` as descartaria depois de cinco consultas.
     let contasDoFechamento: ReturnType<typeof contasDoFechamentoComoRealizadas> = [];
     let estimativasDoFechamento: ReturnType<typeof estimativasComoPrevistas> = [];
+    let estimativasDoPeriodo: EstimativaDoGrupo[] = [];
     let jurosPagos: ReturnType<typeof jurosPagosComoRealizados> = [];
     let faturasPagasDoPeriodo: ReturnType<typeof faturasPagasComoRealizadas> = [];
 
@@ -1090,7 +1106,15 @@ export async function GET(request: NextRequest) {
         faturasPagasDoPeriodo = faturasPagasComoRealizadas(faturas.linhas);
       }
 
-      const estimativas = await lerEstimativasDoFechamento(supabase, user.id, hoje);
+      // `periodo.ate` leva a leitura alem do periodo aberto: a tela de
+      // dezembro tem a estimativa do fechamento de dezembro, feita so das
+      // contas previstas que vencem nele.
+      const estimativas = await lerEstimativasDoFechamento(
+        supabase,
+        user.id,
+        hoje,
+        periodo.ate
+      );
 
       if (!estimativas.ok) {
         console.error(
@@ -1098,11 +1122,10 @@ export async function GET(request: NextRequest) {
           estimativas.mensagem
         );
       } else {
-        estimativasDoFechamento = estimativasComoPrevistas(
-          estimativas.estimativas.filter(
-            (e) => e.vencimento >= periodo.de && e.vencimento <= periodo.ate
-          )
+        estimativasDoPeriodo = estimativas.estimativas.filter(
+          (e) => e.vencimento >= periodo.de && e.vencimento <= periodo.ate
         );
+        estimativasDoFechamento = estimativasComoPrevistas(estimativasDoPeriodo);
       }
     }
 
@@ -1253,6 +1276,118 @@ export async function GET(request: NextRequest) {
     );
     const vencido = previstoVencido(linhas);
 
+    // ----------------------------------------------------------------
+    // 5. A DESPESA DE GRUPO NUMA LINHA SO (24/10/2026)
+    // ----------------------------------------------------------------
+    // "Despesas do Grupo {nome}", com o total, o chevron do detalhe por despesa
+    // e o link para o grupo; e, debaixo do "Pagamento ao grupo", os Pix que o
+    // quitam com o copia e cola. Tres especies de linha, e a forma e a
+    // aritmetica do detalhe estao em lib/despesas-do-grupo.ts:
+    //
+    //   * a estimativa do fechamento (3e), com o detalhe que a propria leitura
+    //     da estimativa ja montou;
+    //   * a conta do fechamento em aberto, com o que fechou nela e os Pix;
+    //   * no grupo SEM fechamento, as contas dos outros membros (as que a regra
+    //     do pagador carimbou com `pagar_para`), uma linha por grupo e mes.
+    //
+    // E SO APRESENTACAO: `linhas` e `resumo` ja estao prontos acima e nada aqui
+    // os toca. Cada linha de grupo diz quais ids da lista ela agrega, e a tela
+    // desenha a linha do grupo no lugar deles, com a soma deles.
+    //
+    // FALHAR AQUI NAO DERRUBA A LEITURA, pela razao de 3b a 3f: sem a linha do
+    // grupo a lista mostra as linhas soltas, que e a tela de antes.
+    let gruposNaLista: GrupoNaLista[] = [];
+    let chavesPix: Record<string, ChavePixDaLista> = {};
+
+    if (tela.tipo !== "transfer") {
+      const idsNaLista = new Set(linhas.map((l) => l.id));
+
+      const brutoPorId = new Map(
+        (agenda as { id?: string | null; amount?: number | string | null }[])
+          .filter((l) => l.id)
+          .map((l) => [l.id as string, Math.abs(Number(l.amount) || 0)])
+      );
+      const contasDosOutros: ContaDeOutroMembro[] = agendaPelaRegraDoPagador
+        .filter((p) => p.pagar_para !== undefined && p.group_id && p.id)
+        .map((p) => ({
+          id: p.id as string,
+          group_id: p.group_id as string,
+          descricao: p.description ?? null,
+          data: p.due_date ?? "",
+          quem_lancou: p.pagar_para ?? null,
+          valor_cheio: brutoPorId.get(p.id as string) ?? Math.abs(Number(p.amount) || 0),
+          minha_parte: Math.abs(Number(p.amount) || 0),
+        }))
+        .filter((c) => idsNaLista.has(c.id));
+
+      const contasEmAberto = await lerContasDoFechamentoEmAberto(
+        supabase,
+        user.id,
+        tela.tipo,
+        periodo
+      );
+      if (!contasEmAberto.ok) {
+        console.error(
+          "A tela de movimentação seguiu sem a conta do fechamento em linha de grupo:",
+          contasEmAberto.mensagem
+        );
+      }
+
+      const semNomes = [
+        ...gruposDasEstimativas(estimativasDoPeriodo.filter((e) => e.tipo === tela.tipo)),
+        ...(contasEmAberto.ok ? contasEmAberto.grupos : []),
+      ];
+
+      const pessoas = new Set<string>();
+      const grupos = new Set<string>();
+      for (const g of semNomes) {
+        grupos.add(g.group_id);
+        for (const i of g.itens) if (i.quem_lancou) pessoas.add(i.quem_lancou);
+        for (const t of g.transferencias) pessoas.add(t.para_user_id);
+      }
+      for (const c of contasDosOutros) {
+        grupos.add(c.group_id);
+        if (c.quem_lancou) pessoas.add(c.quem_lancou);
+      }
+
+      try {
+        const { nomes, nomesDosGrupos } = await lerNomesDasLinhasDeGrupo(
+          supabase,
+          Array.from(pessoas),
+          Array.from(grupos)
+        );
+
+        gruposNaLista = [
+          ...semNomes.map((g) => ({
+            ...g,
+            nome: g.nome ?? nomesDosGrupos.get(g.group_id) ?? null,
+            itens: comOsNomes(g.itens, nomes),
+            transferencias: g.transferencias.map((t) => ({
+              ...t,
+              nome: t.nome ?? nomes.get(t.para_user_id) ?? null,
+            })),
+          })),
+          ...gruposSemFechamento(contasDosOutros, nomesDosGrupos, nomes),
+        ]
+          // So o que a lista tem: a linha de grupo sem linha nenhuma por baixo
+          // nao teria onde aparecer, e um valor que ela nao soma.
+          .map((g) => ({ ...g, linhas: g.linhas.filter((id) => idsNaLista.has(id)) }))
+          .filter((g) => g.linhas.length > 0);
+
+        // A chave Pix de quem recebe: os Pix da conta do fechamento e os
+        // destinatarios do painel "Pra quem pagar" (3e).
+        const recebedores = new Set<string>();
+        for (const g of gruposNaLista) {
+          for (const t of g.transferencias) recebedores.add(t.para_user_id);
+        }
+        for (const d of destinos) if (d.user_id) recebedores.add(d.user_id);
+        chavesPix = await lerChavesPix(supabase, Array.from(recebedores));
+      } catch (erro) {
+        console.error("A tela de movimentação seguiu sem as linhas de grupo:", erro);
+        gruposNaLista = [];
+      }
+    }
+
     return NextResponse.json({
       success: true,
       tipo: tela.tipo,
@@ -1316,6 +1451,19 @@ export async function GET(request: NextRequest) {
        * R$ 508,42.
        */
       quem_me_paga: creditoDosGrupos,
+      /**
+       * AS LINHAS DE GRUPO -- "Despesas do Grupo {nome}" (24/10/2026). `[]` em
+       * Transferencias. Cada uma diz quais `linhas` ela agrega; o valor dela e a
+       * soma dessas linhas, que ja estao em `resumo`. Ver
+       * lib/despesas-do-grupo.ts.
+       */
+      grupos_na_lista: gruposNaLista,
+      /**
+       * A chave Pix crua de quem recebe, por `user_id`, para o copia e cola das
+       * transferencias e do painel "Pra quem pagar". Ausente = a pessoa nao
+       * cadastrou, ou a RLS de `user_pix_keys` nao a libera.
+       */
+      chaves_pix: chavesPix,
     });
   } catch (error) {
     console.error("Erro na tela de movimentação:", error);

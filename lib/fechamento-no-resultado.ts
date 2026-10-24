@@ -18,19 +18,16 @@
  *     formato das linhas previstas.
  *
  * E a conta prevista DO GRUPO que fecha (o aluguel que um membro lanca para
- * todos) passa a entrar pela parte de cada um, inclusive na de quem a lancou
- * (`previstasNoGrupoQueFecha`).
+ * todos) fica so com quem a lancou, pelo valor cheio; para os outros ela entra
+ * na estimativa do fechamento (`previstasNoGrupoQueFecha`).
  *
  * Funcoes puras, sem I/O. Quem le o banco e
  * lib/services/fechamento-no-resultado.ts e as rotas.
  */
 
 import type { FechamentoDoPeriodo } from "@/lib/fechamento-por-periodo";
-import {
-  parteConfiguradaDoMembro,
-  type ParticipantesPorGrupo,
-} from "@/lib/parte-do-grupo";
 import type { LinhaDaLista } from "@/lib/parte-de-grupo-na-lista";
+import type { AbatimentoDoGrupo, ItemDoGrupoNaLista } from "@/lib/despesas-do-grupo";
 
 /** A view da conta do fechamento ja quitada (069). */
 export const VIEW_DA_CONTA_DO_FECHAMENTO = "group_closing_entries";
@@ -165,13 +162,23 @@ export interface EstimativaDoGrupo extends EstimativaDoMembro {
   nome: string;
   /** O dia do fechamento que vai gerar a conta: o vencimento dela (D3). */
   vencimento: string;
+  /**
+   * O que o chevron da linha abre: cada despesa com a minha parte, e o que eu
+   * ja paguei abatido (`detalheDoPeriodo`, lib/despesas-do-grupo.ts). Opcional
+   * porque a previsao do painel nao o usa.
+   */
+  detalhe?: { itens: ItemDoGrupoNaLista[]; abatimentos: AbatimentoDoGrupo[] };
 }
 
-/** O texto da linha: diz que e estimativa, e de qual grupo. */
+/**
+ * O texto da linha: "Despesas do Grupo Casa", o nome que o Helio pediu. Que e
+ * PREVISTO a linha diz pelo lugar (so o Previsto a recebe) e pelo selo da tela
+ * ("previsto até o fechamento de 01/11", `seloDoGrupo`).
+ */
 export function descricaoDaEstimativa(e: Pick<EstimativaDoGrupo, "tipo" | "nome">): string {
   return e.tipo === "expense"
-    ? `Estimativa: pagamento ao grupo ${e.nome}`
-    : `Estimativa: a receber do grupo ${e.nome}`;
+    ? `Despesas do Grupo ${e.nome}`
+    : `A receber do Grupo ${e.nome}`;
 }
 
 /**
@@ -199,6 +206,16 @@ export interface EstimativaComoPrevista {
   group_id: null;
 }
 
+/**
+ * A chave da linha da estimativa: `estimativa-do-fechamento:<grupo>:<dia>`. A
+ * tela de Receitas e Despesas a usa como id da linha (`notes`), a previsao do
+ * painel como id do item, e a linha do grupo (lib/despesas-do-grupo.ts) para
+ * achar a linha que ela agrega -- uma funcao so, para as tres nao divergirem.
+ */
+export function chaveDaEstimativa(e: Pick<EstimativaDoGrupo, "group_id" | "vencimento">): string {
+  return `${PREFIXO_DA_ESTIMATIVA_DO_FECHAMENTO}${e.group_id}:${e.vencimento}`;
+}
+
 export function estimativasComoPrevistas(
   estimativas: readonly EstimativaDoGrupo[]
 ): EstimativaComoPrevista[] {
@@ -210,7 +227,7 @@ export function estimativasComoPrevistas(
     my_status: "pending",
     my_effective_status: "pending",
     direction: e.tipo,
-    notes: `${PREFIXO_DA_ESTIMATIVA_DO_FECHAMENTO}${e.group_id}:${e.vencimento}`,
+    notes: chaveDaEstimativa(e),
     recurring_rule_id: null,
     group_id: null,
   }));
@@ -220,6 +237,8 @@ export function estimativasComoPrevistas(
 export interface PrevistaDaAgenda {
   amount: number | string | null;
   group_id?: string | null;
+  /** O dono da conta. Sem ele a linha nao e minha. */
+  user_id?: string | null;
 }
 
 /**
@@ -242,21 +261,24 @@ export function separarPeloFechamento<T extends PrevistaDaAgenda>(
 }
 
 /**
- * A conta prevista do grupo que fecha, pela MINHA PARTE -- inclusive quando
- * fui eu que a lancei.
+ * A conta prevista do grupo que fecha: a MINHA pelo valor cheio, a dos outros
+ * fora (24/10/2026).
  *
- * E aqui que o grupo que fecha sai da regra do pagador. Naquela regra quem
- * fronta a conta a ve CHEIA em Despesas, e o que os outros devem volta como
- * reembolso previsto em Receitas (`lerCreditoDosGrupos`). No grupo que fecha
- * nao ha reembolso por conta: o que cada um deve ou tem a receber sai do
- * fechamento do periodo, como UMA conta por membro (RN017). Contar a conta
- * cheia aqui sem o reembolso inflaria o Previsto de Despesas de quem a lancou;
- * contar os dois seria o reembolso duas vezes quando o fechamento vier.
+ * "O lancamento no grupo de outubro deveria fechar dia 01 e aparecer pras
+ * pessoas em novembro apenas. Pode aparecer mas como previsto, e bem claro que
+ * e o previsto." O aluguel que o Helio lancou com vencimento em outubro nao e
+ * uma conta da Leticia em outubro: o que ela deve do grupo vira UMA conta no
+ * dia do fechamento (RN017, D3). Ate la ele aparece para ela so dentro da
+ * estimativa daquele fechamento, no mes dele, como previsto -- e e
+ * `lerEstimativasDoFechamento` que o leva para la, com o detalhe por despesa.
+ * Ficar tambem aqui, pela parte dela, era a mesma divida duas vezes, em dois
+ * meses (foram os R$ 78,39 que a Leticia viu em outubro numa conta nova).
  *
- * Entao a conta entra pela parte de cada um, que e o que ela vai pesar no
- * Resultado dele depois do fechamento (RN018.10). Quem pagar vai ver o valor
- * cheio no realizado e a diferenca como estimativa a receber -- as duas coisas
- * ja tem leitura propria.
+ * A MINHA CONTA FICA PELO VALOR CHEIO, que e o que sai da minha conta no dia em
+ * que eu a pagar. O que os outros me devem dela entra na estimativa "A receber
+ * do Grupo", em Receitas, no mes do fechamento -- a estimativa conta a conta
+ * prevista como paga por quem a lancou. Contar so a minha parte aqui e a
+ * estimativa la tiraria a parte dos outros duas vezes.
  *
  * SEM `pagar_para`, e ausente e nao nulo: neste grupo ninguem paga a parte
  * para quem lancou a conta, paga para o grupo no fechamento. Com o dono ali a
@@ -267,15 +289,12 @@ export function separarPeloFechamento<T extends PrevistaDaAgenda>(
  */
 export function previstasNoGrupoQueFecha<T extends PrevistaDaAgenda>(
   previstas: readonly T[],
-  pesosPorGrupo: ParticipantesPorGrupo,
   meuUserId: string | null | undefined
 ): (T & { pagar_para?: undefined })[] {
-  return previstas.map((p) => ({
-    ...p,
-    amount: Math.abs(
-      parteConfiguradaDoMembro(p.amount ?? 0, p.group_id, pesosPorGrupo, meuUserId)
-    ),
-  }));
+  if (!meuUserId) return [];
+  return previstas
+    .filter((p) => p.user_id === meuUserId)
+    .map((p) => ({ ...p, amount: Math.abs(Number(p.amount) || 0) }));
 }
 
 /**

@@ -651,6 +651,19 @@ const PainelQuemMePaga = (props) =>
     : null;
 
 /**
+ * A LINHA DE GRUPO ("Despesas do Grupo {nome}", 24/10/2026): MARCADOR.
+ *
+ * Mesmo motivo dos dois paineis acima: ela nao e assunto desta suite (a
+ * marcacao, o selo de previsto e o copia e cola sao medidos em
+ * \`npm run test:secao-da-tela\`, que renderiza o componente DE VERDADE), e
+ * existe aqui porque \`SecaoDaTela\` passou a importa-la. A secao so a monta
+ * quando a resposta traz \`grupos_na_lista\`, e os corpos desta suite nao trazem
+ * -- entao o marcador nunca aparece, como a producao tambem nao desenharia nada.
+ */
+const LinhaDoGrupo = () =>
+  React.createElement("div", null, "ESBOCO-LINHA-DO-GRUPO");
+
+/**
  * O DIALOGO DA CONTA PAGADORA (HMO-310): REGISTRADOR, e nao marcador de texto.
  *
  * Ele e \`@radix-ui/react-dialog\` + \`sonner\` + \`@/components/ui/select\`, e nada

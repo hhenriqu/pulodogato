@@ -298,6 +298,13 @@ const Link = () => React.createElement("span", null, "ESBOCO-LINK");
 const EloDaFatura = () => React.createElement("span", null, "ESBOCO-ELO");
 const caminhoDoCartaoNoMes = (c, m) => "ESBOCO-CAMINHO:" + c + ":" + m;
 
+/**
+ * O copia e cola do Pix (24/10/2026): o painel so o monta quando recebe
+ * \`chavesPix\`, e esta pagina nao passa -- o botao e medido em
+ * \`npm run test:secao-da-tela\`, com o BR Code de verdade.
+ */
+const CopiarPix = () => React.createElement("span", null, "ESBOCO-PIX");
+
 // --- o rotulo, CALCULADO POR PRODUCAO ---------------------------------------
 ${FONTE_DO_ROTULO}
 

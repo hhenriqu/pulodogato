@@ -25,6 +25,7 @@
 | 2.4 | 23/10/2026 | Fase 5, segunda parte: MyBank (RN021, com RN021.6 nova). Só os juros entram no Resultado, e o empréstimo a si mesmo sai de Despesas | Helio (decisões D1 a D5) |
 | 2.5 | 24/10/2026 | Fase 6: o cartão pela fatura (RN017.3 e RN017.4). A fatura paga conta no mês do vencimento, pelo total das compras, e a compra e o estorno no cartão saem do Resultado. Conclui o modelo novo | Helio (decisões D1 a D5) |
 | 2.6 | 24/10/2026 | RN004.4 nova: o cartão só recebe dinheiro pelo pagamento da fatura. A transferência avulsa ou mensal para um cartão é recusada | Helio |
+| 2.7 | 24/10/2026 | RN018.7 e RN018.13 reescritas, RN018.15 e RN019.6 novas: a conta do grupo que fecha aparece para os outros membros só na estimativa, no mês do fechamento; a aba Despesas mostra "Despesas do Grupo {nome}" com o detalhe por despesa, e os Pix do acerto com copia e cola | Helio |
 
 > **O que a versão 2.0 corrigiu.** Até aqui esta PRD descrevia um app de carteira
 > de investimentos: o problema era "investidores pessoa física", as personas eram
@@ -479,7 +480,10 @@ pagamento a pessoa e o a receber de pessoas (RN020) e os juros do MyBank
   ou o dia de fechamento vale a partir do próximo período.
 - RN018.7 Antes do fechamento, o saldo estimado do membro no período aparece
   como **previsto** no painel, a pagar ou a receber, sem gerar conta (decisão
-  D2).
+  D2). A estimativa vence no dia do fechamento e conta a conta prevista do
+  grupo ainda não paga como paga por quem a lançou, na data do vencimento.
+  Cada fechamento tem a sua estimativa, no mês dele: a conta que vence depois
+  do fechamento do mês entra na estimativa do fechamento seguinte.
 - RN018.8 O fechamento roda sozinho, por cron diário, no dia de fechamento de
   cada grupo (RN015).
 - RN018.9 Membro não conta como despesa a parte de uma conta que não pagou. O
@@ -494,12 +498,25 @@ pagamento a pessoa e o a receber de pessoas (RN020) e os juros do MyBank
 - RN018.12 Conta gerada pelo fechamento não muda de valor, de tipo nem de dono
   depois de criada. O que muda nela é só a baixa.
 - RN018.13 Conta prevista do grupo que fecha, ainda não paga, entra no previsto
-  de cada membro pela parte dele, inclusive no de quem a lançou. Não há
-  reembolso previsto nem "Paguei minha parte" nesse grupo: o que cada um deve
-  sai do fechamento. Quando alguém paga a conta, ela sai do previsto de todos.
+  de quem a lançou pelo valor inteiro, no mês do vencimento dela. Para os
+  outros membros ela não aparece no mês do vencimento: entra na estimativa do
+  fechamento (RN018.7), no mês do fechamento, como previsto. Do lado de quem a
+  lançou, a parte dos outros entra na estimativa a receber. Não há reembolso
+  previsto nem "Paguei minha parte" nesse grupo: o que cada um deve sai do
+  fechamento.
 - RN018.14 Só o grupo com dia de fechamento segue esta regra. O grupo sem dia
   de fechamento continua pelo rateio de cada lançamento (RN007), e tirar o dia
   de fechamento não devolve ao rateio o que já entrou num fechamento.
+- RN018.15 Na aba Despesas, a conta de grupo que outro membro lançou aparece
+  numa linha só por grupo, **"Despesas do Grupo {nome}"**, com o total. O
+  chevron abre o detalhe: cada despesa com a data, quem lançou, o valor cheio
+  e a minha parte, e o que eu já paguei abatido; o detalhe soma o total. O
+  nome leva à tela do grupo. No grupo que fecha, a linha é a estimativa
+  (RN018.7), com o selo "previsto até o fechamento de DD/MM", e depois do
+  fechamento é o "Pagamento ao grupo", com o mesmo detalhe. No grupo sem dia
+  de fechamento, é uma linha por grupo e por mês, pela minha parte de cada
+  conta. Os totais da aba não mudam: a linha do grupo é a soma das linhas que
+  ela junta.
 
 Exemplo: grupo Casa, % de 50/30/20, R$ 2.000 de contas no período.
 
@@ -525,6 +542,13 @@ O Resultado de cada um fecha na responsabilidade, e a soma dá os R$ 2.000.
 - RN019.4 Acerto parcial quita o valor acertado, e o resto continua em aberto.
 - RN019.5 No grupo, o acerto é entre dois membros: quem deve paga a quem tem a
   receber. A tela sugere os pares, como o fechamento mensal de hoje (HMO-245).
+- RN019.6 Debaixo do "Pagamento ao grupo" em aberto, a aba Despesas mostra os
+  Pix que o quitam, que são os pares da RN019.5 em que eu pago: "Transferir
+  R$ 250,00 para Helio". O botão ao lado copia o Pix copia e cola (BR Code)
+  com a chave de quem recebe e o valor, para colar no app do banco. Sem chave
+  cadastrada, o botão copia só o valor e a linha diz que a pessoa não
+  cadastrou chave Pix. O acerto continua sendo registrado na tela do grupo. O
+  painel "Pra quem pagar" do grupo sem dia de fechamento ganha o mesmo botão.
 
 ### RN020 — Divisão com pessoa ✅ **(banco)** — fase 5
 
