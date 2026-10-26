@@ -521,8 +521,10 @@
     "index_percentage",
     "maturity_date",
     "name",
+    "sector",
     "spread_annual",
     "symbol",
+    "target_weight",
     "type",
     "updated_at",
     "user_id"

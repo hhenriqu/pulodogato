@@ -196,6 +196,16 @@ Bruto, descontos em folha e líquido — o lançamento gerado é o **líquido**.
 para compor o patrimônio. Sem cotação automática e sem cálculo de rentabilidade
 consolidada.
 
+**Rebalanceamento** (migration 073): o usuário dá um **peso** a cada ativo e,
+se quiser, um **setor**. O % ideal é o peso dividido pela soma dos pesos; o
+alvo é esse % sobre a base (valor dos ativos com peso + aporte digitado); a
+falta é alvo − valor atual. Falta positiva aparece como "Aportar", senão
+"Aguardar". O aporte é dividido entre os ativos abaixo do alvo na proporção da
+falta, em cotas inteiras. Peso vazio deixa o ativo fora da conta; peso 0 quer
+dizer zerar. Uma calculadora opcional (critérios de empresa ou de FII, de 0 a
+10, ponderados) sugere o peso. Os pesos são do usuário: a tela não usa
+vocabulário de recomendação.
+
 ### PWA e offline ✅
 
 Instalável; leitura offline com carimbo de quando o dado foi servido; fila de
