@@ -56,6 +56,7 @@ import {
   type ValoresDoAtivo,
 } from "@/components/investments/ModalDeCadastroDeAtivo";
 import { CarteiraPorConta } from "@/components/investments/CarteiraPorConta";
+import { RebalanceamentoDaCarteira } from "@/components/investments/RebalanceamentoDaCarteira";
 import { comporCarteiraPorConta } from "@/lib/carteira-na-tela";
 import type { LimitesDosCrivos } from "@/lib/crivos";
 import {
@@ -711,6 +712,13 @@ export default function InvestmentsPage() {
             setMovimentacaoAberta(true);
           }}
         />
+
+        {/* O REBALANCEAMENTO, na conta da planilha do Helio: peso por ativo,
+            aporte do mes, e quanto falta em cada um. Le peso e setor de rota
+            propria (a 073 pode nao estar colada) e a posicao desta carteira,
+            para o "Tenho" fechar com a tabela de cima. Devolve `null` sem
+            ativo. */}
+        <RebalanceamentoDaCarteira ativos={ativos} posicoes={posicoes} />
 
         {/* ONDE CADA ATIVO ESTA (HMO-438). Devolve `null` com a carteira vazia.
             Fica ACIMA do card de renda fixa de proposito: este responde "onde
