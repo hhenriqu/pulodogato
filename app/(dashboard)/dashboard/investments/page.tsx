@@ -585,8 +585,9 @@ export default function InvestmentsPage() {
               Investimentos
             </h1>
             <p className="text-muted-foreground">
-              Carteira lançada por você. Os preços atuais são os que você
-              informar — não há cotação automática.
+              Carteira lançada por você. Ações e FIIs têm o preço atualizado
+              todo dia útil depois do fechamento da bolsa; os demais você
+              informa.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -751,8 +752,9 @@ export default function InvestmentsPage() {
           <CardHeader>
             <CardTitle>Ativos cadastrados</CardTitle>
             <CardDescription>
-              O preço atual é informado por você. A data ao lado é de quando você
-              informou.
+              Ações e FIIs são cotados automaticamente; você pode corrigir o
+              preço de qualquer ativo. A data ao lado é de quando o preço foi
+              apurado.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">

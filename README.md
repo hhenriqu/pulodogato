@@ -90,6 +90,7 @@ As variáveis que o app lê:
 | `CRON_SECRET` | autentica as rotas de cron |
 | `NEXT_PUBLIC_VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | push |
 | `NEXT_PUBLIC_URL` | links absolutos em e-mail e push |
+| `BRAPI_TOKEN` | só o cron de cotação da carteira (`/api/cron/cotacoes`) |
 
 As duas primeiras são **obrigatórias já no build**: `utils/supabase/env.ts`
 valida que existem, que a URL é válida e que não são o valor de exemplo — e
