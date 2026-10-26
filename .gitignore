@@ -156,6 +156,8 @@ next-env.d.ts
 /.tmp-investments/
 # saida do `npm run test:rebalanceamento`
 /.tmp-rebalanceamento/
+# saida do `npm run test:cotacao-brapi`
+/.tmp-cotacao-brapi/
 
 # saida das duas suites da HMO-166 (tsc avulso; a de campos com reescrita de alias)
 /.tmp-contas/

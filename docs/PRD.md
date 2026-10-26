@@ -193,8 +193,13 @@ Bruto, descontos em folha e líquido — o lançamento gerado é o **líquido**.
 ### Investimentos 🚧
 
 `investment_assets` e `investment_transactions`: registro de ativos e operações
-para compor o patrimônio. Sem cotação automática e sem cálculo de rentabilidade
-consolidada.
+para compor o patrimônio. Sem cálculo de rentabilidade consolidada.
+
+**Cotação** (migration 074): ações e FIIs em BRL têm o preço atualizado por um
+cron diário (dias úteis, depois do fechamento da B3) pela brapi, no plano
+gratuito (um ticker por chamada, atraso de ~30 min). Renda fixa e ativos
+internacionais continuam com preço informado pelo usuário. Falha da fonte nunca
+apaga preço: o ativo fica com o último preço e a data dele.
 
 **Rebalanceamento** (migration 073): o usuário dá um **peso** a cada ativo e,
 se quiser, um **setor**. O % ideal é o peso dividido pela soma dos pesos; o
