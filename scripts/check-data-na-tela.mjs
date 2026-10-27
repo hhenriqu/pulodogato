@@ -149,8 +149,12 @@ const FUNCOES_CERTAS = ["dataNaTela", "dataCurtaNaTela"];
  * DE 12 PARA 13: a conta do fechamento quitada na lista da Financas Pessoais
  * (fase 4, `components/movimentacoes/LinhaDaContaDoFechamento.tsx`). A data e
  * o dia do fechamento, que decide o mes do Resultado em que ela conta.
+ *
+ * DE 13 PARA 14: o vencimento de cada conta na tela da conexao (075,
+ * `app/(dashboard)/dashboard/connections/[pessoaId]/page.tsx`). Duas contas
+ * do mesmo mes, com o mesmo valor, se distinguem pelo dia em que vencem.
  */
-const CHAMADAS_ESPERADAS = 13;
+const CHAMADAS_ESPERADAS = 14;
 
 /**
  * `formatDate` de lib/utils.ts, que recebe `settled_on` e `today_rate_date`
