@@ -49,6 +49,7 @@
 // `transaction_date` NAO soma um mes a fatura, e a diferenca e silenciosa.
 // ---------------------------------------------------------------------------
 
+import { conferirDivisao } from "@/lib/conta-da-conexao";
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import {
@@ -348,6 +349,21 @@ export async function POST(request: NextRequest) {
 
     const temGrupo = Boolean(group_id);
 
+    // A DIVISAO COM CONEXAO NA COMPRA PARCELADA (075, RN020.8). Cada parcela e
+    // um lancamento, entao a parte vira um `expense_splits` por parcela, e a
+    // 070 da a cada uma o "A receber de" e o "Pagamento a" no mes dela. Ate
+    // aqui a parte de pessoa morria nesta rota sem erro.
+    const divisao = conferirDivisao((body as { divisao?: unknown }).divisao, user.id);
+    if (!divisao.ok) {
+      return NextResponse.json({ error: divisao.erro }, { status: 400 });
+    }
+    if (divisao.partes.length > 0 && temGrupo) {
+      return NextResponse.json(
+        { error: "Dividir com uma pessoa só vale para despesa sem grupo." },
+        { status: 400 }
+      );
+    }
+
     const linhas = serie.parcelas.map((p, i) => ({
       user_id: user.id,
       service_id: service.id,
@@ -376,7 +392,7 @@ export async function POST(request: NextRequest) {
       transaction_date: datas[i],
       transaction_type: "expense" as const,
       notes: notes?.trim() || null,
-      is_shared: temGrupo,
+      is_shared: temGrupo || divisao.partes.length > 0,
       group_id: group_id || null,
       // A moeda e a cotacao vao SEMPRE juntas: a 026 tem
       // `CHECK ((currency = 'BRL') = (exchange_rate = 1))` e a coluna nasceu com
@@ -443,6 +459,30 @@ export async function POST(request: NextRequest) {
         console.error(
           "Parcelas gravadas, mas sem amarrar a série:",
           erroDaAmarra
+        );
+      }
+    }
+
+    if (ids.length > 0 && divisao.partes.length > 0) {
+      const { error: erroDaDivisao } = await supabase.from("expense_splits").insert(
+        ids.flatMap((id: string, i: number) =>
+          divisao.partes.map((parte) => ({
+            transaction_id: id,
+            participant_id: parte.participant_id,
+            percentage: parte.percentage,
+            amount: Math.round(serie.parcelas[i].valor * parte.percentage) / 100,
+            status: "pending",
+          }))
+        )
+      );
+      // A serie acabou de nascer nesta chamada: sem a divisao ela seria a
+      // compra "so minha" que a pessoa nao pediu. Sai inteira, e a tela diz.
+      if (erroDaDivisao) {
+        console.error("Parcelas gravadas, mas a divisão não:", erroDaDivisao);
+        await supabase.from("financial_transactions").delete().in("id", ids);
+        return NextResponse.json(
+          { error: "Não foi possível dividir as parcelas com a conexão." },
+          { status: 400 }
         );
       }
     }

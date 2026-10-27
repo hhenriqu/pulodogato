@@ -56,7 +56,7 @@ BEGIN
 END $$;
 
 -- --- cenario ---------------------------------------------------------------
--- Dois usuarios com o MESMO ticker (PETR4). E esse o caso que a entrega
+-- Dois usuarios com o MESMO ticker (ITSA4). E esse o caso que a entrega
 -- otimiza: uma chamada na brapi, duas linhas escritas. O terceiro ativo e um
 -- CDB, que fica de fora da cotacao automatica (entrega 2) e serve de controle:
 -- ele tem que sair desta suite com o preco que entrou.
@@ -75,10 +75,10 @@ INSERT INTO public.investment_assets
   (id, user_id, symbol, name, type, currency, current_price, current_price_at) VALUES
   -- Nunca cotada: os dois campos nulos. E a linha do bloco 1.
   ('91910000-0000-0000-0000-0000000000a1', '91910000-0000-0000-0000-000000000001',
-   'PETR4', 'Petrobras PN', 'stock', 'BRL', NULL, NULL),
+   'ITSA4', 'Itausa PN', 'stock', 'BRL', NULL, NULL),
   -- Ja tem preco velho. E a linha do bloco 4.
   ('91910000-0000-0000-0000-0000000000a2', '91910000-0000-0000-0000-000000000002',
-   'PETR4', 'Petrobras PN', 'stock', 'BRL', 30.00, '2026-01-02 12:00:00+00'),
+   'ITSA4', 'Itausa PN', 'stock', 'BRL', 30.00, '2026-01-02 12:00:00+00'),
   -- Renda fixa: fora do escopo da entrega 1.
   ('91910000-0000-0000-0000-0000000000a3', '91910000-0000-0000-0000-000000000001',
    'CDB2028', 'CDB Banco X 2028', 'fixed_income', 'BRL', 1200.00, '2026-01-02 12:00:00+00');
@@ -88,12 +88,12 @@ SELECT pg_temp.expect('cenario montado',
     WHERE user_id IN ('91910000-0000-0000-0000-000000000001',
                       '91910000-0000-0000-0000-000000000002')), 3);
 
--- O bloco 3 filtra por SIMBOLO (e o que a rota faz), entao uma PETR4 deixada
+-- O bloco 3 filtra por SIMBOLO (e o que a rota faz), entao uma ITSA4 deixada
 -- por outra suite mudaria a contagem la e a falha apareceria no lugar errado.
--- As duas PETR4 desta suite sao as unicas do banco -- conferido aqui, onde a
+-- As duas ITSA4 desta suite sao as unicas do banco -- conferido aqui, onde a
 -- mensagem ainda diz o que de fato aconteceu.
-SELECT pg_temp.expect('PETR4 so existe nesta suite',
-  (SELECT count(*) FROM public.investment_assets WHERE symbol = 'PETR4'), 2);
+SELECT pg_temp.expect('ITSA4 so existe nesta suite',
+  (SELECT count(*) FROM public.investment_assets WHERE symbol = 'ITSA4'), 2);
 
 -- =====================================================
 -- 1. Gravar SO o preco e recusado -- nas duas direcoes
@@ -191,7 +191,7 @@ SELECT pg_temp.expect('a linha voltou a nao ter preco',
       AND current_price IS NULL), 1);
 
 -- =====================================================
--- 3. O par completo passa, para os DOIS donos de PETR4
+-- 3. O par completo passa, para os DOIS donos de ITSA4
 -- =====================================================
 -- Um UPDATE por SIMBOLO, nao por usuario: e assim que a rota escreve, e e o que
 -- torna uma chamada na brapi suficiente para N carteiras.
@@ -199,13 +199,13 @@ SELECT pg_temp.expect('a linha voltou a nao ter preco',
 UPDATE public.investment_assets
    SET current_price = 38.42,
        current_price_at = '2026-09-30 21:00:00+00'
- WHERE symbol = 'PETR4'
+ WHERE symbol = 'ITSA4'
    AND currency = 'BRL'
    AND type IN ('stock', 'fii');
 
-SELECT pg_temp.expect('as duas linhas de PETR4 receberam o par completo',
+SELECT pg_temp.expect('as duas linhas de ITSA4 receberam o par completo',
   (SELECT count(*) FROM public.investment_assets
-    WHERE symbol = 'PETR4'
+    WHERE symbol = 'ITSA4'
       AND current_price = 38.42
       AND current_price_at = '2026-09-30 21:00:00+00'), 2);
 

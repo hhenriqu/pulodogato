@@ -5,6 +5,8 @@
 // usuario mais as dos grupos de que ele participa. Nao repetimos o filtro aqui
 // para nao ter duas versoes da mesma regra de acesso.
 
+import { conferirDivisao } from "@/lib/conta-da-conexao";
+import { gravarPartesDaConexao } from "@/lib/services/partes-da-conexao";
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { materializarAgenda } from "@/lib/services/scheduled";
@@ -276,6 +278,20 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // A DIVISAO COM CONEXAO (075, RN020.8): o aluguel dividido com a Lais. Ate
+    // a 075 a parte de pessoa morria aqui sem erro, e a conta fixa virava so
+    // do dono. Com grupo vale o grupo (RN020.4); receita nao se divide.
+    const divisao = conferirDivisao(body.divisao, user.id);
+    if (!divisao.ok) {
+      return NextResponse.json({ error: divisao.erro }, { status: 400 });
+    }
+    if (divisao.partes.length > 0 && (group_id || transaction_type !== "expense")) {
+      return NextResponse.json(
+        { error: "Dividir com uma pessoa só vale para despesa sem grupo." },
+        { status: 400 }
+      );
+    }
+
     const { data: rule, error } = await supabase
       .from("recurring_rules")
       .insert({
@@ -314,6 +330,20 @@ export async function POST(request: NextRequest) {
         { error: "Não foi possível criar o gasto fixo" },
         { status: 500 }
       );
+    }
+
+    // A parte vai ANTES da agenda: cada ocorrencia que a agenda criar herda a
+    // parte no INSERT (075). Sem a parte, a regra sairia "so minha" -- entao a
+    // regra sai junto, e a tela diz por que.
+    const recusaDaDivisao = await gravarPartesDaConexao(
+      supabase,
+      "recurring_rule_splits",
+      rule.id,
+      divisao.partes
+    );
+    if (recusaDaDivisao) {
+      await supabase.from("recurring_rules").delete().eq("id", rule.id);
+      return NextResponse.json({ error: recusaDaDivisao }, { status: 400 });
     }
 
     // Já deixa os próximos vencimentos na agenda: cadastrar um gasto fixo e não

@@ -265,6 +265,11 @@ export const PLANO_DE_RESET: PassoDeReset[] = [
         motivo: "conta de uma divisão com pessoa",
       },
       {
+        coluna: "scheduled_split_id",
+        quando: "preenchida",
+        motivo: "conta de uma conta dividida com pessoa",
+      },
+      {
         coluna: "notes",
         quando: "comeca_com",
         prefixo: "mybank:",
