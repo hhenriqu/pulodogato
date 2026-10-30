@@ -42,6 +42,7 @@ import {
   datasDaTransacao,
   diaDeVencimentoValido,
   mesDaFaturaValido,
+  mesDaFaturaSugerido,
   datasDasParcelasNoCartao,
   serieDeParcelas,
   hojeISO,
@@ -1629,6 +1630,37 @@ test("fatura preenchida FORA da compra no cartao e recusada", () => {
     ),
     { ok: true }
   );
+});
+
+test("marcar Fixa num gasto no cartao tira a fatura sugerida e o Salvar passa", () => {
+  // O defeito: o formulario escrevia a fatura sugerida com `natureza: "card"` e
+  // nunca a apagava. Todo caminho ate "Fixa (todo mes)" passa pela compra no
+  // cartao, entao a sugestao ia junto para `card_fixed` e a recusa acima
+  // barrava TODA conta fixa no cartao.
+  assert.equal(mesDaFaturaSugerido("card", "2026-11"), "2026-11");
+  for (const natureza of ["card_fixed", "fixed", "one_off"]) {
+    assert.equal(mesDaFaturaSugerido(natureza, "2026-11"), "", natureza);
+  }
+
+  // A sequencia da tela: compra no cartao com a sugestao, marca Fixa.
+  const naCompra = preenchido({
+    natureza: "card",
+    contaId: "cartao-1",
+    mesDaFatura: mesDaFaturaSugerido("card", "2026-11"),
+  });
+  const marcouFixa = { ...naCompra, natureza: "card_fixed", diaDeVencimento: "10" };
+  const depoisDoEfeito = {
+    ...marcouFixa,
+    mesDaFatura: mesDaFaturaSugerido(marcouFixa.natureza, "2026-11"),
+  };
+  assert.deepEqual(
+    validarLancamento("expense", depoisDoEfeito, {
+      categoria: CATEGORIA_DESPESA,
+      editando: false,
+    }),
+    { ok: true }
+  );
+  assert.equal(destinoDoLancamento("expense", depoisDoEfeito, false), "regra");
 });
 
 test("a fatura escolhida vira a ancora da serie inteira", () => {

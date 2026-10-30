@@ -88,6 +88,7 @@ import {
   destinoDoLancamento,
   ehNaturezaFixa,
   ehNaturezaNoCartao,
+  mesDaFaturaSugerido,
   naturezaDoLugar,
   parcelaDigitada,
   regraDeRecorrencia,
@@ -359,7 +360,8 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
   //
   // AS TRES GUARDAS:
   //   - `natureza !== "card"`: fora da compra no cartao nao ha o que preencher, e
-  //     `validarLancamento` RECUSA um mes preenchido ali;
+  //     `validarLancamento` RECUSA um mes preenchido ali -- por isso o efeito
+  //     APAGA a sugestao quando a natureza sai da compra (`mesDaFaturaSugerido`);
   //   - `editando`: o que esta gravado manda. Sem esta guarda, abrir para editar
   //     uma compra SEM override escreveria o padrao no estado, e o Salvar -- sem
   //     a pessoa tocar em nada -- moveria a compra de fatura;
@@ -381,11 +383,15 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
 
   useEffect(() => {
     if (editando || faturaTocada) return;
-    setValores((atual) =>
-      atual.natureza === "card" && atual.mesDaFatura !== faturaPadrao
-        ? { ...atual, mesDaFatura: faturaPadrao }
-        : atual
-    );
+    // Fora da compra a sugestao SAI do estado -- ver `mesDaFaturaSugerido`. Sem
+    // isto, marcar "Fixa" no cartao levava o mes sugerido para `card_fixed` e o
+    // Salvar era recusado sempre.
+    setValores((atual) => {
+      const sugerido = mesDaFaturaSugerido(atual.natureza, faturaPadrao);
+      return atual.mesDaFatura !== sugerido
+        ? { ...atual, mesDaFatura: sugerido }
+        : atual;
+    });
   }, [editando, faturaTocada, faturaPadrao, valores.natureza]);
 
   // ---------------------------------------------------------------------------
