@@ -891,6 +891,29 @@ export function mesDaFaturaValido(bruto: string): boolean {
   return mes >= 1 && mes <= 12;
 }
 
+/**
+ * O mes de fatura que o FORMULARIO escreve no estado enquanto a pessoa nao
+ * tocou no seletor: o padrao na compra no cartao, e vazio fora dela.
+ *
+ * O VAZIO FORA DA COMPRA E O CONSERTO DA ASSINATURA NO CARTAO. A sugestao era
+ * escrita so com `natureza === "card"` e nunca apagada. Todo caminho ate a
+ * "Fixa (todo mes)" passa pela compra -- escolher "Gasto no Cartao" ou entrar
+ * pela tela do cartao abre `card` --, entao marcar a checkbox levava a
+ * sugestao junto para `card_fixed`, e `validarLancamento` recusava com "Escolher
+ * a fatura so vale para uma compra no cartao": ninguem conseguia cadastrar uma
+ * conta fixa no cartao, por causa de um mes que a pessoa nunca escolheu.
+ *
+ * A recusa continua valendo para o mes que a pessoa ESCOLHEU (quem chama so
+ * aplica isto enquanto o seletor nao foi tocado): descartar uma escolha dela em
+ * silencio e o que aquela recusa existe para evitar.
+ */
+export function mesDaFaturaSugerido(
+  natureza: NaturezaDespesa,
+  faturaPadrao: string
+): string {
+  return natureza === "card" ? faturaPadrao : "";
+}
+
 export function valoresIniciais(): ValoresDeLancamento {
   return {
     descricao: "",
