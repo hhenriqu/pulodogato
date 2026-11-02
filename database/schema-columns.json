@@ -745,6 +745,13 @@
     "transaction_id",
     "user_id"
   ],
+  "recurring_rule_splits": [
+    "created_at",
+    "id",
+    "participant_id",
+    "percentage",
+    "recurring_rule_id"
+  ],
   "recurring_rules": [
     "account_id",
     "amount",
@@ -769,10 +776,18 @@
     "updated_at",
     "user_id"
   ],
+  "scheduled_splits": [
+    "created_at",
+    "id",
+    "participant_id",
+    "percentage",
+    "scheduled_transaction_id"
+  ],
   "scheduled_transactions": [
     "account_id",
     "amount",
     "category_id",
+    "contraparte_id",
     "created_at",
     "currency",
     "description",
@@ -785,6 +800,7 @@
     "notes",
     "paid_date",
     "recurring_rule_id",
+    "scheduled_split_id",
     "status",
     "subcategory_id",
     "transaction_id",

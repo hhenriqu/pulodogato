@@ -30,8 +30,11 @@ import {
   X,
   Clock,
   ArrowLeftRight,
+  CalendarClock,
   Shield,
 } from "lucide-react";
+import { PARAM_DA_CONEXAO } from "@/lib/conta-da-conexao";
+import { comOrigem } from "@/lib/retorno-do-lancamento";
 
 interface Profile {
   id: string;
@@ -403,17 +406,29 @@ export default function ConnectionsPage() {
                           que nao faz nada ensina o usuario a nao clicar nos
                           que fazem. No lugar deles fica a acao que a conexao
                           realmente habilita. */}
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="w-full mt-4"
-                        asChild
-                      >
-                        <Link href="/dashboard/personal-finance">
-                          <ArrowLeftRight className="h-4 w-4 mr-2" />
-                          Dividir uma despesa
-                        </Link>
-                      </Button>
+                      {/* A conexao funciona como um grupo de duas pessoas
+                          (075): o card leva ao que esta registrado entre os
+                          dois, mes a mes, e a despesa nova ja abre dividida
+                          com a pessoa. */}
+                      <div className="mt-4 grid grid-cols-2 gap-2">
+                        <Button size="sm" variant="outline" asChild>
+                          <Link href={`/dashboard/connections/${profile?.id}`}>
+                            <CalendarClock className="h-4 w-4 mr-2" />
+                            Contas
+                          </Link>
+                        </Button>
+                        <Button size="sm" variant="outline" asChild>
+                          <Link
+                            href={comOrigem(
+                              `/dashboard/movimentacoes/despesa?${PARAM_DA_CONEXAO}=${profile?.id}`,
+                              "/dashboard/connections"
+                            )}
+                          >
+                            <ArrowLeftRight className="h-4 w-4 mr-2" />
+                            Dividir
+                          </Link>
+                        </Button>
+                      </div>
                     </CardContent>
                   </Card>
                 );
