@@ -20,7 +20,15 @@
     "scripts/test-moeda.mjs usa para MOEDA_PADRAO.",
     "",
     "lib/periodo-do-painel.ts nao precisa de entrada propria: ele chega pelo",
-    "import de `faturaPadraoDoLancamento` e o resolve-aliases reescreve o `@/`."
+    "import de `faturaPadraoDoLancamento` e o resolve-aliases reescreve o `@/`.",
+    "",
+    "lib/cobranca-no-cartao.ts (24/10/2026) entra porque a cobranca no cartao",
+    "cai na fatura pela MESMA regra da compra -- ela chama",
+    "`faturaAbertaDoCartao` --, e e aqui que essa regra ja e presa ao",
+    "`card_invoice_month` do banco. lib/services/cobranca-no-cartao.ts e",
+    "lib/services/fatura-prevista.ts entram pelos dois passos que falam com o",
+    "banco (virar compra no dia, e somar como prevista na fatura aberta),",
+    "medidos contra um banco de mentira na mesma suite."
   ],
   "compilerOptions": {
     "target": "es2020",
@@ -37,6 +45,9 @@
   "include": [
     "../lib/fatura-do-cartao.ts",
     "../lib/offline-leitura.ts",
-    "../lib/lancamento.ts"
+    "../lib/lancamento.ts",
+    "../lib/cobranca-no-cartao.ts",
+    "../lib/services/cobranca-no-cartao.ts",
+    "../lib/services/fatura-prevista.ts"
   ]
 }

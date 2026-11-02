@@ -59,6 +59,7 @@ import {
 import {
   caminhoDeNovoGasto,
   caminhoDoCartao,
+  cobrancasDaFatura,
   gastosDaFatura,
   previsoesDoCartao,
   rotuloDaFatura,
@@ -272,6 +273,9 @@ export function FaturaDoCartao({
   const gastos = gastosDaFatura(fatura, conta.id);
   // `null` = a leitura daquele bloco falhou. Diferente de `[]`, que e "nenhuma".
   const previsoes = previsoesDoCartao(fatura, conta.id);
+  // As cobrancas que caem NESTA fatura antes do dia delas (24/10/2026). `null`
+  // = a leitura falhou, como acima.
+  const cobrancas = cobrancasDaFatura(fatura, conta.id);
   const rotuloDoMes = rotuloDaFatura(mes);
   const ciclo = rotuloDoCiclo(conta);
   // O total so aparece com dado atras dele E com mes para nomear: o rotulo e o
@@ -396,6 +400,25 @@ export function FaturaDoCartao({
             <p className="text-xs text-muted-foreground">
               Vence em {diaEMes(fatura.due_date)}. Entra em Despesas no mês do
               vencimento, pelo total, quando for paga.
+            </p>
+          )}
+
+          {/* O TOTAL PREVISTO (24/10/2026): o total acima mais as cobrancas
+              que ainda vao cair nesta fatura. Ao lado, e nao no lugar: o de
+              cima e o que ja foi lancado, e e ele que tem de bater com a fatura
+              do banco. So aparece quando ha cobranca prevista -- um "total
+              previsto" igual ao total em todo mes seria ruido. */}
+          {mostraTotal && cobrancas && cobrancas.length > 0 && (
+            <p className="text-sm" data-total-previsto={fatura?.total_previsto}>
+              <span className="text-muted-foreground">
+                Com as cobranças previstas:{" "}
+              </span>
+              <span className="font-semibold">
+                {formatarValor(
+                  Number(fatura?.total_previsto ?? fatura?.total ?? 0),
+                  conta.currency
+                )}
+              </span>
             </p>
           )}
         </CardContent>
@@ -724,6 +747,84 @@ export function FaturaDoCartao({
       )}
 
       {/* ------------------------------------------------------------------
+          AS COBRANCAS PREVISTAS NESTA FATURA (24/10/2026)
+
+          "Despesas fixas no cartao tem que ser possivel. basicamente ele se
+          repete em toda fatura." A cobranca cadastrada com o cartao como conta
+          cai na fatura pelo fechamento, como uma compra feita no dia dela. Ate
+          o dia ela e PREVISTA: aparece aqui, com o selo, e soma no total
+          previsto la em cima. No dia ela vira compra sozinha e passa para a
+          lista de gastos acima.
+
+          Sem botao: mudar o valor, pular o mes ou encerrar e no bloco das
+          cobrancas cadastradas, logo abaixo, com a pergunta do alcance. Dois
+          lugares para a mesma acao divergiriam no primeiro conserto.
+          ------------------------------------------------------------------ */}
+      {podeMostrarNumero(estado) && fatura && cobrancas === null && (
+        <Card>
+          <CardContent className="py-4">
+            <p className="text-sm text-muted-foreground">
+              Não foi possível conferir as cobranças previstas desta fatura
+              agora.
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {cobrancas !== null && cobrancas.length > 0 && (
+        <Card data-cobrancas-previstas={cobrancas.length}>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">
+              {cobrancas.length === 1
+                ? "1 cobrança prevista nesta fatura"
+                : `${cobrancas.length} cobranças previstas nesta fatura`}
+            </CardTitle>
+            <CardDescription>
+              Viram compra sozinhas no dia da cobrança. Até lá, somam no total
+              previsto da fatura.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="divide-y divide-border p-0">
+            {cobrancas.map((cobranca) => (
+              <div
+                key={cobranca.id}
+                className="flex items-center justify-between gap-3 px-6 py-3"
+                data-cobranca-prevista={cobranca.id}
+              >
+                <div className="min-w-0">
+                  <p className="flex items-center gap-2 truncate font-medium text-foreground">
+                    {cobranca.description}
+                    <Badge
+                      variant="outline"
+                      className="shrink-0 border-warning/30 text-warning"
+                    >
+                      prevista
+                    </Badge>
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    cobrança em {diaEMes(cobranca.due_date)}
+                    {cobranca.recurring_rule_id ? " · fixa" : ""}
+                  </p>
+                </div>
+                <p className="shrink-0 font-semibold">
+                  {podeMostrarNumero(estado) ? (
+                    formatarValor(
+                      cobranca.direction === "income"
+                        ? -Number(cobranca.amount)
+                        : Number(cobranca.amount),
+                      conta.currency
+                    )
+                  ) : (
+                    <NumeroIndisponivel />
+                  )}
+                </p>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ------------------------------------------------------------------
           AS PREVISOES PENDENTES DESTE CARTAO (HMO-227)
 
           Bloco SEPARADO das compras, e nunca somado ao total da fatura. Elas
@@ -775,10 +876,15 @@ export function FaturaDoCartao({
                 ? "1 conta prevista neste cartão"
                 : `${previsoes.length} contas previstas neste cartão`}
             </CardTitle>
+            {/* A FRASE MUDOU COM A COBRANCA NO CARTAO (24/10/2026). Ate aqui
+                ela dizia que estas linhas "nao entram no total da fatura" --
+                e era o defeito: a assinatura nao contava em lugar nenhum.
+                Agora cada uma entra na fatura do mes em que cai, e este bloco
+                e onde ela se MUDA, para todos os meses. */}
             <CardDescription>
-              Cobranças cadastradas com este cartão como conta. Elas não entram
-              no total da fatura acima — nem em Contas a Pagar, para a mesma
-              despesa não ser cobrada duas vezes.
+              Cobranças cadastradas com este cartão. Cada uma entra como
+              prevista na fatura do mês em que cai e vira compra sozinha no dia
+              da cobrança. Aqui você muda o valor, pula um mês ou encerra.
             </CardDescription>
           </CardHeader>
           <CardContent className="divide-y divide-border p-0">
@@ -792,7 +898,7 @@ export function FaturaDoCartao({
                     {previsao.description}
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    vence em {diaEMes(previsao.due_date)}
+                    cobrança em {diaEMes(previsao.due_date)}
                     {previsao.category ? ` · ${previsao.category.name}` : ""}
                   </p>
                 </div>

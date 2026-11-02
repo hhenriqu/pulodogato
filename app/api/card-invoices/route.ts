@@ -15,6 +15,11 @@ import { primeiroDiaDoMes, mesCorrente } from "@/lib/services/budget";
 import { ehFatura } from "@/lib/card-invoice";
 import { contasQueSomam } from "@/lib/contas";
 import { NOME_DA_CATEGORIA_DE_AJUSTE } from "@/lib/ajuste-de-fatura";
+import { totalPrevistoDaFatura } from "@/lib/cobranca-no-cartao";
+import {
+  cobrancasPendentesNosCartoes,
+  lancarCobrancasDoCartao,
+} from "@/lib/services/cobranca-no-cartao";
 import type {
   CardInvoice,
   CardInvoiceLine,
@@ -44,6 +49,11 @@ export async function GET(request: NextRequest) {
         { status: 400 }
       );
     }
+
+    // A COBRANCA QUE VENCEU VIRA COMPRA ANTES DE LER A FATURA (24/10/2026):
+    // esta tela e uma das primeiras leituras dela depois do dia. Nao lanca
+    // erro; ver `lancarCobrancasDoCartao`.
+    await lancarCobrancasDoCartao(supabase, user.id);
 
     let query = supabase
       .from("card_invoice_lines")
@@ -214,6 +224,41 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    // -----------------------------------------------------------------------
+    // AS COBRANCAS PREVISTAS DENTRO DA FATURA (24/10/2026)
+    // -----------------------------------------------------------------------
+    // "Despesas fixas no cartao tem que ser possivel. basicamente ele se repete
+    // em toda fatura." A cobranca cadastrada com o cartao como conta cai na
+    // fatura pelo fechamento, como uma compra no dia dela, e ANTES do dia
+    // aparece aqui como prevista, somando no total previsto.
+    //
+    // `total` CONTINUA SENDO SO O QUE FOI LANCADO: e o numero que tem de bater
+    // com a fatura do banco. O previsto vai em `total_previsto`, ao lado.
+    //
+    // A janela da consulta vai do primeiro dia do mes ANTERIOR ao ultimo do mes
+    // da fatura: uma compra so cai na fatura de M se foi feita depois do
+    // fechamento de M-1. O mes de cada uma e decidido por
+    // `mesDaFaturaDaCobranca`, e e ele que filtra.
+    //
+    // FALHAR AQUI NAO DERRUBA A FATURA. `cobrancas_previstas` fica ausente e a
+    // tela diz que nao conseguiu conferir -- "nenhuma" afirmado sobre uma
+    // leitura que nao voltou seria a fatura menor sem aviso.
+    const deMesAnterior = mesDeslocado(mes, -1);
+    const ateFimDoMes = ultimoDiaDoMes(mes);
+    const lidas = await cobrancasPendentesNosCartoes(supabase, user.id, {
+      de: deMesAnterior,
+      ate: ateFimDoMes,
+    });
+    if (lidas) {
+      for (const fatura of faturas) {
+        const doMes = lidas.cobrancas.filter(
+          (c) => c.account_id === fatura.account_id && c.invoice_month === mes
+        );
+        fatura.cobrancas_previstas = doMes;
+        fatura.total_previsto = totalPrevistoDaFatura(fatura.total, doMes);
+      }
+    }
+
     faturas.sort((a, b) => b.total - a.total);
 
     // -----------------------------------------------------------------------
@@ -291,4 +336,19 @@ export async function GET(request: NextRequest) {
     console.error("Erro na API de faturas:", error);
     return NextResponse.json({ error: "Erro interno" }, { status: 500 });
   }
+}
+
+/** 'AAAA-MM-01' -> o primeiro dia de N meses depois (N pode ser negativo). */
+function mesDeslocado(mes: string, meses: number): string {
+  const total = Number(mes.slice(0, 4)) * 12 + (Number(mes.slice(5, 7)) - 1) + meses;
+  const ano = Math.floor(total / 12);
+  return `${String(ano).padStart(4, "0")}-${String(total - ano * 12 + 1).padStart(2, "0")}-01`;
+}
+
+/** 'AAAA-MM-01' -> o ultimo dia daquele mes. */
+function ultimoDiaDoMes(mes: string): string {
+  const dia = new Date(
+    Date.UTC(Number(mes.slice(0, 4)), Number(mes.slice(5, 7)), 0)
+  ).getUTCDate();
+  return `${mes.slice(0, 7)}-${String(dia).padStart(2, "0")}`;
 }

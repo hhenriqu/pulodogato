@@ -804,6 +804,41 @@ export interface CardInvoice {
    * apoiada numa consulta que nao voltou.
    */
   scheduled_pending?: ScheduledTransaction[];
+  /**
+   * As cobrancas PENDENTES neste cartao que caem NESTA fatura (24/10/2026) --
+   * a despesa fixa no cartao antes do dia dela. Elas viram compra sozinhas no
+   * dia (`lancarCobrancasDoCartao`); ate la sao a parte prevista da fatura.
+   *
+   * Nao entram em `total`, que e o que ja foi lancado e tem de bater com a
+   * fatura do banco. Entram em `total_previsto`.
+   *
+   * `undefined` e "a leitura falhou", `[]` e "nenhuma" -- a mesma distincao de
+   * `scheduled_pending`.
+   */
+  cobrancas_previstas?: CobrancaPrevistaNaFatura[];
+  /** `total` mais as cobrancas previstas. Ausente quando elas nao foram lidas. */
+  total_previsto?: number;
+}
+
+/**
+ * Uma cobranca prevista dentro da fatura. A forma e a de `CobrancaNaFatura`
+ * (lib/cobranca-no-cartao.ts), repetida aqui porque este arquivo nao importa
+ * de `lib/`.
+ */
+export interface CobrancaPrevistaNaFatura {
+  /** O id da conta prevista. */
+  id: string;
+  account_id: string;
+  account_name: string | null;
+  description: string;
+  /** Positivo, como em `scheduled_transactions`. */
+  amount: number;
+  direction: "expense" | "income";
+  /** O dia da cobranca. */
+  due_date: string;
+  /** 'AAAA-MM-01'. */
+  invoice_month: string;
+  recurring_rule_id: string | null;
 }
 
 /**

@@ -2,6 +2,7 @@ import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { normalizarLancamento } from "@/lib/movimentacoes";
 import { avisoDaDivisaoPaga } from "@/lib/conta-da-divisao";
+import { cobrancaDaCompra, pularCobranca } from "@/lib/services/cobranca-no-cartao";
 
 export async function PATCH(
   request: NextRequest,
@@ -286,6 +287,13 @@ export async function DELETE(
     }
 
     // Remover group_transactions e splits relacionados primeiro
+    // A COMPRA QUE O APP LANCOU DE UMA COBRANCA NO CARTAO (24/10/2026). Lida
+    // ANTES do DELETE, porque o trigger da 065 apaga o elo; e pulada DEPOIS,
+    // porque antes a conta prevista ainda esta paga. Sem isto, apagar a
+    // assinatura de outubro a faria voltar na proxima leitura. Ver
+    // `cobrancaDaCompra`.
+    const cobrancaPulada = await cobrancaDaCompra(supabase, user.id, id);
+
     if (existingTransaction.group_id) {
       await supabase
         .from("group_transactions")
@@ -315,6 +323,8 @@ export async function DELETE(
         { status: 500 }
       );
     }
+
+    if (cobrancaPulada) await pularCobranca(supabase, user.id, cobrancaPulada);
 
     return NextResponse.json({
       message: "Transaction deleted successfully",

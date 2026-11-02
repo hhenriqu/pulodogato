@@ -973,3 +973,523 @@ test("a recusa de `mesDaFaturaValido` e o `null` de `rotuloDaFatura` concordam",
   assert.ok(entradas.some((e) => mesDaFaturaValido(e)));
   assert.ok(entradas.some((e) => !mesDaFaturaValido(e)));
 });
+
+// ---------------------------------------------------------------------------
+// A COBRANCA NO CARTAO (24/10/2026)
+// ---------------------------------------------------------------------------
+// "Despesas fixas no cartao tem que ser possivel. basicamente ele se repete em
+// toda fatura." A conta prevista apontada para um cartao cai na fatura como uma
+// compra feita no dia dela, e vira compra sozinha no dia. A regra e pura e
+// mora em lib/cobranca-no-cartao.ts; a escrita e a leitura tem caso proprio em
+// `test:materializacao`.
+
+const cobranca = await import("../.tmp-fatura-do-cartao/lib/cobranca-no-cartao.js");
+
+const CARTAO_DA_COBRANCA = "33333333-3333-4333-8333-333333333333";
+const prevista = (extra = {}) => ({
+  id: "aaaaaaaa-0000-4000-8000-000000000020",
+  user_id: "u1",
+  recurring_rule_id: "regra-1",
+  category_id: "cat-1",
+  subcategory_id: "sub-1",
+  account_id: CARTAO_DA_COBRANCA,
+  group_id: null,
+  description: "Streaming",
+  amount: "39.90",
+  due_date: "2026-10-20",
+  status: "pending",
+  notes: null,
+  created_at: "2026-09-01T12:00:00Z",
+  transaction_type: null,
+  group_closing_id: null,
+  expense_split_id: null,
+  ...extra,
+});
+
+test("cobranca: cai na fatura pela regra da COMPRA, no dia dela", () => {
+  // Fecha dia 5: a cobranca do dia 10 vai para a fatura seguinte, a do dia 5
+  // fica na do mes. E o exemplo da regra escrita no doc.
+  assert.equal(cobranca.mesDaFaturaDaCobranca("2026-10-10", 5), "2026-11-01");
+  assert.equal(cobranca.mesDaFaturaDaCobranca("2026-10-05", 5), "2026-10-01");
+  assert.equal(cobranca.mesDaFaturaDaCobranca("2026-12-30", 28), "2027-01-01");
+  // A mesma resposta que a compra daquele dia teria -- e a mesma funcao.
+  for (const [dia, fecha] of [["2026-03-28", 28], ["2026-03-29", 28], ["2026-02-28", 31]]) {
+    assert.equal(
+      cobranca.mesDaFaturaDaCobranca(dia, fecha),
+      `${faturaAbertaDoCartao(dia, fecha)}-01`
+    );
+  }
+});
+
+test("cobranca: cartao sem fechamento poe a cobranca na fatura do proprio mes", () => {
+  // O ramo `IS NULL` de `card_invoice_month`. O `null` de
+  // `faturaAbertaDoCartao` ("nao ha fatura em aberto a sugerir") NAO pode
+  // virar "sem fatura" aqui: a compra daquele dia cai, sim, numa fatura.
+  assert.equal(cobranca.mesDaFaturaDaCobranca("2026-10-20", null), "2026-10-01");
+  assert.equal(cobranca.mesDaFaturaDaCobranca("2026-10-20", undefined), "2026-10-01");
+  assert.equal(cobranca.mesDaFaturaDaCobranca("20/10/2026", 5), null);
+  assert.equal(cobranca.mesDaFaturaDaCobranca("2026-02-31", 5), null);
+});
+
+test("cobranca: fatura, transferencia, MyBank e as contas do grupo nao sao cobranca", () => {
+  assert.equal(cobranca.ehCobrancaNoCartao(prevista()), true, "a fixa");
+  assert.equal(
+    cobranca.ehCobrancaNoCartao(prevista({ recurring_rule_id: null })),
+    true,
+    "a avulsa, no mesmo limbo"
+  );
+  assert.equal(
+    cobranca.ehCobrancaNoCartao(prevista({ notes: `fatura:2026-10-01:${CARTAO_DA_COBRANCA}` })),
+    false
+  );
+  assert.equal(cobranca.ehCobrancaNoCartao(prevista({ transaction_type: "transfer" })), false);
+  assert.equal(
+    cobranca.ehCobrancaNoCartao(prevista({ recurring_rule: { transaction_type: "transfer" } })),
+    false,
+    "a direcao da REGRA tambem conta"
+  );
+  assert.equal(cobranca.ehCobrancaNoCartao(prevista({ notes: "mybank:p1" })), false);
+  assert.equal(cobranca.ehCobrancaNoCartao(prevista({ group_closing_id: "f1" })), false);
+  assert.equal(cobranca.ehCobrancaNoCartao(prevista({ expense_split_id: "d1" })), false);
+  assert.equal(cobranca.ehCobrancaNoCartao(prevista({ account_id: null })), false);
+});
+
+test("cobranca: a compra tem id DERIVADO da prevista, e nenhum id do banco e igual a ele", () => {
+  const id = cobranca.idDaCompraDaCobranca("AAAAAAAA-0000-4000-8000-000000000020");
+  assert.equal(id, "aaaaaaaa-0000-5000-8000-000000000020");
+  // Sempre o mesmo: e o que faz a segunda tentativa levar 23505.
+  assert.equal(cobranca.idDaCompraDaCobranca("aaaaaaaa-0000-4000-8000-000000000020"), id);
+  // Versao 5: `gen_random_uuid()` so da versao 4.
+  assert.equal(id[14], "5");
+  assert.equal(cobranca.idDaCompraDaCobranca("nao-e-uuid"), null);
+  assert.equal(cobranca.idDaCompraDaCobranca(null), null);
+
+  assert.equal(cobranca.cobrancaApagadaVoltaParaPulada(id, "aaaaaaaa-0000-4000-8000-000000000020"), true);
+  assert.equal(
+    cobranca.cobrancaApagadaVoltaParaPulada(
+      "cccccccc-0000-4000-8000-000000000001",
+      "aaaaaaaa-0000-4000-8000-000000000020"
+    ),
+    false,
+    "a compra ligada a mao (RN006.3) continua na RN006.5"
+  );
+});
+
+test("cobranca: a compra e a da baixa, com a data da COBRANCA", () => {
+  const compra = cobranca.compraDaCobranca(prevista(), "servico");
+  assert.equal(compra.id, "aaaaaaaa-0000-5000-8000-000000000020");
+  assert.equal(compra.transaction_date, "2026-10-20");
+  assert.equal(compra.expected_date, "2026-10-20");
+  assert.equal(compra.launch_date, "2026-09-01");
+  assert.equal(compra.amount, -39.9);
+  assert.equal(compra.transaction_type, "expense");
+  assert.equal(compra.subcategory_id, "sub-1");
+  assert.equal(compra.account_id, CARTAO_DA_COBRANCA);
+  assert.equal(compra.service_id, "servico");
+
+  const estorno = cobranca.compraDaCobranca(prevista({ transaction_type: "income" }), "servico");
+  assert.equal(estorno.amount, 39.9, "o estorno mensal entra positivo e abate a fatura");
+  assert.equal(cobranca.compraDaCobranca(prevista({ id: "x" }), "servico"), null);
+});
+
+test("cobranca: cada prevista com o mes da fatura dela, e o total previsto em centavos", () => {
+  const cartoes = [{ id: CARTAO_DA_COBRANCA, name: " Nubank ", closing_day: 5, due_day: 12 }];
+  const lista = cobranca.cobrancasNaFatura(
+    [
+      prevista({ id: "c2", due_date: "2026-11-20" }),
+      prevista({ id: "c1", due_date: "2026-10-03", amount: 0.1 }),
+      prevista({ id: "paga", status: "paid" }),
+      prevista({ id: "outro-cartao", account_id: "nao-e-meu" }),
+      prevista({ id: "fatura", notes: `fatura:2026-10-01:${CARTAO_DA_COBRANCA}` }),
+    ],
+    cartoes
+  );
+
+  assert.deepEqual(
+    lista.map((c) => [c.id, c.invoice_month, c.amount, c.account_name]),
+    [
+      ["c1", "2026-10-01", 0.1, "Nubank"],
+      ["c2", "2026-12-01", 39.9, "Nubank"],
+    ]
+  );
+  assert.equal(cobranca.totalPrevistoDaFatura(0.2, lista), 40.2);
+  assert.equal(
+    cobranca.totalPrevistoDaFatura(100, [{ amount: 10, direction: "income" }]),
+    90,
+    "o estorno previsto abate"
+  );
+
+  const linha = cobranca.linhaDaCobrancaNaFatura(lista[1], "2026-12-12");
+  assert.deepEqual(linha, {
+    account_id: CARTAO_DA_COBRANCA,
+    account_name: "Nubank",
+    invoice_month: "2026-12-01",
+    invoice_due_date: "2026-12-12",
+    invoice_amount: 39.9,
+  });
+});
+
+// =====================================================
+// A COBRANCA NO CARTAO: DA OCORRENCIA A COMPRA (24/10/2026)
+// =====================================================
+// A regra pura esta nos casos logo acima. Estes sao os dois passos que falam
+// com o banco, e a ocorrencia de que eles partem e a que `materializarAgenda`
+// grava quando a conta da despesa fixa e um cartao:
+//
+//   * antes do dia, ela soma na fatura aberta como PREVISTA
+//     (`faturasPrevistasDaJanela`), e por ali chega a Contas a Pagar, ao
+//     Previsto da aba Despesas e ao painel;
+//   * no dia, ela VIRA COMPRA no cartao (`lancarCobrancasDoCartao`), com a
+//     data dela, e a conta prevista fica paga.
+//
+// O que pode dar errado sem erro nenhum: a assinatura entrar DUAS vezes (a
+// compra e a prevista, ou duas compras porque o painel abre quatro rotas ao
+// mesmo tempo), entrar com a data de hoje (e cair na fatura seguinte), ou
+// voltar depois de apagada. Cada caso abaixo e um desses.
+//
+// O banco de mentira guarda as linhas de verdade e faz o que o banco faria nos
+// tres pontos que importam: a chave primaria (23505), o trigger da 065 (apagar
+// o lancamento solta a conta prevista) e a view `card_invoice_lines` (a compra
+// no cartao vira linha da fatura do mes pelo fechamento).
+// =====================================================
+
+const {
+  cobrancaDaCompra,
+  lancarCobrancasDoCartao,
+  pularCobranca,
+} = await import("../.tmp-fatura-do-cartao/lib/services/cobranca-no-cartao.js");
+const { faturasPrevistasDaJanela } = await import(
+  "../.tmp-fatura-do-cartao/lib/services/fatura-prevista.js"
+);
+const { idDaCompraDaCobranca } = cobranca;
+
+const USUARIO = "00000000-0000-0000-0000-0000000000aa";
+const CORRENTE = "11111111-1111-1111-1111-111111111111";
+const CATEGORIA = "99999999-9999-9999-9999-999999999999";
+const CARTAO = CARTAO_DA_COBRANCA;
+const HOJE = "2026-10-24";
+
+/** A regra da 006 (`card_invoice_month`), so para a view de mentira. */
+function mesDaCompra(data, fechamento) {
+  const [ano, mes, dia] = data.split("-").map(Number);
+  if (!fechamento || dia <= fechamento) return `${data.slice(0, 7)}-01`;
+  const total = ano * 12 + mes;
+  return `${Math.floor(total / 12)}-${String((total % 12) + 1).padStart(2, "0")}-01`;
+}
+
+/** `card_invoice_due_date` da 006, sem o clamp do fim do mes (nao ha dia 31 aqui). */
+function vencimentoDaFatura(mes, fechamento, vencimento) {
+  if (!vencimento) return null;
+  let [ano, m] = mes.split("-").map(Number);
+  if (fechamento && vencimento <= fechamento) {
+    m += 1;
+    if (m === 13) {
+      m = 1;
+      ano += 1;
+    }
+  }
+  return `${ano}-${String(m).padStart(2, "0")}-${String(vencimento).padStart(2, "0")}`;
+}
+
+function bancoDeMentira({ previstas = [], lancamentos = [], erroNoInsert = null } = {}) {
+  const tabelas = {
+    financial_accounts: [
+      { id: CARTAO, user_id: USUARIO, name: "Nubank", account_type: "credit_card", closing_day: 5, due_day: 12 },
+      { id: CORRENTE, user_id: USUARIO, name: "Conta", account_type: "checking", closing_day: null, due_day: null },
+    ],
+    financial_services: [{ id: "servico-financas", name: "personal_finance" }],
+    scheduled_transactions: previstas.map((p) => ({ ...p })),
+    financial_transactions: lancamentos.map((l) => ({ ...l })),
+  };
+  const inserts = [];
+
+  const view = () =>
+    tabelas.financial_transactions.flatMap((t) => {
+      const conta = tabelas.financial_accounts.find((c) => c.id === t.account_id);
+      if (conta?.account_type !== "credit_card") return [];
+      if (!["expense", "income"].includes(t.transaction_type)) return [];
+      const mes = mesDaCompra(t.transaction_date, conta.closing_day);
+      return [
+        {
+          user_id: t.user_id,
+          account_id: conta.id,
+          account_name: conta.name,
+          invoice_month: mes,
+          invoice_due_date: vencimentoDaFatura(mes, conta.closing_day, conta.due_day),
+          invoice_amount: -t.amount,
+        },
+      ];
+    });
+
+  function from(tabela) {
+    const filtros = [];
+    let modo = "select";
+    let patch = null;
+    let nova = null;
+    let uma = false;
+    const q = {
+      select: () => q,
+      eq: (c, v) => (filtros.push((l) => l[c] === v), q),
+      in: (c, vs) => (filtros.push((l) => vs.includes(l[c])), q),
+      lte: (c, v) => (filtros.push((l) => l[c] <= v), q),
+      gte: (c, v) => (filtros.push((l) => l[c] >= v), q),
+      insert: (linha) => ((modo = "insert"), (nova = linha), q),
+      update: (p) => ((modo = "update"), (patch = p), q),
+      delete: () => ((modo = "delete"), q),
+      single: () => ((uma = true), q),
+      maybeSingle: () => ((uma = true), q),
+      then: (ok, falha) => Promise.resolve().then(executar).then(ok, falha),
+    };
+    function executar() {
+      if (modo === "insert") {
+        inserts.push(nova);
+        if (erroNoInsert) return { error: erroNoInsert };
+        if (tabelas[tabela].some((l) => l.id === nova.id)) {
+          return { error: { code: "23505", message: "duplicate key" } };
+        }
+        tabelas[tabela].push({ ...nova });
+        return { error: null };
+      }
+      const base = tabela === "card_invoice_lines" ? view() : tabelas[tabela];
+      const alvo = base.filter((l) => filtros.every((f) => f(l)));
+      if (modo === "update") {
+        for (const l of alvo) Object.assign(l, patch);
+        return { error: null };
+      }
+      if (modo === "delete") {
+        for (const l of alvo) {
+          // O trigger da 065: a conta prevista quitada por este lancamento
+          // volta para pendente.
+          for (const p of tabelas.scheduled_transactions) {
+            if (p.transaction_id === l.id && p.status === "paid") {
+              Object.assign(p, { status: "pending", paid_date: null, transaction_id: null });
+            }
+          }
+          tabelas[tabela].splice(tabelas[tabela].indexOf(l), 1);
+        }
+        return { error: null };
+      }
+      const copias = alvo.map((l) => ({ ...l }));
+      return { data: uma ? copias[0] ?? null : copias, error: null };
+    }
+    return q;
+  }
+
+  return {
+    tabelas,
+    inserts,
+    from,
+    rpc: async (nome, args) => {
+      assert.equal(nome, "card_invoice_due_date");
+      return {
+        data: vencimentoDaFatura(args.p_invoice_month, args.p_closing_day, args.p_due_day),
+        error: null,
+      };
+    },
+  };
+}
+
+/** A ocorrencia de uma despesa fixa no cartao, como `materializarAgenda` a grava. */
+const ocorrencia = (id, dia, extra = {}) => ({
+  id,
+  user_id: USUARIO,
+  recurring_rule_id: "regra-streaming",
+  category_id: CATEGORIA,
+  subcategory_id: null,
+  account_id: CARTAO,
+  group_id: null,
+  description: "Streaming",
+  amount: 39.9,
+  due_date: dia,
+  status: "pending",
+  paid_date: null,
+  transaction_id: null,
+  notes: null,
+  created_at: "2026-09-01T12:00:00Z",
+  transaction_type: null,
+  group_closing_id: null,
+  expense_split_id: null,
+  ...extra,
+});
+
+const DE_OUTUBRO = "aaaaaaaa-0000-4000-8000-000000000020";
+const DE_NOVEMBRO = "aaaaaaaa-0000-4000-8000-000000001120";
+
+test("cobranca no cartao: no dia ela vira compra, com a data DELA, e a prevista fica paga", async () => {
+  const banco = bancoDeMentira({
+    previstas: [ocorrencia(DE_OUTUBRO, "2026-10-20"), ocorrencia(DE_NOVEMBRO, "2026-11-20")],
+  });
+
+  const lancadas = await lancarCobrancasDoCartao(banco, USUARIO, HOJE);
+
+  assert.equal(lancadas, 1, "so a de outubro ja chegou");
+  const [compra] = banco.tabelas.financial_transactions;
+  assert.equal(compra.id, idDaCompraDaCobranca(DE_OUTUBRO));
+  // A data e a da cobranca, e nao a de hoje: com 24/10 ela cairia na mesma
+  // fatura aqui, mas com o fechamento no dia 22 cairia na seguinte.
+  assert.equal(compra.transaction_date, "2026-10-20");
+  assert.equal(compra.account_id, CARTAO);
+  assert.equal(compra.amount, -39.9, "despesa entra negativa, como na baixa");
+  assert.equal(compra.transaction_type, "expense");
+  assert.equal(compra.service_id, "servico-financas");
+
+  const [outubro, novembro] = banco.tabelas.scheduled_transactions;
+  assert.deepEqual(
+    [outubro.status, outubro.paid_date, outubro.transaction_id],
+    ["paid", "2026-10-20", compra.id]
+  );
+  assert.equal(novembro.status, "pending", "a de novembro ainda e prevista");
+});
+
+test("cobranca no cartao: quatro leituras ao mesmo tempo lancam UMA compra", async () => {
+  // A primeira leitura depois do dia costuma ser o painel, que abre quatro
+  // rotas juntas. Com um id novo a cada tentativa a assinatura entraria quatro
+  // vezes na fatura.
+  const banco = bancoDeMentira({ previstas: [ocorrencia(DE_OUTUBRO, "2026-10-20")] });
+
+  await Promise.all([1, 2, 3, 4].map(() => lancarCobrancasDoCartao(banco, USUARIO, HOJE)));
+
+  assert.equal(banco.tabelas.financial_transactions.length, 1);
+  assert.equal(banco.tabelas.scheduled_transactions[0].status, "paid");
+});
+
+test("cobranca no cartao: a compra ja lancada (23505) so fecha a prevista", async () => {
+  // A vez anterior gravou a compra e falhou na baixa: a prevista ficou pendente
+  // com a compra existindo. A proxima leitura nao pode lancar outra.
+  const banco = bancoDeMentira({
+    previstas: [ocorrencia(DE_OUTUBRO, "2026-10-20")],
+    lancamentos: [
+      {
+        id: idDaCompraDaCobranca(DE_OUTUBRO),
+        user_id: USUARIO,
+        account_id: CARTAO,
+        amount: -39.9,
+        transaction_date: "2026-10-20",
+        transaction_type: "expense",
+      },
+    ],
+  });
+
+  const lancadas = await lancarCobrancasDoCartao(banco, USUARIO, HOJE);
+
+  assert.equal(lancadas, 0);
+  assert.equal(banco.tabelas.financial_transactions.length, 1);
+  assert.equal(banco.tabelas.scheduled_transactions[0].status, "paid");
+});
+
+test("cobranca no cartao: a escrita que falha deixa a prevista pendente", async () => {
+  const banco = bancoDeMentira({
+    previstas: [ocorrencia(DE_OUTUBRO, "2026-10-20")],
+    erroNoInsert: { code: "42501", message: "permission denied" },
+  });
+
+  assert.equal(await lancarCobrancasDoCartao(banco, USUARIO, HOJE), 0);
+  assert.equal(banco.tabelas.scheduled_transactions[0].status, "pending");
+});
+
+test("cobranca no cartao: fatura, transferencia, conta comum e MyBank nao viram compra", async () => {
+  const banco = bancoDeMentira({
+    previstas: [
+      ocorrencia("aaaaaaaa-0000-4000-8000-0000000000f1", "2026-10-12", {
+        recurring_rule_id: null,
+        notes: `fatura:2026-10-01:${CARTAO}`,
+      }),
+      ocorrencia("aaaaaaaa-0000-4000-8000-0000000000f2", "2026-10-10", {
+        transaction_type: "transfer",
+      }),
+      ocorrencia("aaaaaaaa-0000-4000-8000-0000000000f3", "2026-10-10", {
+        account_id: CORRENTE,
+      }),
+      ocorrencia("aaaaaaaa-0000-4000-8000-0000000000f4", "2026-10-10", {
+        notes: "mybank:parcela-1",
+      }),
+    ],
+  });
+
+  assert.equal(await lancarCobrancasDoCartao(banco, USUARIO, HOJE), 0);
+  assert.equal(banco.inserts.length, 0);
+});
+
+test("cobranca no cartao: antes do dia ela SOMA na fatura aberta; depois, so a compra soma", async () => {
+  // Cartao fecha dia 5 e vence dia 12. A compra de 15/10 e as cobrancas de
+  // 20/10 (ja vencida) e 03/11 (avulsa, ainda prevista) caem na fatura de
+  // novembro; a de 20/11 cai na de dezembro, que por enquanto nao tem compra
+  // nenhuma -- e e o vencimento dela que o banco calcula.
+  const banco = bancoDeMentira({
+    previstas: [
+      ocorrencia(DE_OUTUBRO, "2026-10-20"),
+      ocorrencia(DE_NOVEMBRO, "2026-11-20"),
+      ocorrencia("aaaaaaaa-0000-4000-8000-0000000a1103", "2026-11-03", {
+        recurring_rule_id: null,
+        description: "Passagem",
+        amount: 100,
+      }),
+    ],
+    lancamentos: [
+      {
+        id: "bbbbbbbb-0000-4000-8000-000000001015",
+        user_id: USUARIO,
+        account_id: CARTAO,
+        amount: -200,
+        transaction_date: "2026-10-15",
+        transaction_type: "expense",
+      },
+    ],
+  });
+
+  const { previstas, semVencimento } = await faturasPrevistasDaJanela(banco, USUARIO, {
+    de: "2026-10-01",
+    ate: "2026-12-31",
+    hoje: HOJE,
+  });
+
+  assert.deepEqual(semVencimento, []);
+  assert.deepEqual(
+    previstas.map((f) => [f.invoice_month, f.due_date, f.amount]),
+    [
+      // 200 da compra + 39,90 da cobranca de outubro (ja compra) + 100 da
+      // avulsa prevista. A de outubro entra UMA vez: como compra.
+      ["2026-11-01", "2026-11-12", 339.9],
+      ["2026-12-01", "2026-12-12", 39.9],
+    ]
+  );
+  assert.equal(
+    banco.tabelas.scheduled_transactions[0].status,
+    "paid",
+    "a leitura lancou a de outubro antes de somar"
+  );
+});
+
+test("cobranca no cartao: apagar a compra que o app lancou PULA a cobranca, e ela nao volta", async () => {
+  const banco = bancoDeMentira({ previstas: [ocorrencia(DE_OUTUBRO, "2026-10-20")] });
+  await lancarCobrancasDoCartao(banco, USUARIO, HOJE);
+  const id = idDaCompraDaCobranca(DE_OUTUBRO);
+
+  // A ordem da rota DELETE: le antes, apaga (o trigger solta), pula depois.
+  const pulada = await cobrancaDaCompra(banco, USUARIO, id);
+  assert.equal(pulada, DE_OUTUBRO);
+  await banco.from("financial_transactions").delete().eq("id", id);
+  assert.equal(banco.tabelas.scheduled_transactions[0].status, "pending", "a 065 soltou");
+  await pularCobranca(banco, USUARIO, pulada);
+
+  assert.equal(banco.tabelas.scheduled_transactions[0].status, "skipped");
+  assert.equal(await lancarCobrancasDoCartao(banco, USUARIO, HOJE), 0);
+  assert.equal(banco.tabelas.financial_transactions.length, 0, "a compra apagada nao voltou");
+});
+
+test("cobranca no cartao: a compra ligada a mao continua na RN006.5", async () => {
+  // "Ja lancei" (RN006.3) liga a prevista a um lancamento que a pessoa fez, com
+  // outro id. Apaga-lo devolve a prevista para pendente, como sempre.
+  const manual = "cccccccc-0000-4000-8000-000000000001";
+  const banco = bancoDeMentira({
+    previstas: [
+      ocorrencia(DE_OUTUBRO, "2026-10-20", {
+        status: "paid",
+        paid_date: "2026-10-20",
+        transaction_id: manual,
+      }),
+    ],
+  });
+
+  assert.equal(await cobrancaDaCompra(banco, USUARIO, manual), null);
+});

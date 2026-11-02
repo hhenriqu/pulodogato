@@ -17,6 +17,7 @@ import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { primeiroDiaDoMes, mesCorrente } from "@/lib/services/budget";
 import { chaveFatura } from "@/lib/card-invoice";
+import { lancarCobrancasDoCartao } from "@/lib/services/cobranca-no-cartao";
 
 export async function POST(request: NextRequest) {
   try {
@@ -78,6 +79,12 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
+
+    // A COBRANCA QUE JA VENCEU ENTRA NA SOMA (24/10/2026). Fechar le a view, e
+    // a assinatura do dia 3 que ninguem abriu o app para lancar ainda e conta
+    // prevista, nao linha da view: sem esta chamada o fechamento do dia 5
+    // gravaria a fatura sem ela.
+    await lancarCobrancasDoCartao(supabase, user.id);
 
     const { data: linhas, error: erroLinhas } = await supabase
       .from("card_invoice_lines")
