@@ -1,6 +1,7 @@
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { moedaDoGrupoParaGravar } from "@/lib/moeda-do-grupo";
+import { tipoDoGrupoParaGravar } from "@/lib/tipo-do-grupo";
 
 // Sem o generic `Database` no client, `select()` e `rpc()` voltam `any`. `user`
 // e embed many-to-one (objeto) e pode vir nulo pela RLS de `profiles`.
@@ -54,6 +55,8 @@ export async function GET(_request: NextRequest) {
             description,
             group_code,
             group_type,
+            group_kind,
+            closing_day,
             default_split_type,
             currency,
             photo_url,
@@ -248,6 +251,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // O tipo do grupo (076): casa ou evento. Ausente vira evento, o DEFAULT
+    // da coluna; fora da lista e 400, e nao evento em silencio.
+    const group_kind = tipoDoGrupoParaGravar(body.group_kind);
+
+    if (group_kind === null) {
+      return NextResponse.json(
+        { error: "O tipo do grupo tem que ser casa ou evento" },
+        { status: 400 }
+      );
+    }
+
     // Criar grupo
     const { data: group, error: groupError } = await supabase
       .from("expense_groups")
@@ -255,6 +269,7 @@ export async function POST(request: NextRequest) {
         name: name.trim(),
         description: description?.trim() || null,
         group_type,
+        group_kind,
         default_split_type,
         currency,
         photo_url: photo_url || null,

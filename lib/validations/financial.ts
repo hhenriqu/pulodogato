@@ -197,6 +197,8 @@ export const expenseGroupSchema = z.object({
 
   group_type: z.enum(["public", "private"]).default("private"),
 
+  group_kind: z.enum(["casa", "evento"]).default("evento"),
+
   default_split_type: z
     .enum(["equal", "percentage", "custom", "proportional"])
     .default("equal"),

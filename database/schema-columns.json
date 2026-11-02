@@ -214,6 +214,7 @@
     "default_split_type",
     "description",
     "group_code",
+    "group_kind",
     "group_type",
     "id",
     "is_active",

@@ -743,6 +743,7 @@ next-env.d.ts
 /.tmp-cron-le-zero/
 /.tmp-vinculo-da-prevista/
 /.tmp-conta-da-conexao/
+/.tmp-tipo-do-grupo/
 
 # Graphify: grafo do codigo gerado localmente (graphify update .)
 graphify-out/

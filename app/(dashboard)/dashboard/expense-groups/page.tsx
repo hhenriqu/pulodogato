@@ -38,6 +38,15 @@ import { opcoesDeMoeda } from "@/lib/moeda";
 import { MOEDA_PADRAO, moedaPorCodigo } from "@/lib/dinheiro";
 import { moedaDaViagem } from "@/lib/moeda-do-grupo";
 import {
+  casaPrimeiro,
+  tipoDoGrupo,
+  type TipoDoGrupo,
+} from "@/lib/tipo-do-grupo";
+import {
+  EscolhaDoTipoDoGrupo,
+  SeloDoTipoDoGrupo,
+} from "@/components/grupos/EscolhaDoTipoDoGrupo";
+import {
   Archive,
   Users,
   Plus,
@@ -69,6 +78,11 @@ interface ExpenseGroup {
   description: string;
   group_code: string;
   group_type: "public" | "private";
+  /**
+   * O que o grupo e (076): a casa ou um evento. Opcional no tipo pelo mesmo
+   * motivo da moeda: `tipoDoGrupo` le a ausencia como evento.
+   */
+  group_kind?: TipoDoGrupo | null;
   default_split_type: "equal" | "percentage" | "custom" | "proportional";
   /**
    * A moeda da viagem (`expense_groups.currency`, migration 026). Opcional no
@@ -133,6 +147,7 @@ export default function ExpenseGroupsPage() {
   const [editForm, setEditForm] = useState({
     name: "",
     description: "",
+    group_kind: "evento" as TipoDoGrupo,
     group_type: "private" as "public" | "private",
     default_split_type: "equal" as
       | "equal"
@@ -163,6 +178,9 @@ export default function ExpenseGroupsPage() {
   const [createForm, setCreateForm] = useState({
     name: "",
     description: "",
+    // O tipo (076). Nasce evento, o DEFAULT da coluna; a escolha fica no topo
+    // do formulario, porque e a primeira pergunta: e a casa ou um evento?
+    group_kind: "evento" as TipoDoGrupo,
     group_type: "private" as "public" | "private",
     default_split_type: "equal" as
       | "equal"
@@ -265,6 +283,7 @@ export default function ExpenseGroupsPage() {
         setCreateForm({
           name: "",
           description: "",
+          group_kind: "evento",
           group_type: "private",
           default_split_type: "equal",
           currency: MOEDA_PADRAO,
@@ -369,8 +388,10 @@ export default function ExpenseGroupsPage() {
     }
   };
 
+  // `group_type` e a regra de ENTRADA (publico entra direto, privado so por
+  // convite ou aprovacao). O "tipo" do grupo, desde a 076, e casa ou evento.
   const getGroupTypeLabel = (type: string) => {
-    return type === "public" ? "Público" : "Privado";
+    return type === "public" ? "Entrada livre" : "Só por convite";
   };
 
   const getUserRole = (group: ExpenseGroup) => {
@@ -405,6 +426,7 @@ export default function ExpenseGroupsPage() {
     setEditForm({
       name: group.name,
       description: group.description || "",
+      group_kind: tipoDoGrupo(group.group_kind),
       group_type: group.group_type,
       default_split_type: group.default_split_type,
       // `moedaDaViagem` e nao `group.currency` direto: grupo criado antes da 026
@@ -588,6 +610,17 @@ export default function ExpenseGroupsPage() {
           </CardHeader>
           <CardContent>
             <form onSubmit={handleCreateGroup} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="group_kind">Tipo do grupo</Label>
+                <EscolhaDoTipoDoGrupo
+                  id="group_kind"
+                  valor={createForm.group_kind}
+                  aoMudar={(tipo) =>
+                    setCreateForm({ ...createForm, group_kind: tipo })
+                  }
+                />
+              </div>
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="name">Nome do Grupo *</Label>
@@ -597,13 +630,17 @@ export default function ExpenseGroupsPage() {
                     onChange={(e) =>
                       setCreateForm({ ...createForm, name: e.target.value })
                     }
-                    placeholder="Ex: Casa Compartilhada"
+                    placeholder={
+                      createForm.group_kind === "casa"
+                        ? "Ex: Casa"
+                        : "Ex: Viagem a Bahia"
+                    }
                     required
                   />
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="group_type">Tipo de Grupo</Label>
+                  <Label htmlFor="group_type">Entrada no grupo</Label>
                   <Select
                     value={createForm.group_type}
                     onValueChange={(value: "public" | "private") =>
@@ -820,7 +857,7 @@ export default function ExpenseGroupsPage() {
           {/* Groups Grid */}
           {groups.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {groups.map((group) => {
+              {casaPrimeiro(groups).map((group) => {
                 const userRole = getUserRole(group);
                 const isAdmin = userRole === "admin";
 
@@ -838,6 +875,11 @@ export default function ExpenseGroupsPage() {
                               <Crown className="h-4 w-4 text-warning" />
                             )}
                           </CardTitle>
+                          <div className="mt-1">
+                            <SeloDoTipoDoGrupo
+                              tipo={tipoDoGrupo(group.group_kind)}
+                            />
+                          </div>
                           <CardDescription className="mt-1">
                             {group.description || "Sem descrição"}
                           </CardDescription>
@@ -1285,7 +1327,7 @@ export default function ExpenseGroupsPage() {
       {/* Edit Group Form Modal */}
       {showEditForm && selectedGroup && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <Card className="w-full max-w-md">
+          <Card className="w-full max-w-md max-h-[90vh] overflow-y-auto">
             <CardHeader>
               <CardTitle>Editar Grupo</CardTitle>
               <CardDescription>
@@ -1294,6 +1336,17 @@ export default function ExpenseGroupsPage() {
             </CardHeader>
             <CardContent>
               <form onSubmit={handleUpdateGroup} className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="edit_group_kind">Tipo do grupo</Label>
+                  <EscolhaDoTipoDoGrupo
+                    id="edit_group_kind"
+                    valor={editForm.group_kind}
+                    aoMudar={(tipo) =>
+                      setEditForm({ ...editForm, group_kind: tipo })
+                    }
+                  />
+                </div>
+
                 <div className="space-y-2">
                   <Label htmlFor="edit_name">Nome do Grupo *</Label>
                   <Input
@@ -1324,7 +1377,7 @@ export default function ExpenseGroupsPage() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="edit_group_type">Tipo de Grupo</Label>
+                  <Label htmlFor="edit_group_type">Entrada no grupo</Label>
                   <Select
                     value={editForm.group_type}
                     onValueChange={(value: "public" | "private") =>

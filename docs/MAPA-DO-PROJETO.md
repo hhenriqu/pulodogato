@@ -96,10 +96,10 @@ O que a família precisa e **não tem**:
   PRD; o orçamento de grupo existe mas é do grupo, não da casa.
 - **Dependente sem login.** Filho, ou quem não vai instalar o app, não pode ser
   membro: `group_members.user_id` é obrigatório.
-- **Dizer que o grupo é a casa.** `expense_groups.group_type` só aceita
-  `public`/`private`. O app não distingue "Casa" (permanente, mensal) de
-  "Viagem" (temporária, acerta uma vez). A diferença hoje é implícita: ter ou
-  não `closing_day`.
+- ~~**Dizer que o grupo é a casa.**~~ Feito na migration 076 (RN023):
+  `expense_groups.group_kind` é `casa` ou `evento`, separado de `group_type`
+  (que é a regra de entrada, público ou privado). Os grupos com `closing_day`
+  viraram casa.
 - **Escolher entre grupo e conexão.** Para duas pessoas que dividem a casa,
   os dois caminhos fazem quase a mesma coisa com tabelas, telas e regras
   diferentes (ver duplicações, seção 4).
@@ -260,8 +260,9 @@ Em ordem de retorno para a essência:
 2. **Conexão vira grupo de duas pessoas de verdade.** Um modelo de divisão só,
    com dois modos: fecha no lançamento ou fecha no dia do mês. Apagar
    `user_balances`, `group_member_proportions` e as colunas de aprovação sem uso.
-3. **Dar nome à família.** Um tipo de grupo (`casa` / `evento`) no lugar de
-   `public`/`private`, com uma visão "Casa" (Resultado e previstas somados de
+3. **Dar nome à família.** Um tipo de grupo (`casa` / `evento`), feito na 076
+   numa coluna própria (`group_kind`), porque `public`/`private` é a regra de
+   entrada e continua valendo. Falta a visão "Casa" (Resultado e previstas somados de
    todos) e conta conjunta como próximo passo.
 4. **Facilitar o churrasco.** Participante sem conta (só nome), lançar despesa
    paga por outro membro e um grupo de evento que acerta uma vez e arquiva.

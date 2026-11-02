@@ -25,6 +25,7 @@ export async function GET(_request: NextRequest) {
         description,
         group_code,
         group_type,
+        group_kind,
         default_split_type,
         photo_url,
         created_at,
