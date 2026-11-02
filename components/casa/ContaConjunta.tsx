@@ -186,7 +186,7 @@ export function ExtratoDaConjunta({
               {dataCurtaNaTela(l.data)} · {l.meu ? "você" : l.quem}
             </span>
           </div>
-          <span className={l.valor < 0 ? "text-red-600" : "text-green-600"}>
+          <span className={l.valor < 0 ? "text-destructive" : "text-success"}>
             {formatarValor(l.valor, moeda)}
           </span>
         </li>

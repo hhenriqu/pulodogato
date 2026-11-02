@@ -153,8 +153,12 @@ const FUNCOES_CERTAS = ["dataNaTela", "dataCurtaNaTela"];
  * DE 13 PARA 14: o vencimento de cada conta na tela da conexao (075,
  * `app/(dashboard)/dashboard/connections/[pessoaId]/page.tsx`). Duas contas
  * do mesmo mes, com o mesmo valor, se distinguem pelo dia em que vencem.
+ *
+ * DE 14 PARA 15: o dia de cada lancamento da conta conjunta na visao da casa
+ * (078, `components/casa/ContaConjunta.tsx`). A familia confere quem lancou o
+ * que e em que dia, e o dia tem de ser o que o banco guardou.
  */
-const CHAMADAS_ESPERADAS = 14;
+const CHAMADAS_ESPERADAS = 15;
 
 /**
  * `formatDate` de lib/utils.ts, que recebe `settled_on` e `today_rate_date`
