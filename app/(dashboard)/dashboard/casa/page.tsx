@@ -282,13 +282,13 @@ function VisaoDaCasa({ grupoId, mes }: { grupoId: string; mes: string }) {
         <CardContent className="space-y-4">
           {totais.map((t) => (
             <div key={t.currency} className="grid grid-cols-3 gap-3">
-              <Numero rotulo="Entrou" valor={t.entrou} moeda={t.currency} classe="text-green-600" />
-              <Numero rotulo="Saiu" valor={t.saiu} moeda={t.currency} classe="text-red-600" />
+              <Numero rotulo="Entrou" valor={t.entrou} moeda={t.currency} classe="text-success" />
+              <Numero rotulo="Saiu" valor={t.saiu} moeda={t.currency} classe="text-destructive" />
               <Numero
                 rotulo="Resultado"
                 valor={t.resultado}
                 moeda={t.currency}
-                classe={t.resultado < 0 ? "text-red-600" : "text-green-600"}
+                classe={t.resultado < 0 ? "text-destructive" : "text-success"}
               />
             </div>
           ))}
@@ -303,7 +303,7 @@ function VisaoDaCasa({ grupoId, mes }: { grupoId: string; mes: string }) {
             </p>
           )}
           {resultado.naoCompartilham > 0 && (
-            <p className="text-sm text-amber-700">
+            <p className="text-sm text-warning">
               {resultado.naoCompartilham === 1
                 ? "1 pessoa da casa não mostra o mês, e a soma não inclui ela."
                 : `${resultado.naoCompartilham} pessoas da casa não mostram o mês, e a soma não inclui elas.`}
