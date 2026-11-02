@@ -59,6 +59,8 @@
 // que e a direcao que faz a pessoa gastar o que nao tem. As duas sao sempre de
 // quem le, entao os campos novos repetem os antigos.
 
+import { conferirDivisao } from "@/lib/conta-da-conexao";
+import { gravarPartesDaConexao } from "@/lib/services/partes-da-conexao";
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { materializarAgenda, horizonteAte } from "@/lib/services/scheduled";
@@ -333,6 +335,20 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // A DIVISAO COM CONEXAO (075, RN020.8). O formulario oferece "Dividir esta
+    // despesa" na prevista tambem, e ate a 075 a parte de pessoa morria aqui
+    // sem erro. Com grupo vale o grupo (RN020.4); receita nao se divide.
+    const divisao = conferirDivisao(body.divisao, user.id);
+    if (!divisao.ok) {
+      return NextResponse.json({ error: divisao.erro }, { status: 400 });
+    }
+    if (divisao.partes.length > 0 && (group_id || direcao !== "expense")) {
+      return NextResponse.json(
+        { error: "Dividir com uma pessoa só vale para despesa sem grupo." },
+        { status: 400 }
+      );
+    }
+
     // -----------------------------------------------------------------------
     // A PREVISAO E EM REAL (HMO-184, migration 034)
     // -----------------------------------------------------------------------
@@ -431,6 +447,19 @@ export async function POST(request: NextRequest) {
         { error: "Não foi possível criar a conta prevista" },
         { status: 500 }
       );
+    }
+
+    // A conta sem a parte seria a conta "so minha" que a pessoa nao pediu: se a
+    // parte nao grava, a conta sai, e a tela diz por que.
+    const recusaDaDivisao = await gravarPartesDaConexao(
+      supabase,
+      "scheduled_splits",
+      scheduled.id,
+      divisao.partes
+    );
+    if (recusaDaDivisao) {
+      await supabase.from("scheduled_transactions").delete().eq("id", scheduled.id);
+      return NextResponse.json({ error: recusaDaDivisao }, { status: 400 });
     }
 
     return NextResponse.json(

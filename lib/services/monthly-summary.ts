@@ -42,6 +42,8 @@ import {
 import { lerPreferenciaDeMoeda } from "@/lib/moeda";
 import { formatarValor } from "@/lib/dinheiro";
 import { apenasNosTotais } from "@/lib/fora-dos-totais";
+import { lerResultadoPorMes } from "@/lib/services/resultado-do-mes";
+import { viewDaParteAusente } from "@/lib/parte-do-grupo-realizada";
 
 /** O `kind` de bill_notifications, na familia do resumo (migration 017). */
 export const KIND_RESUMO = "monthly_summary" as const;
@@ -240,34 +242,61 @@ export async function resumoDoUsuario(
   });
 }
 
+/**
+ * O Resultado mes a mes, do servico unico (lib/services/resultado-do-mes.ts).
+ *
+ * Ate o Resultado unico esta leitura era `monthly_cash_flow`, a view do 008 --
+ * o criterio ANTIGO: a compra no cartao no dia da compra, sem a minha parte do
+ * que outro pagou, sem a conta do fechamento e sem o juro do MyBank. O e-mail
+ * do mes fechado dizia um "Saiu" diferente do painel e dos relatorios para o
+ * mesmo mes. Agora e `personal_monthly_cash_flow`, a mesma dos relatorios.
+ */
 async function lerFluxo(
   client: SupabaseClient,
   userId: string,
   desde: string,
   moeda: string
 ) {
-  const { data, error } = await client
-    .from("monthly_cash_flow")
-    .select("month, income, expense")
-    .eq("user_id", userId)
-    .eq("currency", moeda)
-    .gte("month", desde);
-  if (error) throw error;
-  return (data ?? []) as Array<{ month: string; income: number; expense: number }>;
+  const leitura = await lerResultadoPorMes(client, userId, { desde, moeda });
+  if (!leitura.ok) throw leitura.erro;
+  return leitura.meses.map(({ month, income, expense }) => ({
+    month,
+    income,
+    expense,
+  }));
 }
 
+/**
+ * As despesas por categoria, mes a mes, pelo MESMO criterio do fluxo acima:
+ * `personal_category_monthly_totals`, de que `personal_monthly_cash_flow` e o
+ * rollup. Ler `category_monthly_totals` aqui e o fluxo da outra view faria a
+ * anomalia de categoria olhar um mes diferente do que o resumo soma.
+ *
+ * Antes da 033 a view pessoal nao existe, e a leitura cai na antiga sem grupo
+ * -- o mesmo par de `lerResultadoPorMes`.
+ */
 async function lerCategorias(
   client: SupabaseClient,
   userId: string,
   desde: string,
   moeda: string
 ) {
-  const { data, error } = await client
-    .from("category_monthly_totals")
-    .select("month, category_id, expense")
-    .eq("user_id", userId)
-    .eq("currency", moeda)
-    .gte("month", desde);
+  const montar = (
+    view: "personal_category_monthly_totals" | "category_monthly_totals"
+  ) => {
+    const q = client
+      .from(view)
+      .select("month, category_id, expense")
+      .eq("user_id", userId)
+      .eq("currency", moeda)
+      .gte("month", desde);
+    return view === "category_monthly_totals" ? q.is("group_id", null) : q;
+  };
+
+  let { data, error } = await montar("personal_category_monthly_totals");
+  if (error && viewDaParteAusente(error)) {
+    ({ data, error } = await montar("category_monthly_totals"));
+  }
   if (error) throw error;
   return (data ?? []) as Array<{ month: string; category_id: string | null; expense: number }>;
 }

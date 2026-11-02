@@ -209,6 +209,20 @@ a HMO-141 nenhum aviso de vencimento chegou a ninguem, e ninguem percebeu,
 porque uma rota que nunca roda com sucesso tambem nao gera erro nenhum no
 painel. A HMO-152 e essa descoberta.
 
+#### `BRAPI_TOKEN`: a cotacao da carteira
+
+O cron `/api/cron/cotacoes` (migration 074) busca o preco das acoes e FIIs em
+BRL na brapi.dev, de segunda a sexta as 23:00 UTC (20:00 em Brasilia, depois do
+fechamento da B3). Ele precisa de `BRAPI_TOKEN` -- a chave do plano gratuito,
+criada no painel da brapi --, alem das duas variaveis acima. Sem a chave ele
+responde 503 e o preco continua vindo da mao do usuario; os outros jobs seguem
+normais.
+
+O plano gratuito aceita um ticker por chamada, uma chamada por vez, e 15.000
+chamadas por mes, com atraso de ~30 min. Por isso a rota cota um ticker de cada
+vez e, quando nao cabe tudo numa execucao, o que ficou de fora e o primeiro da
+fila no dia seguinte.
+
 O 503 e deliberado: a rota se recusa a rodar sem a `service_role` em vez de
 rodar com a chave anon, ver zero linhas pela RLS e sair verde sem avisar
 ninguem. Nao afrouxe essa checagem -- defina as variaveis.

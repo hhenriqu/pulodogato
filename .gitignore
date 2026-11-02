@@ -154,6 +154,10 @@ next-env.d.ts
 /.tmp-calculadora-campo/
 # saida do `npm run test:investments` (faltava desde a HMO-169)
 /.tmp-investments/
+# saida do `npm run test:rebalanceamento`
+/.tmp-rebalanceamento/
+# saida do `npm run test:cotacao-brapi`
+/.tmp-cotacao-brapi/
 
 # saida das duas suites da HMO-166 (tsc avulso; a de campos com reescrita de alias)
 /.tmp-contas/
@@ -621,6 +625,7 @@ next-env.d.ts
 # rotas com duble -- o painel nao le view nenhuma, e so a rota responde
 # (HMO-418, e a secao 8 da HMO-413).
 /.tmp-criterio-do-painel/
+/.tmp-resultado-do-mes/
 
 # O emit de /api/reports/cash-flow para a suite que prova que a SEGUNDA PAGINA
 # do ramo de intervalo entra no total, com fixture de 1001 linhas (HMO-417).
@@ -737,3 +742,7 @@ next-env.d.ts
 # arquivo de fonte -- ver a entrada do .tmp-parcelamento acima.
 /.tmp-cron-le-zero/
 /.tmp-vinculo-da-prevista/
+/.tmp-conta-da-conexao/
+
+# Graphify: grafo do codigo gerado localmente (graphify update .)
+graphify-out/

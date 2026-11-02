@@ -28,6 +28,7 @@
 | 2.7 | 24/10/2026 | RN018.7 e RN018.13 reescritas, RN018.15 e RN019.6 novas: a conta do grupo que fecha aparece para os outros membros só na estimativa, no mês do fechamento; a aba Despesas mostra "Despesas do Grupo {nome}" com o detalhe por despesa, e os Pix do acerto com copia e cola | Helio |
 | 2.8 | 24/10/2026 | RN022 nova: o "Apagar tudo" deixa o que envolve outra pessoa (grupo, divisão com pessoa, MyBank) e a conta de banco onde isso mora, e a tela diz o que fica antes do clique | Helio |
 | 2.9 | 24/10/2026 | RN004.5 e RN004.6 novas: a conta prevista no cartão (a despesa fixa e a avulsa) é uma cobrança. Cai na fatura pelo fechamento, soma como prevista antes do dia e vira compra sozinha no dia. Apagar a compra que o app lançou pula a cobrança | Helio |
+| 2.10 | 27/10/2026 | RN020.8 a RN020.11 novas: a conexão funciona como um grupo de duas pessoas. A despesa fixa, a prevista e a parcelada também se dividem com uma conexão, e cada mês gera o "A receber de" e o "Pagamento a"; a tela da conexão mostra quanto cada um paga por mês | Helio |
 
 > **O que a versão 2.0 corrigiu.** Até aqui esta PRD descrevia um app de carteira
 > de investimentos: o problema era "investidores pessoa física", as personas eram
@@ -194,8 +195,23 @@ Bruto, descontos em folha e líquido — o lançamento gerado é o **líquido**.
 ### Investimentos 🚧
 
 `investment_assets` e `investment_transactions`: registro de ativos e operações
-para compor o patrimônio. Sem cotação automática e sem cálculo de rentabilidade
-consolidada.
+para compor o patrimônio. Sem cálculo de rentabilidade consolidada.
+
+**Cotação** (migration 074): ações e FIIs em BRL têm o preço atualizado por um
+cron diário (dias úteis, depois do fechamento da B3) pela brapi, no plano
+gratuito (um ticker por chamada, atraso de ~30 min). Renda fixa e ativos
+internacionais continuam com preço informado pelo usuário. Falha da fonte nunca
+apaga preço: o ativo fica com o último preço e a data dele.
+
+**Rebalanceamento** (migration 073): o usuário dá um **peso** a cada ativo e,
+se quiser, um **setor**. O % ideal é o peso dividido pela soma dos pesos; o
+alvo é esse % sobre a base (valor dos ativos com peso + aporte digitado); a
+falta é alvo − valor atual. Falta positiva aparece como "Aportar", senão
+"Aguardar". O aporte é dividido entre os ativos abaixo do alvo na proporção da
+falta, em cotas inteiras. Peso vazio deixa o ativo fora da conta; peso 0 quer
+dizer zerar. Uma calculadora opcional (critérios de empresa ou de FII, de 0 a
+10, ponderados) sugere o peso. Os pesos são do usuário: a tela não usa
+vocabulário de recomendação.
 
 ### PWA e offline ✅
 
@@ -596,6 +612,22 @@ O Resultado de cada um fecha na responsabilidade, e a soma dá os R$ 2.000.
   do outro. Ninguém escolhe conta de outra pessoa.
 - RN020.7 Despesa em outra moeda divide pelo valor convertido na cotação do
   lançamento, e as duas contas são em reais.
+- RN020.8 A conexão funciona como um grupo de duas pessoas: a despesa **fixa**,
+  a **prevista** e a **parcelada** também se dividem com uma conexão aceita
+  (migration 075). Na fixa, cada mês da agenda gera, pela parte do outro, o
+  **"A receber de <pessoa>"** (receita prevista) de quem lançou e o
+  **"Pagamento a <pessoa>"** (despesa prevista) da conexão, no vencimento da
+  conta. Quem lançou continua com a conta inteira. Na parcelada, cada parcela
+  é um lançamento dividido (RN020.2).
+- RN020.9 Mudar a parte da despesa fixa muda as ocorrências em aberto de hoje
+  em diante. A vencida em aberto e a paga ficam como estão.
+- RN020.10 Mudar o valor ou a data da conta prevista refaz as duas contas;
+  pular, cancelar, apagar a conta ou tirar a pessoa as remove. Pagar a conta
+  prevista não quita a parte do outro. Com um dos lados já pago, o banco
+  recusa a mudança até a baixa ser desfeita (o mesmo critério da RN020.3).
+- RN020.11 A tela da conexão (Conexões > Contas) junta o que está registrado
+  entre os dois, mês a mês: quanto eu pago, quanto eu recebo e o saldo. Quitar
+  continua na agenda (RN020.6).
 
 ### RN021 — MyBank ✅ **(banco)** — fase 5
 

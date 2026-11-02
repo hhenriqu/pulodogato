@@ -95,11 +95,21 @@ const EXIGENCIAS = [
   },
   {
     arquivo: "app/api/reports/cash-flow/route.ts",
-    trechos: ['get("faturaAte")', "lerFaturasPagas(", "realizadoComCartaoPelaFatura("],
+    // Desde o Resultado unico (mapa, prioridade 1) a rota nao le a fatura ela
+    // mesma: ela repassa `faturaAte` ao servico, e e o servico que le e aplica.
+    trechos: ['get("faturaAte")', "lerResultadoDoPeriodo(", "faturaAte,"],
     porque:
-      "a rota precisa LER a fatura paga e APLICAR a regra (RN017.4). Lendo sem " +
-      "aplicar, a compra no cartao conta no dia em que foi feita; aplicando sem " +
-      "ler, a compra sai e a fatura nao entra -- o cartao some do Realizado.",
+      "a rota precisa pedir o Resultado ao servico unico E repassar o " +
+      "`faturaAte` do painel. Sem o repasse, a fatura paga que vence depois de " +
+      "hoje some do Realizado ate o vencimento.",
+  },
+  {
+    arquivo: "lib/services/resultado-do-mes.ts",
+    trechos: ["lerFaturasPagas(", "realizadoComCartaoPelaFatura("],
+    porque:
+      "o Resultado precisa LER a fatura paga e APLICAR a regra (RN017.4). Lendo " +
+      "sem aplicar, a compra no cartao conta no dia em que foi feita; aplicando " +
+      "sem ler, a compra sai e a fatura nao entra -- o cartao some do Realizado.",
   },
   {
     arquivo: "app/api/dashboard/previsao/route.ts",

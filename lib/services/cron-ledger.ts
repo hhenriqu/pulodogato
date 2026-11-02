@@ -28,16 +28,18 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 /**
  * Os jobs de cron. Espelha o CHECK da 019, que a 067 refez com
- * `group-closings` -- o unico desta lista que ainda nao esta no `crons[]` do
- * vercel.json: ele e agendado na fase 4 do modelo novo das movimentacoes (ver o
- * cabecalho de app/api/cron/group-closings/route.ts).
+ * `group-closings` e a 074 com `cotacoes` (a cotacao da carteira pela brapi).
+ * Acrescentar valor aqui SEM a migration correspondente nao quebra o cron, mas
+ * a linha do livro-razao e recusada com 23514 -- migration e codigo andam
+ * juntos aqui.
  */
 export type CronJob =
   | "recurrence-scan"
   | "recurrence-alerts"
   | "bill-alerts"
   | "monthly-summary"
-  | "group-closings";
+  | "group-closings"
+  | "cotacoes";
 
 export interface LinhaDeExecucao {
   job: CronJob;

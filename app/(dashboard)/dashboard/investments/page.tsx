@@ -56,6 +56,7 @@ import {
   type ValoresDoAtivo,
 } from "@/components/investments/ModalDeCadastroDeAtivo";
 import { CarteiraPorConta } from "@/components/investments/CarteiraPorConta";
+import { RebalanceamentoDaCarteira } from "@/components/investments/RebalanceamentoDaCarteira";
 import { comporCarteiraPorConta } from "@/lib/carteira-na-tela";
 import type { LimitesDosCrivos } from "@/lib/crivos";
 import {
@@ -584,8 +585,9 @@ export default function InvestmentsPage() {
               Investimentos
             </h1>
             <p className="text-muted-foreground">
-              Carteira lançada por você. Os preços atuais são os que você
-              informar — não há cotação automática.
+              Carteira lançada por você. Ações e FIIs têm o preço atualizado
+              todo dia útil depois do fechamento da bolsa; os demais você
+              informa.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -712,6 +714,13 @@ export default function InvestmentsPage() {
           }}
         />
 
+        {/* O REBALANCEAMENTO, na conta da planilha do Helio: peso por ativo,
+            aporte do mes, e quanto falta em cada um. Le peso e setor de rota
+            propria (a 073 pode nao estar colada) e a posicao desta carteira,
+            para o "Tenho" fechar com a tabela de cima. Devolve `null` sem
+            ativo. */}
+        <RebalanceamentoDaCarteira ativos={ativos} posicoes={posicoes} />
+
         {/* ONDE CADA ATIVO ESTA (HMO-438). Devolve `null` com a carteira vazia.
             Fica ACIMA do card de renda fixa de proposito: este responde "onde
             esta o meu dinheiro", que e a pergunta mais grossa, e aquele abre o
@@ -743,8 +752,9 @@ export default function InvestmentsPage() {
           <CardHeader>
             <CardTitle>Ativos cadastrados</CardTitle>
             <CardDescription>
-              O preço atual é informado por você. A data ao lado é de quando você
-              informou.
+              Ações e FIIs são cotados automaticamente; você pode corrigir o
+              preço de qualquer ativo. A data ao lado é de quando o preço foi
+              apurado.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
