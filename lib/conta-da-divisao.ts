@@ -18,7 +18,7 @@
  */
 
 export const MENSAGEM_DA_CONTA_DA_DIVISAO =
-  "Esta conta veio de um lançamento dividido com outra pessoa: o valor, a data e a pessoa mudam pelo lançamento. Para quitar, use Pagar ou Receber nesta conta.";
+  "Esta conta veio de uma despesa dividida com outra pessoa: o valor, a data e a pessoa mudam pela despesa original (o lançamento ou a conta dividida). Para quitar, use Pagar ou Receber nesta conta.";
 
 /**
  * A recusa da 070 quando um dos lados ja deu baixa (SQLSTATE `PDG02`).
@@ -29,11 +29,18 @@ export const MENSAGEM_DA_CONTA_DA_DIVISAO =
 export const MENSAGEM_DA_DIVISAO_PAGA =
   "Um dos lados já pagou esta divisão. Desfaça a baixa na agenda antes de mudar o valor, a data ou a pessoa, ou de apagar o lançamento.";
 
-/** A conta prevista nasceu de uma divisao com pessoa? */
+/**
+ * A conta prevista nasceu de uma divisao com pessoa? Do lancamento dividido
+ * (`expense_split_id`, 070) ou da conta fixa/prevista dividida
+ * (`scheduled_split_id`, 075): as duas sao travadas do mesmo jeito.
+ */
 export function ehContaDaDivisaoComPessoa(
-  conta: { expense_split_id?: string | null } | null | undefined
+  conta:
+    | { expense_split_id?: string | null; scheduled_split_id?: string | null }
+    | null
+    | undefined
 ): boolean {
-  return Boolean(conta?.expense_split_id);
+  return Boolean(conta?.expense_split_id || conta?.scheduled_split_id);
 }
 
 /**

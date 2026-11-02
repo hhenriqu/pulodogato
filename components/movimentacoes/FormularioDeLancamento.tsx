@@ -69,6 +69,7 @@ import { usePreferenciaDeMoeda } from "@/lib/hooks/usePreferenciaDeMoeda";
 import { moedaSugerida } from "@/lib/moeda";
 import { cotacaoDigitada, taxaParaGravar } from "@/lib/cambio";
 import { avisoDeEdicaoTravada } from "@/lib/grupos";
+import { PARAM_DA_CONEXAO, divisaoParaGravar } from "@/lib/conta-da-conexao";
 import {
   avisoDaDivisaoPaga,
   mudancasDaDivisao,
@@ -189,6 +190,8 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
    * dos tres deixaria os outros dois abertos.
    */
   const origem = origemSegura(parametros.get(PARAM_DE_ORIGEM));
+  /** `?conexao=` chega de "Lançar conta com <pessoa>", na tela da conexao (075). */
+  const idDaConexao = parametros.get(PARAM_DA_CONEXAO);
 
   const [user, setUser] = useState<User | null>(null);
   const [serviceId, setServiceId] = useState("");
@@ -577,7 +580,26 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
         );
         if (respostaDeConexoes.ok) {
           const dadosDeConexoes = await respostaDeConexoes.json();
-          setConexoes(dadosDeConexoes.connections || []);
+          const lista: Conexao[] = dadosDeConexoes.connections || [];
+          setConexoes(lista);
+          // "Lancar conta com <pessoa>", da tela da conexao (075): a divisao
+          // ja abre com ela, em 50%. So na criacao, e so se ela e conexao
+          // aceita -- um id qualquer na URL nao entra no rateio.
+          if (
+            idDaConexao &&
+            !idParaEditar &&
+            lista.some((c) => c.id === idDaConexao)
+          ) {
+            setValores((atuais) =>
+              atuais.rateios.length > 0
+                ? atuais
+                : {
+                    ...atuais,
+                    compartilhado: true,
+                    rateios: [{ participanteId: idDaConexao, percentual: 50 }],
+                  }
+            );
+          }
         }
       }
 
@@ -876,7 +898,14 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
     const resposta = await fetch("/api/recurring-rules", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(regraDeRecorrencia(tipo, valores)),
+      // A parte de cada conexao vai junto (075): sem ela a despesa fixa
+      // dividida com a Lais virava uma conta so de quem lancou.
+      body: JSON.stringify({
+        ...regraDeRecorrencia(tipo, valores),
+        // Receita nao se divide: o estado do formulario e um objeto so, e uma
+        // divisao marcada antes de trocar para receita sobreviveria.
+        divisao: tipo === "expense" ? divisaoParaGravar(valores) : [],
+      }),
     });
 
     const dados = await resposta.json();
@@ -909,7 +938,12 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
     const resposta = await fetch("/api/scheduled-transactions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(contaPrevista(tipo, valores)),
+      body: JSON.stringify({
+        ...contaPrevista(tipo, valores),
+        // Receita nao se divide: o estado do formulario e um objeto so, e uma
+        // divisao marcada antes de trocar para receita sobreviveria.
+        divisao: tipo === "expense" ? divisaoParaGravar(valores) : [],
+      }),
     });
 
     const dados = await resposta.json();
@@ -1036,6 +1070,7 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
         // aparece as vezes e um campo que da para esquecer de mandar.
         mes_da_fatura: valores.mesDaFatura || null,
         group_id: valores.grupoId || null,
+        divisao: divisaoParaGravar(valores),
         notes: valores.notas,
         // Moeda e cotacao vao pelo mesmo motivo de `gravarTransacao`: a 026 tem
         // `CHECK ((currency = 'BRL') = (exchange_rate = 1))`, e mandar uma sem a
