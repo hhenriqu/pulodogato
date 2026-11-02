@@ -83,7 +83,7 @@ const nomes = (itens) => itens.map((item) => item.name);
 // Desligado: o menu inteiro
 // ---------------------------------------------------------------------------
 
-test("desligado, o menu tem EXATAMENTE 29 telas", () => {
+test("desligado, o menu tem EXATAMENTE 30 telas", () => {
   const itens = menu({ plano: "admin", papel: false });
 
   // Se este numero mudou, foi porque alguem acrescentou (ou tirou) um item do
@@ -118,8 +118,9 @@ test("desligado, o menu tem EXATAMENTE 29 telas", () => {
   // desligado mostra 8 entradas de primeiro nivel com as 29 telas dentro. As
   // duas contagens vivem em suites diferentes de proposito -- esta conta TELAS,
   // que e o que o modo papel filtra; `test:menu-agrupado` conta as entradas.
-  assert.equal(itens.length, 29);
-  assert.equal(navigation.length, 29);
+  // 29 -> 30 na 078: entrou "Casa" (`/dashboard/casa`).
+  assert.equal(itens.length, 30);
+  assert.equal(navigation.length, 30);
 });
 
 test("desligado, o filtro do modo devolve o MESMO array -- sem copia", () => {
@@ -172,7 +173,7 @@ test("ligado, os 3 itens sao as telas certas -- conferido pelo NOME", () => {
   ]);
 });
 
-test("ligado, as 26 telas restantes saem do menu -- nenhuma sobra", () => {
+test("ligado, as 27 telas restantes saem do menu -- nenhuma sobra", () => {
   const dentro = new Set(hrefs(menu({ plano: "admin", papel: true })));
   const fora = hrefs(menu({ plano: "admin", papel: false })).filter(
     (href) => !dentro.has(href)
@@ -203,7 +204,14 @@ test("ligado, as 26 telas restantes saem do menu -- nenhuma sobra", () => {
   //     nada de contas divididas"; esta linha e a guarda dessa frase NO MENU.
   //     ESCONDER NAO E FILTRAR O DINHEIRO: grupo escondido daqui continua
   //     somando no painel e aceitando lancamento (fases F2 e F3 da HMO-462).
-  assert.equal(fora.length, 26);
+  //
+  // 26 -> 27 na 078: "Casa" fica FORA do modo, pelo mesmo motivo de Grupos
+  // ("nada de grupos, nada de contas divididas").
+  assert.equal(fora.length, 27);
+  assert.ok(
+    fora.includes("/dashboard/casa"),
+    "Casa deveria estar escondida pelo modo, como Grupos"
+  );
   assert.ok(
     fora.includes("/dashboard/mybank"),
     "o MyBank deveria estar entre as telas escondidas pelo modo"
@@ -275,13 +283,14 @@ test("o plano e o OUTRO filtro: cada plano tem a sua contagem", () => {
   // investimento tem MyBank), entao ele entra no menu de todo plano, inclusive
   // de quem ainda nao carregou a assinatura. Se um dia alguem gatear a tela, sao
   // estes cinco numeros que deixam de fechar -- e nao um comentario.
-  assert.equal(menu({ plano: "admin", papel: false }).length, 29);
-  assert.equal(menu({ plano: "trader", papel: false }).length, 28);
-  assert.equal(menu({ plano: "invest", papel: false }).length, 27);
-  assert.equal(menu({ plano: "free", papel: false }).length, 27);
+  // E de 1 outra vez na 078 ("Casa", sem `requiredPlans`).
+  assert.equal(menu({ plano: "admin", papel: false }).length, 30);
+  assert.equal(menu({ plano: "trader", papel: false }).length, 29);
+  assert.equal(menu({ plano: "invest", papel: false }).length, 28);
+  assert.equal(menu({ plano: "free", papel: false }).length, 28);
   // Sem assinatura carregada ninguem ve item restrito. E o estado dos primeiros
   // quadros, e o menu dele e o do `free`.
-  assert.equal(menu({ plano: undefined, papel: false }).length, 27);
+  assert.equal(menu({ plano: undefined, papel: false }).length, 28);
 
   // A CONTAGEM NAO DIZ QUAIS. Trocar uma tela restrita pela outra -- Trading
   // exigindo so `admin` e Admin passando a aceitar `trader` -- manteria os
