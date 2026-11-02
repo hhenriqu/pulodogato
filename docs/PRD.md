@@ -30,6 +30,7 @@
 | 2.9 | 24/10/2026 | RN004.5 e RN004.6 novas: a conta prevista no cartão (a despesa fixa e a avulsa) é uma cobrança. Cai na fatura pelo fechamento, soma como prevista antes do dia e vira compra sozinha no dia. Apagar a compra que o app lançou pula a cobrança | Helio |
 | 2.10 | 27/10/2026 | RN020.8 a RN020.11 novas: a conexão funciona como um grupo de duas pessoas. A despesa fixa, a prevista e a parcelada também se dividem com uma conexão, e cada mês gera o "A receber de" e o "Pagamento a"; a tela da conexão mostra quanto cada um paga por mês | Helio |
 | 2.11 | 02/11/2026 | RN023 nova: o grupo tem tipo, casa ou evento, separado da regra de entrada (público ou privado). Os grupos que já existiam viraram casa quando tinham dia de fechamento | Helio |
+| 2.13 | 02/11/2026 | RN025 nova: o participante sem conta no app (só o nome) divide as despesas do grupo, aparece no saldo e no acerto; quem tem conta lança a despesa que outra pessoa pagou, que fica só no grupo. Nesta versão, nenhum dos dois entra em grupo com dia de fechamento | Helio |
 
 > **O que a versão 2.0 corrigiu.** Até aqui esta PRD descrevia um app de carteira
 > de investimentos: o problema era "investidores pessoa física", as personas eram
@@ -707,6 +708,33 @@ O Resultado de cada um fecha na responsabilidade, e a soma dá os R$ 2.000.
 - RN023.5 Nesta versão o tipo não trava nada: um evento pode ter dia de
   fechamento e uma casa pode ficar sem. A visão da casa e o evento que acerta
   uma vez e arquiva leem este tipo e vêm em entregas próprias.
+
+### RN025 — Participante sem conta e despesa paga por outro ✅ **(banco + tela)**
+
+- RN025.1 O admin adiciona ao grupo alguém que não tem conta no app, só com o
+  nome (até 80 caracteres). Essa pessoa é um membro como os outros na divisão:
+  recebe a parte dela de cada despesa nova, aparece no saldo do grupo e nas
+  sugestões de acerto. Ela não faz login, não é admin e não recebe aviso
+  (`group_members.user_id` nulo com `display_name`, migration 077).
+- RN025.2 Quem tem conta lança a despesa que **outra pessoa pagou** ("o João
+  pagou o carvão"), escolhendo em "Quem pagou". Essa despesa fica **só no
+  grupo**: não sai de conta nenhuma nem entra no Resultado de ninguém, conta
+  inteira como pago de quem pagou e se divide pela regra do grupo (o peso
+  configurado, ou partes iguais). Valor, moeda e pagador não se editam: apaga
+  e lança de novo. Quem lançou ou o admin apaga.
+- RN025.3 O acerto com quem não tem conta é registrado por quem tem conta e é
+  parte dele, com a perna na conta dessa pessoa, como na RN019. Entre dois
+  participantes sem conta, o admin registra que o dinheiro passou, sem perna.
+- RN025.4 O participante sem conta sai do grupo pelo admin, e só enquanto não
+  tem histórico (nenhuma parte, despesa paga ou acerto). Com histórico, primeiro
+  se acerta.
+- RN025.5 Nesta versão, grupo com dia de fechamento (RN018) não recebe
+  participante sem conta nem despesa paga por outro, e o dia de fechamento não
+  pode ser ligado num grupo que já os tem: o fechamento gera uma conta para
+  cada pessoa com conta e só lê despesa lançada numa conta.
+- RN025.6 Ficam para entregas próprias: a parte de quem tem conta numa despesa
+  paga por outro entrar no Resultado do mês, e o participante sem conta
+  "virar" a conta que ele criar depois.
 
 ---
 

@@ -415,6 +415,7 @@
   ],
   "group_member_balances": [
     "amount_currency",
+    "display_name",
     "group_currency",
     "group_id",
     "member_id",
@@ -439,6 +440,7 @@
   ],
   "group_members": [
     "archived_at",
+    "display_name",
     "group_id",
     "id",
     "joined_at",
@@ -465,11 +467,13 @@
     "created_by",
     "currency",
     "exchange_rate",
+    "from_member_id",
     "from_user_id",
     "group_id",
     "id",
     "note",
     "settled_on",
+    "to_member_id",
     "to_user_id",
     "updated_at"
   ],
@@ -502,10 +506,16 @@
     "valor_total"
   ],
   "group_transactions": [
+    "amount",
     "created_at",
     "created_by",
+    "currency",
+    "description",
+    "exchange_rate",
+    "expense_date",
     "group_id",
     "id",
+    "paid_by_member_id",
     "split_type",
     "transaction_id"
   ],

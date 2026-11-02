@@ -118,12 +118,14 @@ Regras: RN007, RN008, RN018, RN019 e as regras de saída
 
 O que a viagem ou o churrasco precisam e **não tem**:
 
-- **Participante sem app.** O amigo do churrasco precisa criar conta para entrar
-  na divisão (o convite por email da 039 espera a conta nascer). Para o caso de
-  uso "dividir um churrasco", essa é a maior barreira.
-- **Lançar o que outra pessoa pagou.** O pagador é sempre quem lança
-  (`financial_transactions.user_id`). Não dá para o organizador registrar "o
-  João pagou o carvão".
+- ~~**Participante sem app.**~~ Feito na migration 077 (RN025): o admin
+  adiciona alguém só com o nome (`group_members.user_id` nulo,
+  `display_name`), que divide, aparece no saldo e acerta. Fora do grupo com
+  dia de fechamento, por enquanto.
+- ~~**Lançar o que outra pessoa pagou.**~~ Feito na 077: a despesa paga por
+  outro membro fica só no grupo (`group_transactions` sem `transaction_id`,
+  com `paid_by_member_id`), pela função `lancar_despesa_paga_por_membro`.
+  Falta a parte de quem tem conta entrar no Resultado do mês.
 - **Grupo rápido.** Criar grupo exige configurar divisão, moeda, convites. Não
   há um caminho de "evento" que acerta uma vez e arquiva sozinho.
 - **Despesa só do grupo.** Toda despesa de grupo é também um lançamento pessoal
