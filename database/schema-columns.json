@@ -240,6 +240,7 @@
   "financial_accounts": [
     "account_type",
     "bank_name",
+    "casa_id",
     "closing_day",
     "color_hex",
     "created_at",
@@ -439,6 +440,8 @@
   ],
   "group_members": [
     "archived_at",
+    "compartilha_com_a_casa",
+    "display_name",
     "group_id",
     "id",
     "joined_at",

@@ -30,6 +30,7 @@
 | 2.9 | 24/10/2026 | RN004.5 e RN004.6 novas: a conta prevista no cartão (a despesa fixa e a avulsa) é uma cobrança. Cai na fatura pelo fechamento, soma como prevista antes do dia e vira compra sozinha no dia. Apagar a compra que o app lançou pula a cobrança | Helio |
 | 2.10 | 27/10/2026 | RN020.8 a RN020.11 novas: a conexão funciona como um grupo de duas pessoas. A despesa fixa, a prevista e a parcelada também se dividem com uma conexão, e cada mês gera o "A receber de" e o "Pagamento a"; a tela da conexão mostra quanto cada um paga por mês | Helio |
 | 2.11 | 02/11/2026 | RN023 nova: o grupo tem tipo, casa ou evento, separado da regra de entrada (público ou privado). Os grupos que já existiam viraram casa quando tinham dia de fechamento | Helio |
+| 2.12 | 02/11/2026 | RN024 nova: a visão da casa. O mês da família somado (sem contar duas vezes o que um membro deve ao outro), a conta conjunta e o dependente sem login. Cada membro escolhe mostrar o próprio mês | Helio |
 
 > **O que a versão 2.0 corrigiu.** Até aqui esta PRD descrevia um app de carteira
 > de investimentos: o problema era "investidores pessoa física", as personas eram
@@ -180,6 +181,10 @@ rateio de cada lançamento.
 
 Desde a RN023, o grupo diz o que ele é: a **casa** (a família, que fecha todo
 mês) ou um **evento** (a viagem, o churrasco, que acerta uma vez).
+
+A casa tem uma tela própria (RN024): o mês da família somado, onde o dinheiro
+dela está, as contas conjuntas e quem mora junto, inclusive o dependente sem
+login.
 
 ### Planejamento ✅
 
@@ -707,6 +712,38 @@ O Resultado de cada um fecha na responsabilidade, e a soma dá os R$ 2.000.
 - RN023.5 Nesta versão o tipo não trava nada: um evento pode ter dia de
   fechamento e uma casa pode ficar sem. A visão da casa e o evento que acerta
   uma vez e arquiva leem este tipo e vêm em entregas próprias.
+
+### RN024 — A visão da casa ✅ **(banco + tela)**
+
+- RN024.1 A tela **Casa** mostra, para cada grupo do tipo casa, o mês da
+  família: Entrou, Saiu e Resultado somados de quem mora junto, o número de
+  cada pessoa, e onde o dinheiro está hoje (contas conjuntas e o total das
+  contas de cada um, sem cartão). Migration 078.
+- RN024.2 Mostrar o mês é escolha de cada membro, e nasce desligado. Só o
+  próprio membro liga ou desliga o dele; nem o admin muda o de outro. O que a
+  casa vê são os totais (o mesmo número do painel da pessoa) e o total do saldo
+  das contas de dinheiro, nunca a lista de lançamentos pessoais. Quem não
+  mostra aparece na lista de pessoas, e a tela avisa que a soma está
+  incompleta.
+- RN024.3 A soma da casa não conta duas vezes a dívida de dentro dela. Quando
+  um membro paga uma despesa de grupo e outro membro que também mostra o mês
+  fica com uma parte, essa parte sai do Saiu da casa: é dívida entre os dois,
+  não dinheiro que saiu da casa. No grupo com dia de fechamento e na divisão
+  com conexão, "Pagamento ao grupo"/"A receber do grupo" e "Pagamento a"/"A
+  receber de" já se anulam na soma. Se só um dos lados mostra o mês, a dívida
+  dele aparece na soma.
+- RN024.4 **Conta conjunta.** O dono marca uma conta dele como conjunta de uma
+  casa de que é membro. Os membros ativos da casa veem a conta, o saldo e o
+  extrato (com quem lançou cada linha) e lançam nela pelo formulário de
+  lançamento. O lançamento é de quem lançou e entra no Resultado dele. Só o
+  dono muda os dados da conta. Cartão de crédito não pode ser conjunto (a
+  fatura é de quem tem o cartão). Quem sai da casa para de ver a conta e não
+  mexe mais nos lançamentos dela.
+- RN024.5 **Dependente sem login.** É o membro sem conta (o mesmo do
+  participante sem conta do grupo de evento): só nome, sem login. O admin da
+  casa o adiciona pela tela da casa. O dependente aparece entre as pessoas da
+  casa e não tem mês próprio. Ficar fora do rateio e conviver com o dia de
+  fechamento vem numa entrega seguinte.
 
 ---
 

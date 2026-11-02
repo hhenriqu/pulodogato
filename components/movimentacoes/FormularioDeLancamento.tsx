@@ -566,7 +566,9 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
         }
       }
 
-      const respostaDeContas = await fetch("/api/financial-accounts");
+      // `?conjuntas=1`: as contas conjuntas da casa que sao de outro membro
+      // tambem aparecem, para lancar nelas (078).
+      const respostaDeContas = await fetch("/api/financial-accounts?conjuntas=1");
       const dadosDeContas = await respostaDeContas.json();
       if (respostaDeContas.ok) {
         contasCarregadas = dadosDeContas.accounts || [];

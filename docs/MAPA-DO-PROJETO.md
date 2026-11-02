@@ -88,14 +88,17 @@ emprestados**:
 
 O que a família precisa e **não tem**:
 
-- **Visão da casa.** Não há tela que some o mês da família (Resultado, saldo,
-  previstas de todos). Cada um vê só o seu, mais a parte do grupo.
-- **Conta conjunta.** `financial_accounts.user_id` é um dono só. A conta do
-  casal tem de ser cadastrada por um e ninguém mais a vê.
+- ~~**Visão da casa.**~~ Feito na migration 078 (RN024): a tela `casa` soma o
+  Resultado e o saldo de quem escolhe mostrar o mês, sem contar duas vezes o
+  que um membro deve ao outro (`resultado_da_casa`, `lib/resultado-da-casa.ts`).
+  Falta somar as previstas de todos.
+- ~~**Conta conjunta.**~~ Feito na 078: `financial_accounts.casa_id` marca a
+  conta como conjunta; os membros veem saldo e extrato e lançam nela.
 - **Metas e orçamento da família.** Metas compartilhadas estão no backlog da
   PRD; o orçamento de grupo existe mas é do grupo, não da casa.
-- **Dependente sem login.** Filho, ou quem não vai instalar o app, não pode ser
-  membro: `group_members.user_id` é obrigatório.
+- **Dependente sem login.** O membro sem conta (`group_members.display_name`,
+  077/078) já aparece na casa. Falta ele ficar fora do rateio e poder estar
+  na casa com dia de fechamento.
 - ~~**Dizer que o grupo é a casa.**~~ Feito na migration 076 (RN023):
   `expense_groups.group_kind` é `casa` ou `evento`, separado de `group_type`
   (que é a regra de entrada, público ou privado). Os grupos com `closing_day`
