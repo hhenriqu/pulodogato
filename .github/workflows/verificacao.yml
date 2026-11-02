@@ -5030,8 +5030,14 @@ jobs:
 
           desligar 'app/(dashboard)/dashboard/page.tsx' '\&faturaAte=' '\&' \
             'o painel para de pedir a fatura paga ate o fim do periodo -- a paga adiantada some'
-          desligar 'app/api/reports/cash-flow/route.ts' 'realizadoComCartaoPelaFatura(linhas, faturasPagas)' 'linhas.slice()' \
-            'a rota importa a regra e NAO a chama'
+          # Desde o Resultado unico (mapa, prioridade 1) a regra e chamada no
+          # servico, e a rota so o chama repassando `faturaAte`.
+          desligar 'lib/services/resultado-do-mes.ts' 'realizadoComCartaoPelaFatura(linhas, faturas.linhas)' 'linhas.slice()' \
+            'o Resultado importa a regra e NAO a chama'
+          desligar 'app/api/reports/cash-flow/route.ts' 'lerResultadoDoPeriodo(supabase' 'naoChama(supabase' \
+            'a rota para de pedir o Resultado ao servico unico'
+          desligar 'app/api/reports/cash-flow/route.ts' '          faturaAte,' '' \
+            'a rota para de repassar faturaAte -- a fatura paga adiantada some'
           desligar 'app/api/dashboard/previsao/route.ts' 'agendaSemCompraNoCartao(' 'Array.from(' \
             'a Previsao para de tirar a compra no cartao -- o cartao em dobro'
           desligar 'app/api/dashboard/previsao/route.ts' 'faturasPrevistasDaJanela(supabase' 'naoChama(supabase' \
@@ -5086,7 +5092,7 @@ jobs:
           desligar 'app/(dashboard)/dashboard/page.tsx' 'LEGENDA_DO_CARTAO.fatura' '""' \
             'o painel perde a legenda gemea -- so UMA das duas telas explica'
 
-          echo "A verificacao fica vermelha nos doze pontos de fiacao."
+          echo "A verificacao fica vermelha nos catorze pontos de fiacao."
 
       - name: 'A arvore voltou ao lugar depois de "A verificacao sabe falhar (fiacao do cartao pela fatura)"'
         run: |

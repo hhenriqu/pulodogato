@@ -1,0 +1,21 @@
+{
+  "//": [
+    "O Resultado do mes unico (lib/services/resultado-do-mes.ts), medido com o",
+    "duble do Supabase. `rootDir` e a raiz: o servico mora em lib/services e",
+    "importa @/lib, entao o emit espelha a raiz e o resolve-aliases roda com",
+    "--espelha-raiz. Ver scripts/test-resultado-do-mes.mjs."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-resultado-do-mes",
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": ["../lib/services/resultado-do-mes.ts"]
+}
