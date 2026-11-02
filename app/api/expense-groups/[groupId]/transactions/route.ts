@@ -5,6 +5,7 @@ import { taxaParaGravar } from "@/lib/cambio";
 import { moedaDaViagem } from "@/lib/moeda-do-grupo";
 import { divisaoParaGravar } from "@/lib/divisao-do-grupo";
 import { conferirEscrita } from "@/lib/escrita-conferida";
+import { membroParaATela } from "@/lib/membro-sem-conta";
 
 // Sem o generic `Database` no client, `select()` volta `any`. `transaction`,
 // `category`, `member` e `user` sao embeds many-to-one (objeto, nao lista) e
@@ -14,6 +15,15 @@ type DespesaDoGrupo = {
   id: string;
   split_type: string | null;
   created_at: string;
+  created_by: string | null;
+  // A despesa paga por outro (077): mora so no grupo, sem `transaction`, com
+  // estes campos na propria linha.
+  paid_by_member_id: string | null;
+  amount: number | string | null;
+  description: string | null;
+  expense_date: string | null;
+  currency: string | null;
+  exchange_rate: number | string | null;
   transaction: {
     id: string;
     description: string | null;
@@ -33,12 +43,20 @@ type ParteDaDespesa = {
   status: string | null;
   member: {
     id: string;
+    user_id: string | null;
+    display_name: string | null;
     user: {
       id: string;
       full_name: string | null;
       avatar_url: string | null;
     } | null;
   } | null;
+};
+
+type MembroPagador = {
+  id: string;
+  user_id: string | null;
+  display_name: string | null;
 };
 
 export async function GET(
@@ -82,6 +100,13 @@ export async function GET(
         id,
         split_type,
         created_at,
+        created_by,
+        paid_by_member_id,
+        amount,
+        description,
+        expense_date,
+        currency,
+        exchange_rate,
         transaction:financial_transactions (
           id,
           description,
@@ -109,9 +134,98 @@ export async function GET(
       );
     }
 
+    // Quem pagou a despesa so do grupo (077): a linha do membro, com ou sem
+    // conta. Uma consulta para o grupo todo, e nao uma por despesa.
+    const idsDosPagadores = Array.from(
+      new Set(
+        (groupTransactions || [])
+          .map((gt) => gt.paid_by_member_id)
+          .filter((id): id is string => Boolean(id))
+      )
+    );
+    const { data: pagadores } = idsDosPagadores.length
+      ? await supabase
+          .from("group_members")
+          .select("id, user_id, display_name")
+          .in("id", idsDosPagadores)
+          .returns<MembroPagador[]>()
+      : { data: [] as MembroPagador[] };
+    const idsDePerfil = (pagadores || [])
+      .map((p) => p.user_id)
+      .filter((id): id is string => Boolean(id));
+    const { data: perfisDosPagadores } = idsDePerfil.length
+      ? await supabase
+          .from("profiles")
+          .select("id, full_name, avatar_url")
+          .in("id", idsDePerfil)
+      : { data: [] };
+    const pagadorPorMembro = new Map(
+      (pagadores || []).map((p) => [
+        p.id,
+        membroParaATela(
+          p,
+          (perfisDosPagadores || []).find((x) => x.id === p.user_id) ?? null
+        ),
+      ])
+    );
+
+    const partesDaDespesa = async (gtId: string) => {
+      const { data: splits } = await supabase
+        .from("group_expense_splits")
+        .select(
+          `
+          id,
+          amount,
+          status,
+          member:group_members (
+            id,
+            user_id,
+            display_name,
+            user:profiles!group_members_user_id_fkey (
+              id,
+              full_name,
+              avatar_url
+            )
+          )
+        `
+        )
+        .eq("group_transaction_id", gtId)
+        .returns<ParteDaDespesa[]>();
+
+      return (splits || []).map((split) => ({
+        id: split.id,
+        amount: split.amount,
+        status: split.status,
+        member: split.member
+          ? membroParaATela(split.member, split.member.user)
+          : null,
+      }));
+    };
+
     // Get splits for each transaction and payer info
     const transactionsWithSplits = await Promise.all(
       (groupTransactions || []).map(async (gt) => {
+        // A despesa paga por outro (077): os campos estao na propria linha, e
+        // o `id` devolvido e o da linha do grupo (nao ha lancamento).
+        if (!gt.transaction && gt.paid_by_member_id) {
+          return {
+            id: gt.id,
+            group_transaction_id: gt.id,
+            so_do_grupo: true,
+            created_by: gt.created_by,
+            description: gt.description,
+            amount: Number(gt.amount) || 0,
+            currency: gt.currency || "BRL",
+            exchange_rate: Number(gt.exchange_rate ?? 1) || 1,
+            transaction_date: gt.expense_date,
+            created_at: gt.created_at,
+            payer: pagadorPorMembro.get(gt.paid_by_member_id) ?? null,
+            paid_by_member_id: gt.paid_by_member_id,
+            splits: await partesDaDespesa(gt.id),
+            category: null,
+          };
+        }
+
         if (!gt.transaction) return null;
 
         // Get payer info separately
@@ -121,28 +235,10 @@ export async function GET(
           .eq("id", gt.transaction.user_id)
           .single();
 
-        const { data: splits } = await supabase
-          .from("group_expense_splits")
-          .select(
-            `
-            id,
-            amount,
-            status,
-            member:group_members (
-              id,
-              user:profiles!group_members_user_id_fkey (
-                id,
-                full_name,
-                avatar_url
-              )
-            )
-          `
-          )
-          .eq("group_transaction_id", gt.id)
-          .returns<ParteDaDespesa[]>();
-
         return {
           id: gt.transaction.id,
+          group_transaction_id: gt.id,
+          so_do_grupo: false,
           description: gt.transaction.description,
           amount: Math.abs(gt.transaction.amount), // Convert to positive for display
           // `amount` esta NESTA moeda, e nao em real. A lista precisa das duas
@@ -153,15 +249,10 @@ export async function GET(
           transaction_date: gt.transaction.transaction_date,
           created_at: gt.transaction.created_at,
           payer: payer,
-          splits: (splits || []).map((split) => ({
-            id: split.id,
-            // A parte de cada um esta na moeda da DESPESA: `group_expense_splits`
-            // nao tem moeda propria de proposito (ver a 026), porque a parte e
-            // uma fracao do todo e a cotacao certa e a da despesa que a originou.
-            amount: split.amount,
-            status: split.status,
-            member: split.member?.user,
-          })),
+          // A parte de cada um esta na moeda da DESPESA: `group_expense_splits`
+          // nao tem moeda propria de proposito (ver a 026), porque a parte e
+          // uma fracao do todo e a cotacao certa e a da despesa que a originou.
+          splits: await partesDaDespesa(gt.id),
           category: gt.transaction.category,
         };
       })

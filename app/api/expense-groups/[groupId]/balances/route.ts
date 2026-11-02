@@ -8,14 +8,17 @@ import {
   contagemPorMembro,
   type DespesaParaContagem,
 } from "@/lib/contagem-do-grupo";
+import { idDaParte } from "@/lib/membro-sem-conta";
 
 // O client nao tem o generic `Database`: sem declarar a linha, todo `select()`
 // volta `any` e o `tsc` para de conferir os nomes de coluna. Os numericos da
 // view chegam como string no JSON do PostgREST -- e o que justifica o `Number()`
 // em cada um deles mais abaixo.
 type LinhaDeSaldoDoGrupo = {
-  user_id: string;
+  /** Nulo para o participante sem conta (077); o nome vem em display_name. */
+  user_id: string | null;
   member_id: string;
+  display_name: string | null;
   total_paid: number | string;
   total_owed: number | string;
   settlements_paid: number | string;
@@ -41,13 +44,15 @@ type PerfilDoMembro = {
 // uma afirmacao minha, o PostgREST nao a confere (HMO-259).
 type DespesaDoGrupo = {
   id: string;
-  transaction: { user_id: string | null; transaction_type: string | null };
+  /** A despesa paga por outro (077) nao tem `transaction`: quem pagou e este membro. */
+  paid_by_member_id: string | null;
+  transaction: { user_id: string | null; transaction_type: string | null } | null;
   splits: { member_id: string | null; status: string | null }[] | null;
 };
 
 type MembroDoGrupo = {
   id: string;
-  user_id: string;
+  user_id: string | null;
 };
 
 /**
@@ -139,6 +144,7 @@ export async function GET(
         `
         user_id,
         member_id,
+        display_name,
         total_paid,
         total_owed,
         settlements_paid,
@@ -161,7 +167,9 @@ export async function GET(
 
     // A view nao carrega nome e foto (ela e sobre dinheiro). Um SELECT em
     // profiles resolve, e e uma consulta so para o grupo inteiro.
-    const userIds = (linhas || []).map((l) => l.user_id);
+    const userIds = (linhas || [])
+      .map((l) => l.user_id)
+      .filter((id): id is string => Boolean(id));
     const { data: perfis } = await supabase
       .from("profiles")
       .select("id, full_name, avatar_url")
@@ -182,7 +190,8 @@ export async function GET(
       .select(
         `
         id,
-        transaction:financial_transactions!inner (
+        paid_by_member_id,
+        transaction:financial_transactions (
           user_id,
           transaction_type
         ),
@@ -217,23 +226,46 @@ export async function GET(
       );
     }
 
+    // A identidade de cada um na contagem e a mesma do saldo: o user_id de
+    // quem tem conta, a linha do membro de quem nao tem (077).
     const userIdPorMembro = new Map<string, string>(
-      (membrosDoGrupo || []).map((m) => [m.id, m.user_id])
+      (membrosDoGrupo || []).map((m) => [
+        m.id,
+        idDaParte({ member_id: m.id, user_id: m.user_id }),
+      ])
     );
 
-    const despesasParaContagem: DespesaParaContagem[] = (
-      despesasDoGrupo || []
-    ).map((gt) => ({
-      id: gt.id,
-      pagador: gt.transaction?.user_id,
-      tipo: gt.transaction?.transaction_type,
-      rateios: gt.splits || [],
-    }));
+    const despesasParaContagem: DespesaParaContagem[] = (despesasDoGrupo || [])
+      // Sem `transaction` e sem pagador e o lancamento que a RLS escondeu:
+      // fica fora, como no `!inner` de antes.
+      .filter((gt) => gt.transaction || gt.paid_by_member_id)
+      .map((gt) => ({
+        id: gt.id,
+        pagador: gt.transaction
+          ? gt.transaction.user_id
+          : userIdPorMembro.get(gt.paid_by_member_id as string),
+        tipo: gt.transaction ? gt.transaction.transaction_type : "expense",
+        rateios: gt.splits || [],
+      }));
 
     const contagem = contagemPorMembro(despesasParaContagem, userIdPorMembro);
 
     const balances = (linhas || []).map((l) => ({
-      member: perfilPor.get(l.user_id) || { id: l.user_id, full_name: null },
+      // `member.id` e a identidade da parte (077): o user_id de quem tem conta,
+      // a linha do membro de quem nao tem. `sem_conta` e o selo da tela.
+      member: l.user_id
+        ? {
+            ...(perfilPor.get(l.user_id) || { id: l.user_id, full_name: null }),
+            member_id: l.member_id,
+            sem_conta: false,
+          }
+        : {
+            id: l.member_id,
+            full_name: l.display_name,
+            avatar_url: null,
+            member_id: l.member_id,
+            sem_conta: true,
+          },
       balance: Number(l.net_balance),
       total_paid: Number(l.total_paid),
       total_owed: Number(l.total_owed),
@@ -241,7 +273,7 @@ export async function GET(
       settlements_received: Number(l.settlements_received),
       // A UNIAO das despesas que ele pagou com as que lhe cabe parte, contando
       // cada despesa uma vez. Nao e `paid_count + owed_count`: ver o cabecalho.
-      transactions_count: contagem.get(l.user_id) ?? 0,
+      transactions_count: contagem.get(idDaParte(l)) ?? 0,
     }));
 
     // Grupo fechado soma zero: todo real pago a mais por um e um real pago a

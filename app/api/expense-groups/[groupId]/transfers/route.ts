@@ -6,11 +6,15 @@ import {
   transfersForUser,
   type MemberBalance,
 } from "@/lib/settlement";
+import { idDaParte } from "@/lib/membro-sem-conta";
 
 // Sem o generic `Database` no client, `select()` volta `any` e o `tsc` deixa de
 // conferir nome de coluna. `net_balance` e numeric: chega como string no JSON.
 type LinhaDeSaldo = {
-  user_id: string;
+  /** Nulo para o participante sem conta (077). */
+  user_id: string | null;
+  member_id: string;
+  display_name: string | null;
   net_balance: number | string;
 };
 
@@ -65,7 +69,7 @@ export async function GET(
 
     const { data: linhas, error } = await supabase
       .from("group_member_balances")
-      .select("user_id, net_balance")
+      .select("user_id, member_id, display_name, net_balance")
       .eq("group_id", groupId)
       .returns<LinhaDeSaldo[]>();
 
@@ -77,7 +81,9 @@ export async function GET(
       );
     }
 
-    const userIds = (linhas || []).map((l) => l.user_id);
+    const userIds = (linhas || [])
+      .map((l) => l.user_id)
+      .filter((id): id is string => Boolean(id));
     const { data: perfis } = await supabase
       .from("profiles")
       .select("id, full_name, avatar_url")
@@ -86,12 +92,22 @@ export async function GET(
 
     const perfilPor = new Map((perfis || []).map((p) => [p.id, p]));
 
-    const balances: MemberBalance[] = (linhas || []).map((l) => ({
-      user_id: l.user_id,
-      net_balance: Number(l.net_balance),
-      full_name: perfilPor.get(l.user_id)?.full_name ?? null,
-      avatar_url: perfilPor.get(l.user_id)?.avatar_url ?? null,
-    }));
+    // A chave do algoritmo e a identidade da parte (077): o user_id de quem
+    // tem conta, a linha do membro de quem nao tem. `lib/settlement.ts` so
+    // precisa de uma chave unica por pessoa, e nao sabe a diferenca.
+    const membroPorParte = new Map<string, { member_id: string; sem_conta: boolean }>();
+    const balances: MemberBalance[] = (linhas || []).map((l) => {
+      const parte = idDaParte(l);
+      membroPorParte.set(parte, { member_id: l.member_id, sem_conta: !l.user_id });
+      return {
+        user_id: parte,
+        net_balance: Number(l.net_balance),
+        full_name: l.user_id
+          ? perfilPor.get(l.user_id)?.full_name ?? null
+          : l.display_name,
+        avatar_url: l.user_id ? perfilPor.get(l.user_id)?.avatar_url ?? null : null,
+      };
+    });
 
     const transfers = simplifySettlements(balances);
     const sobra = residual(balances);
@@ -106,11 +122,15 @@ export async function GET(
           id: t.from_user_id,
           full_name: t.from_name,
           avatar_url: perfilPor.get(t.from_user_id)?.avatar_url ?? null,
+          member_id: membroPorParte.get(t.from_user_id)?.member_id ?? null,
+          sem_conta: membroPorParte.get(t.from_user_id)?.sem_conta ?? false,
         },
         to: {
           id: t.to_user_id,
           full_name: t.to_name,
           avatar_url: perfilPor.get(t.to_user_id)?.avatar_url ?? null,
+          member_id: membroPorParte.get(t.to_user_id)?.member_id ?? null,
+          sem_conta: membroPorParte.get(t.to_user_id)?.sem_conta ?? false,
         },
         amount: t.amount,
       })),

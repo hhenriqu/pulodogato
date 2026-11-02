@@ -5,6 +5,7 @@ import { moedaDoGrupoParaGravar } from "@/lib/moeda-do-grupo";
 import { conferirEscrita } from "@/lib/escrita-conferida";
 import { diaDeFechamento } from "@/lib/fechamento-por-periodo";
 import { tipoDoGrupoParaGravar } from "@/lib/tipo-do-grupo";
+import { membroParaATela } from "@/lib/membro-sem-conta";
 
 // `user` e embed de UM perfil (FK many-to-one), por isso objeto e nao lista --
 // e `| null` porque a RLS de `profiles` pode esconder a linha, caso em que o
@@ -15,8 +16,12 @@ type MembroDoGrupo = {
   role: string;
   status: string;
   percentage: number | string | null;
+  /** Nulo para o participante sem conta (077). */
+  user_id: string | null;
+  /** O nome de quem nao tem conta (077). */
+  display_name: string | null;
   user: {
-    id: string;
+    id: string | null;
     full_name: string | null;
     avatar_url: string | null;
   } | null;
@@ -90,6 +95,8 @@ export async function GET(
         role,
         status,
         percentage,
+        user_id,
+        display_name,
         user:profiles!group_members_user_id_fkey (
           id,
           full_name,
@@ -107,10 +114,21 @@ export async function GET(
 
     // `members` continua sendo so os ativos: e o que alimenta o controle de
     // acesso logo abaixo e todo o calculo de divisao. Pendente nao e membro.
-    const members = (allMembers || []).filter(
+    // O participante sem conta (077) chega com `user` nulo -- nao ha perfil.
+    // Ele ganha um perfil de fachada com `id: null` e o nome dele, para a tela
+    // continuar lendo `member.user.full_name`, e `sem_conta` para mostrar o
+    // selo. `id: null` garante que nenhuma comparacao com o usuario logado
+    // (admin, "sou eu") de verdadeiro por ele.
+    const comSemConta = (allMembers || []).map((member) => ({
+      ...member,
+      sem_conta: !member.user_id,
+      user: membroParaATela(member, member.user),
+    }));
+
+    const members = comSemConta.filter(
       (member) => member.status === "active"
     );
-    const pendingMembers = (allMembers || []).filter(
+    const pendingMembers = comSemConta.filter(
       (member) => member.status === "pending"
     );
 

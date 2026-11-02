@@ -45,7 +45,9 @@ import {
   CheckCircle,
   Clock,
   CalendarCheck,
+  Trash2,
 } from "lucide-react";
+import { AdicionarSemConta } from "@/components/grupos/AdicionarSemConta";
 import SplitSuggestions, {
   type SplitSuggestion,
 } from "@/components/financial/SplitSuggestions";
@@ -130,6 +132,9 @@ function valoresIniciaisDaDespesa(moedaDoGrupo: string | null | undefined) {
     // A cotacao do dia da compra, como TEXTO -- e o que `CampoDeCotacao`
     // manipula, e aceitar virgula depende de a leitura ser de texto.
     cotacao: "",
+    // Quem pagou (077). Vazio = eu, e a despesa entra na minha conta como
+    // sempre. A linha de outro membro = a despesa paga por outro, so no grupo.
+    paid_by_member_id: "",
   };
 }
 
@@ -163,8 +168,10 @@ interface GroupMember {
   role: "admin" | "member";
   status: "active" | "inactive" | "pending" | "removed";
   percentage: number;
+  /** Participante sem conta no app (077): so o nome, `user.id` nulo. */
+  sem_conta?: boolean;
   user: {
-    id: string;
+    id: string | null;
     full_name: string;
     avatar_url?: string;
   };
@@ -184,11 +191,17 @@ interface GroupTransaction {
   exchange_rate?: number | null;
   transaction_date: string;
   created_at: string;
+  /**
+   * A despesa paga por outro, lancada so no grupo (077). O `id` e o da linha
+   * do grupo, e nao ha lancamento em conta nenhuma.
+   */
+  so_do_grupo?: boolean;
+  created_by?: string | null;
   payer: {
-    id: string;
+    id: string | null;
     full_name: string;
     avatar_url?: string;
-  };
+  } | null;
   splits: {
     id: string;
     amount: number;
@@ -294,11 +307,14 @@ interface TransferSuggestion {
     id: string;
     full_name: string;
     avatar_url?: string;
+    /** Sem conta no app (077): `id` e a linha do membro. */
+    sem_conta?: boolean;
   };
   to: {
     id: string;
     full_name: string;
     avatar_url?: string;
+    sem_conta?: boolean;
   };
   amount: number;
 }
@@ -898,6 +914,90 @@ export default function GroupDetailPage() {
     }
   };
 
+  /**
+   * Apaga uma despesa paga por outro (077). So ela: a despesa com lancamento
+   * se apaga apagando o lancamento, na conta de quem pagou. Valor e pagador
+   * nao se editam (as partes foram feitas sobre eles): apagar e lancar de novo.
+   */
+  const handleApagarDespesaSoDoGrupo = async (id: string) => {
+    try {
+      const response = await fetch(
+        `/api/expense-groups/${groupId}/despesa-paga-por-outro?id=${encodeURIComponent(id)}`,
+        { method: "DELETE" }
+      );
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        toast.error(data.error || "Não foi possível apagar a despesa");
+        return;
+      }
+      toast.success("Despesa apagada do grupo.");
+      await Promise.all([loadTransactions(), loadBalances(), loadTransfers()]);
+    } catch (error) {
+      console.error("Erro ao apagar despesa so do grupo:", error);
+      toast.error("Não foi possível apagar a despesa");
+    }
+  };
+
+  /** Remove um participante sem conta que ainda nao tem historico (077). */
+  const handleRemoverSemConta = async (memberId: string) => {
+    try {
+      const response = await fetch(
+        `/api/expense-groups/${groupId}/members/${memberId}`,
+        { method: "DELETE" }
+      );
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        toast.error(data.error || "Não foi possível remover o participante");
+        return;
+      }
+      toast.success("Participante removido.");
+      await Promise.all([loadGroup(), loadBalances(), loadTransfers()]);
+    } catch (error) {
+      console.error("Erro ao remover participante sem conta:", error);
+      toast.error("Não foi possível remover o participante");
+    }
+  };
+
+  /**
+   * O acerto entre dois participantes SEM CONTA ("o João pagou o Pedro").
+   * Nenhum dos dois tem conta no app, entao nao ha perna nem conta a
+   * escolher: o admin so registra que o dinheiro passou (077).
+   */
+  const handleAcertoEntreSemConta = async (transfer: TransferSuggestion) => {
+    const chave = `${transfer.from.id}->${transfer.to.id}`;
+    setSettling(chave);
+    try {
+      const response = await fetch(
+        `/api/expense-groups/${groupId}/settlements`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            from_user_id: transfer.from.id,
+            to_user_id: transfer.to.id,
+            amount: transfer.amount,
+            currency: MOEDA_PADRAO,
+            exchange_rate: 1,
+          }),
+        }
+      );
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        toast.error(data.error || "Não foi possível registrar o acerto");
+        return;
+      }
+      toast.success(
+        `Registrado: ${transfer.from.full_name || "Sem nome"} pagou ${transfer.to.full_name || "Sem nome"}.`
+      );
+      await Promise.all([loadBalances(), loadTransfers(), loadSettlements()]);
+    } catch (error) {
+      console.error("Erro ao registrar acerto entre sem conta:", error);
+      toast.error("Não foi possível registrar o acerto");
+    } finally {
+      setSettling(null);
+    }
+  };
+
   const handleDesfazerAcerto = async (settlementId: string) => {
     try {
       const response = await fetch(
@@ -1078,6 +1178,50 @@ export default function GroupDetailPage() {
     // pessoa ter preenchido tudo. Antes da HMO-190 nao chegava nem o 400: a
     // despesa era gravada em partes IGUAIS e a tela dizia "Despesa adicionada
     // com sucesso!", que e o relato desta issue.
+    // A DESPESA PAGA POR OUTRO (077): vai so para o grupo, pela rota propria,
+    // e a divisao e a regra do grupo (peso configurado ou partes iguais) --
+    // as sugestoes de divisao abaixo sao do lancamento na minha conta.
+    if (expenseForm.paid_by_member_id) {
+      setSalvandoDespesa(true);
+      try {
+        const response = await fetch(
+          `/api/expense-groups/${groupId}/despesa-paga-por-outro`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              paid_by_member_id: expenseForm.paid_by_member_id,
+              amount: parseFloat(expenseForm.amount),
+              description: expenseForm.description,
+              expense_date: expenseForm.transaction_date,
+              currency: expenseForm.currency,
+              exchange_rate: taxa,
+            }),
+          }
+        );
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          toast.error(data.error || "Erro ao adicionar despesa");
+          return;
+        }
+        toast.success("Despesa registrada no grupo, paga por outra pessoa.");
+        const inicial = valoresIniciaisDaDespesa(group?.currency);
+        if (continuarNaDespesa) {
+          setExpenseForm((atual) => proximaDespesaDeGrupo(atual, inicial));
+        } else {
+          setShowAddExpense(false);
+          setExpenseForm(inicial);
+        }
+        await Promise.all([loadTransactions(), loadBalances(), loadTransfers()]);
+      } catch (error) {
+        console.error("Error adding expense paid by other:", error);
+        toast.error("Erro ao adicionar despesa");
+      } finally {
+        setSalvandoDespesa(false);
+      }
+      return;
+    }
+
     if (expenseForm.split_type !== "equal" && !selectedSplitSuggestion) {
       toast.error(
         "Escolha uma das divisões sugeridas abaixo, ou use a Divisão Igual."
@@ -1097,6 +1241,7 @@ export default function GroupDetailPage() {
         exchange_rate: taxa,
       };
       delete expenseData.cotacao;
+      delete expenseData.paid_by_member_id;
 
       // Adicionar dados da sugestão selecionada se houver.
       //
@@ -1677,9 +1822,9 @@ export default function GroupDetailPage() {
                         <div className="flex items-start justify-between mb-3">
                           <div className="flex items-center gap-3">
                             <Avatar className="h-8 w-8">
-                              <AvatarImage src={transaction.payer.avatar_url} />
+                              <AvatarImage src={transaction.payer?.avatar_url} />
                               <AvatarFallback>
-                                {inicial(transaction.payer.full_name)}
+                                {inicial(transaction.payer?.full_name)}
                               </AvatarFallback>
                             </Avatar>
                             <div>
@@ -1687,9 +1832,34 @@ export default function GroupDetailPage() {
                                 {transaction.description}
                               </h4>
                               <p className="text-sm text-muted-foreground">
-                                Pago por {transaction.payer.full_name} •{" "}
+                                Pago por {transaction.payer?.full_name || "Sem nome"} •{" "}
                                 {dataNaTela(transaction.transaction_date)}
                               </p>
+                              {/* A despesa paga por outro (077): mora so no
+                                  grupo, nao em conta nenhuma. Quem lancou ou
+                                  o admin apaga; valor e pagador nao se editam. */}
+                              {transaction.so_do_grupo && (
+                                <div className="flex items-center gap-2 mt-1">
+                                  <Badge variant="outline" className="text-xs">
+                                    Só no grupo
+                                  </Badge>
+                                  {(transaction.created_by === user?.id ||
+                                    souAdmin) && (
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      variant="ghost"
+                                      className="h-6 px-2 text-xs"
+                                      onClick={() =>
+                                        handleApagarDespesaSoDoGrupo(transaction.id)
+                                      }
+                                    >
+                                      <Trash2 className="h-3 w-3 mr-1" />
+                                      Apagar
+                                    </Button>
+                                  )}
+                                </div>
+                              )}
                             </div>
                           </div>
                           <div className="text-right">
@@ -2075,6 +2245,27 @@ export default function GroupDetailPage() {
                                   </p>
                                 )}
                               </div>
+                              {/* Entre dois sem conta (077): ninguem com
+                                  conta e parte, entao o admin registra que o
+                                  dinheiro passou -- sem perna, sem conta. */}
+                              {!souParte &&
+                                souAdmin &&
+                                transfer.from.sem_conta &&
+                                transfer.to.sem_conta && (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() =>
+                                      handleAcertoEntreSemConta(transfer)
+                                    }
+                                    disabled={settling === chave}
+                                  >
+                                    <CheckCircle className="h-4 w-4 mr-1" />
+                                    {settling === chave
+                                      ? "Registrando..."
+                                      : "Registrar que pagou"}
+                                  </Button>
+                                )}
                               {souParte && (
                                 <div className="flex flex-col gap-1">
                                   <Button
@@ -2402,9 +2593,14 @@ export default function GroupDetailPage() {
                       </Avatar>
                       <div>
                         <h4 className="font-medium flex items-center gap-2">
-                          {member.user.full_name}
+                          {member.user?.full_name || "Sem nome"}
                           {member.role === "admin" && (
                             <Crown className="h-4 w-4 text-warning" />
+                          )}
+                          {member.sem_conta && (
+                            <Badge variant="outline" className="text-xs">
+                              sem conta
+                            </Badge>
                           )}
                         </h4>
                         <p className="text-sm text-muted-foreground capitalize">
@@ -2412,7 +2608,7 @@ export default function GroupDetailPage() {
                         </p>
                       </div>
                     </div>
-                    <div className="text-right">
+                    <div className="text-right flex items-center gap-2">
                       <Badge
                         variant={
                           member.status === "active" ? "default" : "secondary"
@@ -2420,10 +2616,30 @@ export default function GroupDetailPage() {
                       >
                         {member.status}
                       </Badge>
+                      {/* So quem nao tem conta sai por aqui, e so sem
+                          historico: a rota responde 409 se ja dividiu algo. */}
+                      {souAdmin && member.sem_conta && (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          aria-label={`Remover ${member.user?.full_name || "participante"}`}
+                          onClick={() => handleRemoverSemConta(member.id)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      )}
                     </div>
                   </div>
                 ))}
               </div>
+              {/* O amigo do churrasco que nao vai instalar o app (077). So o
+                  admin adiciona (RLS de group_members). */}
+              {souAdmin && (
+                <div className="mt-4">
+                  <AdicionarSemConta groupId={groupId} aoAdicionar={loadGroup} />
+                </div>
+              )}
             </CardContent>
           </Card>
 
@@ -2562,6 +2778,47 @@ export default function GroupDetailPage() {
               />
             </div>
 
+            {/* QUEM PAGOU (077). "Eu" e o caminho de sempre: a despesa entra
+                na minha conta e o grupo divide. Outra pessoa -- com ou sem
+                conta no app -- vira uma despesa so do grupo: nao sai de conta
+                nenhuma, entra inteira no saldo de quem pagou, e a divisao e a
+                regra do grupo. */}
+            <div className="space-y-2">
+              <Label htmlFor="paid_by_member">Quem pagou</Label>
+              <Select
+                value={expenseForm.paid_by_member_id || "eu"}
+                onValueChange={(value) =>
+                  setExpenseForm({
+                    ...expenseForm,
+                    paid_by_member_id: value === "eu" ? "" : value,
+                  })
+                }
+              >
+                <SelectTrigger id="paid_by_member">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="eu">Eu (lança na minha conta)</SelectItem>
+                  {(group.members ?? [])
+                    .filter(
+                      (m) => m.status === "active" && m.user?.id !== user?.id
+                    )
+                    .map((m) => (
+                      <SelectItem key={m.id} value={m.id}>
+                        {m.user?.full_name || "Sem nome"}
+                        {m.sem_conta ? " (sem conta)" : ""}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+              {expenseForm.paid_by_member_id && (
+                <p className="text-xs text-muted-foreground">
+                  Fica só no grupo: não entra em nenhuma conta, e é dividida
+                  pela regra do grupo.
+                </p>
+              )}
+            </div>
+
             <div className="space-y-2">
               <Label htmlFor="transaction_date">Data</Label>
               {/* `CampoDeData` e nao o controle de data nativo (HMO-240). Aqui
@@ -2625,27 +2882,29 @@ export default function GroupDetailPage() {
               }
             />
 
-            <div className="space-y-2">
-              <Label htmlFor="split_type">Tipo de Divisão</Label>
-              <Select
-                value={expenseForm.split_type}
-                onValueChange={(value: "equal" | "percentage" | "custom") =>
-                  setExpenseForm({ ...expenseForm, split_type: value })
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="equal">Divisão Igual</SelectItem>
-                  <SelectItem value="percentage">Por Percentual</SelectItem>
-                  <SelectItem value="custom">Customizada</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+            {!expenseForm.paid_by_member_id && (
+              <div className="space-y-2">
+                <Label htmlFor="split_type">Tipo de Divisão</Label>
+                <Select
+                  value={expenseForm.split_type}
+                  onValueChange={(value: "equal" | "percentage" | "custom") =>
+                    setExpenseForm({ ...expenseForm, split_type: value })
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="equal">Divisão Igual</SelectItem>
+                    <SelectItem value="percentage">Por Percentual</SelectItem>
+                    <SelectItem value="custom">Customizada</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
 
             {/* Sugestões de Split */}
-            {parseFloat(expenseForm.amount) > 0 && (
+            {!expenseForm.paid_by_member_id && parseFloat(expenseForm.amount) > 0 && (
               <div className="space-y-2">
                 <SplitSuggestions
                   groupId={groupId}

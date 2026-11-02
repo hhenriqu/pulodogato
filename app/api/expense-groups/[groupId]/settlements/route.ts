@@ -37,8 +37,18 @@ type AcertoDoGrupo = {
   note: string | null;
   created_by: string;
   created_at: string;
-  from_user_id: string;
-  to_user_id: string;
+  // Nulos do lado de quem nao tem conta (077): ai a pessoa e a linha do membro.
+  from_user_id: string | null;
+  to_user_id: string | null;
+  from_member_id: string | null;
+  to_member_id: string | null;
+};
+
+type ParteDoGrupo = {
+  id: string;
+  user_id: string | null;
+  display_name: string | null;
+  status: string;
 };
 
 /** A perna que EU ja lancei para um acerto, quando ja lancei. */
@@ -185,7 +195,9 @@ export async function GET(
         created_by,
         created_at,
         from_user_id,
-        to_user_id
+        to_user_id,
+        from_member_id,
+        to_member_id
       `
       )
       .eq("group_id", groupId)
@@ -208,10 +220,32 @@ export async function GET(
     const idsDasPessoas = Array.from(
       new Set(
         (settlements || []).flatMap((s) =>
-          [s.from_user_id, s.to_user_id].filter(Boolean)
+          [s.from_user_id, s.to_user_id].filter((id): id is string => Boolean(id))
         )
       )
     );
+
+    // O nome de quem nao tem conta (077) vem da linha do membro.
+    const idsSemConta = Array.from(
+      new Set(
+        (settlements || []).flatMap((s) => [
+          ...(s.from_user_id ? [] : [s.from_member_id]),
+          ...(s.to_user_id ? [] : [s.to_member_id]),
+        ])
+      )
+    ).filter((id): id is string => Boolean(id));
+    const nomeSemConta = new Map<string, string | null>();
+    if (idsSemConta.length > 0) {
+      const { data: semConta } = await supabase
+        .from("group_members")
+        .select("id, display_name")
+        .in("id", idsSemConta);
+      for (const m of semConta || []) nomeSemConta.set(m.id, m.display_name);
+    }
+    const ladoSemConta = (memberId: string | null) =>
+      memberId
+        ? { id: memberId, full_name: nomeSemConta.get(memberId) ?? null, avatar_url: null }
+        : null;
 
     const perfilPorId = new Map<string, PerfilDoAcerto>();
     if (idsDasPessoas.length > 0) {
@@ -263,8 +297,18 @@ export async function GET(
           ...s,
           // O que o embed quebrado devolvia -- mesma FORMA, para a tela nao
           // mudar: `{ id, full_name, avatar_url }` ou `null`.
-          from_user: perfilPorId.get(s.from_user_id) ?? null,
-          to_user: perfilPorId.get(s.to_user_id) ?? null,
+          from_user: s.from_user_id
+            ? perfilPorId.get(s.from_user_id) ?? null
+            : ladoSemConta(s.from_member_id),
+          to_user: s.to_user_id
+            ? perfilPorId.get(s.to_user_id) ?? null
+            : ladoSemConta(s.to_member_id),
+          // A identidade da parte (077): o user_id, ou a linha do membro de
+          // quem nao tem conta -- a mesma chave do saldo e das sugestoes.
+          from_user_id: s.from_user_id ?? s.from_member_id,
+          to_user_id: s.to_user_id ?? s.to_member_id,
+          from_sem_conta: !s.from_user_id,
+          to_sem_conta: !s.to_user_id,
           // `null` = eu ainda nao lancei este acerto na minha conta. E a
           // diferenca entre "ainda nao lancado" e "nao aconteceu".
           minha_perna: minhaPerna
@@ -385,6 +429,82 @@ export async function POST(
       );
     }
 
+    // AS DUAS PARTES (077). Cada lado chega pela identidade da parte que as
+    // telas usam: o user_id de quem tem conta, a linha do membro de quem nao
+    // tem. Os dois sao uuid e nao colidem, entao uma consulta resolve os dois.
+    // So membros ativos: um acerto com quem nunca esteve no grupo nao
+    // corresponde a divida nenhuma, e a RLS nao checa isso.
+    const { data: membrosAtivos } = await supabase
+      .from("group_members")
+      .select("id, user_id, display_name, status")
+      .eq("group_id", groupId)
+      .eq("status", "active")
+      .returns<ParteDoGrupo[]>();
+
+    const acharParte = (id: string) =>
+      (membrosAtivos || []).find(
+        (m) => m.user_id === id || (!m.user_id && m.id === id)
+      );
+
+    const de = acharParte(fromUserId);
+    const para = acharParte(toUserId);
+
+    if (!de || !para) {
+      return NextResponse.json(
+        { error: "As duas pessoas precisam ser membros ativos do grupo" },
+        { status: 400 }
+      );
+    }
+
+    // O ACERTO ENTRE DOIS SEM CONTA ("o Joao pagou o Pedro"): so o admin
+    // registra (RLS da 077), e ninguem com conta tem perna -- nao ha conta a
+    // escolher nem lancamento. E a unica excecao a "quem registra e parte".
+    if (!de.user_id && !para.user_id) {
+      const { data: entreSemConta, error: erroSemConta } = await supabase
+        .from("group_settlements")
+        .insert({
+          group_id: groupId,
+          from_member_id: de.id,
+          to_member_id: para.id,
+          amount: valor,
+          currency,
+          exchange_rate: exchangeRate,
+          settled_on: body.settled_on || new Date().toISOString().slice(0, 10),
+          note: body.note || null,
+          created_by: user.id,
+        })
+        .select("id, amount, currency, exchange_rate, settled_on, note, created_at")
+        .single();
+
+      if (erroSemConta || !entreSemConta) {
+        const proibido = erroSemConta?.code === "42501";
+        console.error("Erro ao registrar acerto entre sem conta:", erroSemConta);
+        return NextResponse.json(
+          {
+            error: proibido
+              ? "Só o admin do grupo registra um acerto entre dois participantes sem conta."
+              : "Nao foi possivel registrar o acerto",
+          },
+          { status: proibido ? 403 : 500 }
+        );
+      }
+
+      return NextResponse.json({
+        success: true,
+        baixa: 0,
+        lancamento: null,
+        settlement: {
+          ...entreSemConta,
+          amount: Number(entreSemConta.amount),
+          exchange_rate: Number(entreSemConta.exchange_rate),
+          amount_in_brl: valorEmReais(
+            Number(entreSemConta.amount),
+            Number(entreSemConta.exchange_rate)
+          ),
+        },
+      });
+    }
+
     // Quem registra precisa ser parte no pagamento. A policy de INSERT da 007
     // exige o mesmo; aqui e so para a mensagem ser legivel em vez de 42501.
     if (fromUserId !== user.id && toUserId !== user.id) {
@@ -394,23 +514,6 @@ export async function POST(
             "Voce so pode registrar um acerto em que paga ou recebe. Peca a quem participou.",
         },
         { status: 403 }
-      );
-    }
-
-    // As duas partes precisam ser membros ativos: um acerto com quem nunca
-    // esteve no grupo nao corresponde a divida nenhuma, e a RLS nao checa isso
-    // (ela so olha quem esta gravando).
-    const { data: partes } = await supabase
-      .from("group_members")
-      .select("user_id")
-      .eq("group_id", groupId)
-      .eq("status", "active")
-      .in("user_id", [fromUserId, toUserId]);
-
-    if (!partes || partes.length !== 2) {
-      return NextResponse.json(
-        { error: "As duas pessoas precisam ser membros ativos do grupo" },
-        { status: 400 }
       );
     }
 
@@ -493,12 +596,18 @@ export async function POST(
     // nome. Duas consultas diretas em vez de embed -- `group_members` tem mais
     // de uma FK para `profiles` e o embed sairia PGRST201.
     const contraparteId = direcao === "recebi" ? fromUserId : toUserId;
+    // Quem nao tem conta (077) nao tem perfil: o nome e o da linha do membro.
+    const ladoDaContraparte = direcao === "recebi" ? de : para;
     const [{ data: contraparte }, { data: grupo }] = await Promise.all([
-      supabase
-        .from("profiles")
-        .select("full_name")
-        .eq("id", contraparteId)
-        .maybeSingle(),
+      ladoDaContraparte.user_id
+        ? supabase
+            .from("profiles")
+            .select("full_name")
+            .eq("id", contraparteId)
+            .maybeSingle()
+        : Promise.resolve({
+            data: { full_name: ladoDaContraparte.display_name },
+          }),
       supabase
         .from("expense_groups")
         .select("name")
@@ -534,8 +643,12 @@ export async function POST(
       .from("group_settlements")
       .insert({
         group_id: groupId,
-        from_user_id: fromUserId,
-        to_user_id: toUserId,
+        // Quem nao tem conta vai pela linha do membro (077); o trigger
+        // completa o member_id de quem tem conta, e o confere.
+        from_user_id: de.user_id,
+        to_user_id: para.user_id,
+        from_member_id: de.id,
+        to_member_id: para.id,
         amount: valor,
         currency,
         exchange_rate: exchangeRate,
