@@ -226,6 +226,8 @@ export interface ExpenseGroup {
   photo_url?: string;
   group_code: string;
   group_type: "public" | "private";
+  /** O que o grupo e (076): a casa ou um evento. Ver lib/tipo-do-grupo.ts. */
+  group_kind: "casa" | "evento";
   default_split_type: GroupSplitType;
   created_by: string;
   created_at: string;

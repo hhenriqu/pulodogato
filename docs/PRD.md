@@ -29,6 +29,7 @@
 | 2.8 | 24/10/2026 | RN022 nova: o "Apagar tudo" deixa o que envolve outra pessoa (grupo, divisão com pessoa, MyBank) e a conta de banco onde isso mora, e a tela diz o que fica antes do clique | Helio |
 | 2.9 | 24/10/2026 | RN004.5 e RN004.6 novas: a conta prevista no cartão (a despesa fixa e a avulsa) é uma cobrança. Cai na fatura pelo fechamento, soma como prevista antes do dia e vira compra sozinha no dia. Apagar a compra que o app lançou pula a cobrança | Helio |
 | 2.10 | 27/10/2026 | RN020.8 a RN020.11 novas: a conexão funciona como um grupo de duas pessoas. A despesa fixa, a prevista e a parcelada também se dividem com uma conexão, e cada mês gera o "A receber de" e o "Pagamento a"; a tela da conexão mostra quanto cada um paga por mês | Helio |
+| 2.11 | 02/11/2026 | RN023 nova: o grupo tem tipo, casa ou evento, separado da regra de entrada (público ou privado). Os grupos que já existiam viraram casa quando tinham dia de fechamento | Helio |
 
 > **O que a versão 2.0 corrigiu.** Até aqui esta PRD descrevia um app de carteira
 > de investimentos: o problema era "investidores pessoa física", as personas eram
@@ -176,6 +177,9 @@ Desde as fases 2 a 4 (RN018 e RN019), o grupo pode ter dia de fechamento: o
 fechamento gera para cada membro uma conta a pagar ou a receber, e é ela que
 conta no Resultado de cada um. O grupo sem dia de fechamento continua pelo
 rateio de cada lançamento.
+
+Desde a RN023, o grupo diz o que ele é: a **casa** (a família, que fecha todo
+mês) ou um **evento** (a viagem, o churrasco, que acerta uma vez).
 
 ### Planejamento ✅
 
@@ -683,6 +687,26 @@ O Resultado de cada um fecha na responsabilidade, e a soma dá os R$ 2.000.
 - RN022.5 Uma linha que o banco recusa apagar fora dessas regras não derruba o
   passo: o passo é refeito em lotes, só ela fica, e o relatório diz o motivo e
   marca o apagamento como incompleto. Clicar de novo é seguro.
+
+### RN023 — Tipo do grupo: casa ou evento ✅ **(banco)**
+
+- RN023.1 Todo grupo tem um tipo: **casa** (a família ou quem mora junto,
+  permanente, divide as contas do mês) ou **evento** (viagem, churrasco, festa,
+  acerta uma vez). O banco só aceita esses dois (`expense_groups.group_kind`,
+  migration 076). Grupo criado sem tipo é evento.
+- RN023.2 O tipo não é a regra de entrada. Público ou privado continua dizendo
+  quem entra direto pelo código e quem espera aprovação, e uma casa pode ser
+  pública como um evento pode ser privado. A tela chama o primeiro de "Tipo do
+  grupo" e o segundo de "Entrada no grupo".
+- RN023.3 Na migration 076, o grupo que tinha dia de fechamento virou casa e o
+  que não tinha virou evento, arquivado ou não. Aplicar a 076 de novo não
+  reclassifica: a escolha de quem editou o grupo fica.
+- RN023.4 Quem cria escolhe o tipo primeiro; o admin pode trocar na edição. O
+  tipo aparece como selo no cartão e no cabeçalho do grupo, e a casa vem antes
+  dos eventos na lista.
+- RN023.5 Nesta versão o tipo não trava nada: um evento pode ter dia de
+  fechamento e uma casa pode ficar sem. A visão da casa e o evento que acerta
+  uma vez e arquiva leem este tipo e vêm em entregas próprias.
 
 ---
 

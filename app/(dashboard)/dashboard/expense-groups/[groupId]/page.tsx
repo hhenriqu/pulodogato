@@ -89,6 +89,8 @@ import {
   saldoNaMoedaDaViagem,
   type AcertoParaGravar,
 } from "@/lib/moeda-do-grupo";
+import { tipoDoGrupo, type TipoDoGrupo } from "@/lib/tipo-do-grupo";
+import { SeloDoTipoDoGrupo } from "@/components/grupos/EscolhaDoTipoDoGrupo";
 import {
   DialogoDeAcerto,
   type ContaParaEscolher,
@@ -137,6 +139,8 @@ interface ExpenseGroup {
   description: string;
   group_code: string;
   group_type: "public" | "private";
+  /** O que o grupo e (076): a casa ou um evento. */
+  group_kind?: TipoDoGrupo | null;
   default_split_type: "equal" | "percentage" | "custom" | "proportional";
   /** A moeda da viagem (`expense_groups.currency`, migration 026). */
   currency?: string | null;
@@ -1280,6 +1284,7 @@ export default function GroupDetailPage() {
             <h1 className="text-3xl font-bold flex items-center gap-2">
               <Users className="h-8 w-8" />
               {group.name}
+              <SeloDoTipoDoGrupo tipo={tipoDoGrupo(group.group_kind)} />
             </h1>
             <p className="text-muted-foreground">
               {group.description || "Sem descrição"} • Código:{" "}
