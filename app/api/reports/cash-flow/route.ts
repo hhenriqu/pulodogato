@@ -122,21 +122,14 @@ import {
   ultimoDiaDoMes,
 } from "@/lib/periodo-do-painel";
 import { lerPreferenciaDeMoeda, separarSeriePorMoeda } from "@/lib/moeda";
-import { lerContasDoFechamentoRealizadas } from "@/lib/services/fechamento-no-resultado";
-import { lerJurosPagosDoMyBank } from "@/lib/services/divida-do-mybank";
-import { lerFaturasPagas } from "@/lib/services/fatura-paga-no-resultado";
-import type { LinhaDaFaturaPaga } from "@/lib/fatura-paga-no-resultado";
 import {
-  COLUNAS_DA_PARTE_DE_GRUPO,
-  partesComoTransacoes,
-  viewDaParteAusente,
-  type ParteDeGrupoCrua,
-} from "@/lib/parte-do-grupo-realizada";
-import {
-  COLUNAS_DO_REALIZADO_DE_CAIXA,
-  realizadoComCartaoPelaFatura,
-  type LinhaDoRealizado,
-} from "@/lib/realizado-do-caixa";
+  lerMoedaOficial,
+  lerResultadoDoPeriodo,
+  lerResultadoPorMes,
+  resultadoVazio,
+} from "@/lib/services/resultado-do-mes";
+import type { BlocoDeFluxoPorMoeda } from "@/lib/periodo-do-painel";
+import type { LinhaDoRealizado } from "@/lib/realizado-do-caixa";
 import { apenasNosTotais } from "@/lib/fora-dos-totais";
 
 interface LinhaFluxo {
@@ -232,201 +225,71 @@ export async function GET(request: NextRequest) {
     // MESMO IGUAL A `ate`: e o painel perguntando, e o painel soma as linhas
     // cruas em todo periodo (ver `?faturaAte=` no cabecalho).
     if (periodo && (periodo.modo === "intervalo" || faturaAte !== null)) {
-      // A consulta e remontada a cada pagina: o builder do supabase-js e de uso
-      // unico, e reaproveitar o mesmo objeto acumularia os `.range()`.
-      const pagina = (inicio: number) => {
-        const base = supabase
-          .from("financial_transactions")
-          // `transaction_type` nao e decoracao: e ele que `agregarTransacoes`
-          // usa para deixar as duas pernas de transferencia e de pagamento de
-          // fatura FORA da conta, repetindo o filtro que
-          // `category_monthly_totals` aplica no lado do banco.
-          //
-          // `currency` e o que impede este caminho de refazer, no JavaScript, a
-          // mistura que a 022 tirou das views: sem ela, um periodo com gasto em
-          // real e em dolar volta 1000 + 180 = 1180.
-          //
-          // No relatorio pessoal entra o embed da conta, que e load-bearing e
-          // invisivel na tela -- ver COLUNAS_DO_REALIZADO_DE_CAIXA. Ele NAO e
-          // pedido no do grupo porque custa um join em toda linha do periodo, e
-          // o grupo conta o cartao pela compra.
-          //
-          // `include_in_total` (060, HMO-443) entra nas DUAS listas: nesta
-          // literal e dentro de COLUNAS_DO_REALIZADO_DE_CAIXA. Sem ela o campo
-          // chega `undefined`, o predicado `!== false` deixa tudo passar, e
-          // este ramo volta a contar a linha desmarcada -- enquanto o ramo
-          // MENSAL, que le as views que a 060 filtrou, nao conta. "Setembro
-          // inteiro" e "01/09 a 30/09" dariam numeros diferentes, sem erro.
-          //
-          // Nomear coluna num `select` e a armadilha do #335; a medida que
-          // autoriza isto (42501 em prod contra 42703 do nome inventado,
-          // 2026-10-21) esta no bloco homonimo de
-          // app/api/movimentacoes/resumo/route.ts.
-          .select(
-            groupId
-              ? "amount, transaction_type, currency, include_in_total"
-              : COLUNAS_DO_REALIZADO_DE_CAIXA
-          )
-          .gte("transaction_date", periodo.de)
-          // `lte` e nao `lt`: o periodo e fechado nos dois extremos, e o ultimo
-          // dia escolhido pelo usuario tem que entrar.
-          .lte("transaction_date", periodo.ate)
-          // Ordem estavel: sem ela, duas paginas podem repetir e pular linhas.
-          .order("id", { ascending: true })
-          .range(inicio, inicio + TAMANHO_DA_PAGINA - 1);
-
-        // SEM `is("group_id", null)` NO CAMINHO PESSOAL (HMO-418).
-        //
-        // A despesa de grupo que EU paguei entra INTEIRA -- e a metade 1 do
-        // criterio aprovado, descrita no cabecalho deste arquivo. Ela so esta
-        // correta porque a consulta de `group_share_entries` logo abaixo
-        // descarta `paguei_eu`; sem isso o valor cheio e a minha parte dele
-        // somariam a mesma despesa duas vezes (1.040,00 na fixture de maio).
-        //
-        // O `eq("user_id")` e o que impede a despesa de grupo dos OUTROS
-        // membros de entrar: a linha dela tem `user_id` = quem pagou, e a
-        // policy do 002 me deixa LER a linha de quem divide grupo comigo. Era
-        // o `group_id IS NULL` que descartava essas linhas de graca; agora o
-        // filtro de usuario e sozinho.
-        return groupId
-          ? base.eq("group_id", groupId)
-          : base.eq("user_id", user.id);
-      };
-
-      // ------------------------------------------------------------------
-      // POR QUE PAGINAR, SE NENHUMA OUTRA ROTA DESTE REPOSITORIO PAGINA
-      // ------------------------------------------------------------------
-      // Porque este e o unico lugar onde a SOMA e feita no JavaScript sobre
-      // as linhas cruas. O PostgREST tem teto de linhas por resposta; batendo
-      // nele, a resposta vem truncada e sem erro nenhum -- o total do periodo
-      // sairia MENOR que o real, com cara de numero certo. Nos caminhos que
-      // usam as views do 008 isso nao existe: quem soma e o banco, e a
-      // resposta ja vem agregada em poucas linhas.
-      // `transaction_type` nullable porque a coluna e nullable -- e porque a
-      // parte de grupo (abaixo) repassa o campo da view em vez de afirmar
-      // 'expense'. `agregarTransacoes` ja descarta o que nao e income/expense.
-      //
-      // `LinhaDoRealizado` tem o embed da conta opcional, e e por isso que ele
-      // serve para os dois caminhos deste ramo: no do grupo a consulta nao pede
-      // `account`, e a regra nao e aplicada.
-      const linhas: LinhaDoRealizado[] = [];
-
-      // As linhas das faturas pagas que vencem no periodo (fase 6). So no
-      // relatorio pessoal; ficam vazias no do grupo.
-      let faturasPagas: LinhaDaFaturaPaga[] = [];
-
       // A moeda oficial decide qual bloco e o PRINCIPAL, igual ao caminho
       // mensal. Erro aqui cai no padrao de `lerPreferenciaDeMoeda` e nao custa
       // o relatorio.
-      const { data: perfilDoIntervalo } = await supabase
-        .from("profiles")
-        .select("preferences")
-        .eq("id", user.id)
-        .maybeSingle();
+      const moedaDoIntervalo = await lerMoedaOficial(supabase, user.id);
 
-      const moedaDoIntervalo = lerPreferenciaDeMoeda(
-        perfilDoIntervalo?.preferences
-      ).oficial;
+      let blocosDoIntervalo: BlocoDeFluxoPorMoeda[];
 
-      for (let inicio = 0; ; inicio += TAMANHO_DA_PAGINA) {
-        const { data, error } = await pagina(inicio);
+      if (!groupId) {
+        // O RELATORIO PESSOAL E O RESULTADO DO MES (mapa, prioridade 1).
+        //
+        // As cinco pernas -- transacoes, a minha parte do que outro pagou, a
+        // conta do fechamento quitada, o juro pago do MyBank e a fatura paga --
+        // moravam aqui. Mudaram para lib/services/resultado-do-mes.ts para que
+        // Financas Pessoais e o resumo mensal leiam o MESMO numero que o
+        // painel, em vez de cada um somar do seu jeito. Os racionais vieram
+        // junto com o codigo.
+        const resultado = await lerResultadoDoPeriodo(supabase, user.id, {
+          de: periodo.de,
+          ate: periodo.ate,
+          faturaAte,
+          moedaOficial: moedaDoIntervalo,
+        });
 
-        if (error) {
-          console.error("Erro no fluxo de caixa por intervalo:", error);
+        if (!resultado.ok) {
+          console.error(
+            `Erro no fluxo de caixa por intervalo (${resultado.etapa}):`,
+            resultado.erro
+          );
           return NextResponse.json(
             { error: "Não foi possível montar o relatório" },
             { status: 500 }
           );
         }
 
-        const lote = data ?? [];
-        // O `as` existe porque o `select` deste ramo e escolhido em tempo de
-        // execucao (duas listas de colunas), e com isso o supabase-js nao
-        // consegue inferir a forma da linha. A fronteira NAO e verificada pelo
-        // tsc, e e por isso que `contaDaLinha` em lib/realizado-do-caixa.ts
-        // trata o embed vindo objeto OU array em vez de confiar no tipo.
+        blocosDoIntervalo = resultado.blocos;
+      } else {
+        // O PAINEL DO GRUPO: o valor CHEIO das despesas do grupo, de todos os
+        // membros, com o cartao pela COMPRA -- quem divide a conta nao paga a
+        // fatura do cartao de ninguem. Sem parte, sem fechamento, sem fatura.
         //
-        // O FILTRO DO FORA-DOS-TOTAIS ENTRA AQUI, E O LUGAR E ESCOLHIDO
-        // (HMO-453). Aqui e o leitor da TABELA -- antes da parte de grupo ser
-        // anexada e antes da regra do cartao --, e as tres consequencias sao as
-        // desejadas:
+        // `include_in_total` (060, HMO-443) entra na lista de colunas: sem ela
+        // o campo chega `undefined`, o predicado `!== false` deixa tudo passar,
+        // e este ramo volta a contar a linha desmarcada -- enquanto o ramo
+        // MENSAL, que le as views que a 060 filtrou, nao conta.
         //
-        //   * a linha desmarcada sai do total e da `transaction_count` dos dois
-        //     caminhos deste ramo (pessoal e de grupo), do mesmo jeito
-        //     que a 060 a tirou do `WHERE` de `category_monthly_totals` e nao
-        //     de cada `FILTER`;
-        //   * `partesComoTransacoes` e anexada DEPOIS e nao passa por aqui, o
-        //     que e a decisao D: o que eu devo nao muda porque quem lancou
-        //     escondeu a linha do relatorio dele. (Aquelas linhas tambem nao
-        //     tem a coluna, entao `apenasNosTotais` as deixaria passar de
-        //     qualquer forma -- mas a POSICAO e que faz disso uma escolha e nao
-        //     um acidente.)
-        //   * a linha da fatura desmarcada nao passa por aqui: ela vem de
-        //     `card_invoice_paid_entries`, e `faturasPagasComoTransacoes` aplica
-        //     o mesmo `apenasNosTotais` nela.
-        for (const linha of apenasNosTotais(
-          lote as unknown as LinhaDoRealizado[]
-        ))
-          linhas.push(linha);
-        // Pagina incompleta = acabou. Uma pagina cheia pode ser a ultima, e
-        // nesse caso a proxima volta vazia e o laco encerra do mesmo jeito.
-        if (lote.length < TAMANHO_DA_PAGINA) break;
-      }
-
-      // A MINHA PARTE DAS DESPESAS QUE OUTRO PAGOU, no mesmo intervalo
-      // (HMO-202, recortada pela HMO-418).
-      //
-      // So no relatorio PESSOAL: com `groupId` a tela quer o valor cheio da
-      // viagem, que as linhas de `financial_transactions` acima ja trazem.
-      //
-      // O `eq("user_id")` nao e redundante com a RLS, e esse e o erro facil
-      // aqui: as policies de grupo sao `user_id = auth.uid() OR
-      // is_group_member(group_id)`, entao uma consulta SEM ele devolve tambem a
-      // parte dos OUTROS membros -- medido, 400 em vez de 200 num grupo de dois.
-      // Mesma armadilha que a HMO-177 encontrou no previsto.
-      if (!groupId) {
-        const paginaDeParte = (inicio: number) =>
+        // Paginado pela razao do cabecalho de lib/services/resultado-do-mes.ts:
+        // a soma e feita aqui, e uma resposta truncada pelo teto do PostgREST
+        // sairia MENOR que a real, sem erro nenhum.
+        const pagina = (inicio: number) =>
           supabase
-            .from("group_share_entries")
-            .select(COLUNAS_DA_PARTE_DE_GRUPO)
-            .eq("user_id", user.id)
-            // `paguei_eu = false` E A METADE 2 DO CRITERIO (HMO-418).
-            //
-            // O espelho do `WHERE NOT g.paguei_eu` da perna 2 da migration 046.
-            // O que EU paguei ja veio INTEIRO na consulta de cima; somar a minha
-            // parte dele aqui contaria a mesma despesa duas vezes -- 120 de um
-            // jantar de 90.
-            //
-            // `eq(..., false)` e nao `not(..., "is", true)`: `paguei_eu` e
-            // `(t.user_id = em.user_id)` na 033, e quando `em.user_id` e nulo
-            // (convite sem conta, 039) a propria coluna `user_id` da view sai
-            // nula e o filtro de usuario acima ja descartou a linha. Os dois
-            // escrevem a mesma selecao, e `eq` e o que a tela de Financas
-            // Pessoais ja usa (HMO-275) -- uma forma so para o mesmo criterio.
-            .eq("paguei_eu", false)
+            .from("financial_transactions")
+            .select("amount, transaction_type, currency, include_in_total")
             .gte("transaction_date", periodo.de)
             .lte("transaction_date", periodo.ate)
             .order("id", { ascending: true })
-            .range(inicio, inicio + TAMANHO_DA_PAGINA - 1);
+            .range(inicio, inicio + TAMANHO_DA_PAGINA - 1)
+            .eq("group_id", groupId);
 
-        // Paginada pela mesma razao das transacoes: a soma e feita aqui, e uma
-        // resposta truncada pelo teto do PostgREST sairia MENOR que a real, sem
-        // erro nenhum.
-        const partes: ParteDeGrupoCrua[] = [];
+        const linhas: LinhaDoRealizado[] = [];
 
         for (let inicio = 0; ; inicio += TAMANHO_DA_PAGINA) {
-          const { data, error } = await paginaDeParte(inicio);
-
-          // A janela entre o deploy e a colagem da 033: a view nao existe
-          // ainda. Segue sem a parte de grupo, que e o comportamento antigo --
-          // o relatorio do periodo nao pode morrer por causa disso.
-          if (error && viewDaParteAusente(error)) {
-            partes.length = 0;
-            break;
-          }
+          const { data, error } = await pagina(inicio);
 
           if (error) {
-            console.error("Erro na parte de grupo do intervalo:", error);
+            console.error("Erro no fluxo de caixa por intervalo:", error);
             return NextResponse.json(
               { error: "Não foi possível montar o relatório" },
               { status: 500 }
@@ -434,122 +297,21 @@ export async function GET(request: NextRequest) {
           }
 
           const lote = data ?? [];
-          for (const linha of lote) partes.push(linha);
+          for (const linha of apenasNosTotais(
+            lote as unknown as LinhaDoRealizado[]
+          ))
+            linhas.push(linha);
           if (lote.length < TAMANHO_DA_PAGINA) break;
         }
 
-        for (const linha of partesComoTransacoes(partes)) linhas.push(linha);
-
-        // A CONTA DO FECHAMENTO DO GRUPO JA QUITADA (069, RN017.6).
-        //
-        // No grupo com dia de fechamento a parte de quem nao pagou saiu de
-        // `group_share_entries` (RN018.9), e o que ele deve -- ou tem a
-        // receber -- entra pela conta que o fechamento gerou: em Despesas o
-        // "Pagamento ao grupo", em Receitas o "A receber do grupo". Em aberto
-        // ela e previsao; quitada, ela e realizado, no mes do fechamento.
-        //
-        // `partesComoTransacoes` serve sem mudanca: a view entrega `amount`
-        // POSITIVO e o sinal em `transaction_type`, e os agregadores leem os
-        // dois -- inclusive `income`, que a parte de grupo nunca teve.
-        const doFechamento = await lerContasDoFechamentoRealizadas(
-          supabase,
-          user.id,
-          periodo.de,
-          periodo.ate
-        );
-        if (!doFechamento.ok) {
-          console.error("Erro na conta do fechamento do intervalo:", doFechamento.erro);
-          return NextResponse.json(
-            { error: "Não foi possível montar o relatório" },
-            { status: 500 }
-          );
-        }
-        for (const linha of partesComoTransacoes(doFechamento.contas)) linhas.push(linha);
-
-        // O JURO PAGO DO MYBANK (071, RN021.3), do lado de quem pegou, na data
-        // do pagamento. Quem pegou nao grava transacao nenhuma quando quem
-        // emprestou confirma, e a view entrega a mesma forma da conta do
-        // fechamento (`amount` positivo, o sinal em `transaction_type`). O
-        // juro de quem emprestou ja e uma transacao `income` dele.
-        const jurosPagos = await lerJurosPagosDoMyBank(
-          supabase,
-          user.id,
-          periodo.de,
-          periodo.ate
-        );
-        if (!jurosPagos.ok) {
-          console.error("Erro nos juros pagos do MyBank do intervalo:", jurosPagos.erro);
-          return NextResponse.json(
-            { error: "Não foi possível montar o relatório" },
-            { status: 500 }
-          );
-        }
-        for (const linha of partesComoTransacoes(jurosPagos.juros)) linhas.push(linha);
-
-        // A FATURA PAGA (072, RN017.4), pelo VENCIMENTO, ate `faturaAte` quando
-        // o painel o passa. Ver `?faturaAte=` no cabecalho. Falhar aqui e 500,
-        // pela razao da conta do fechamento logo acima.
-        const faturas = await lerFaturasPagas(
-          supabase,
-          user.id,
-          periodo.de,
-          faturaAte ?? periodo.ate
-        );
-        if (!faturas.ok) {
-          console.error("Erro nas faturas pagas do intervalo:", faturas.erro);
-          return NextResponse.json(
-            { error: "Não foi possível montar o relatório" },
-            { status: 500 }
-          );
-        }
-        faturasPagas = faturas.linhas;
+        blocosDoIntervalo = agregarTransacoesPorMoeda(linhas, moedaDoIntervalo);
       }
-
-      // O CARTAO PASSA A CONTAR PELA FATURA PAGA (HMO-265, fase 6).
-      //
-      // Depois da parte de grupo e ANTES da agregacao, e as duas posicoes sao
-      // deliberadas:
-      //
-      //   * depois da parte de grupo, porque as linhas de `group_share_entries`
-      //     atravessam a regra intactas (nao tem conta) e separa-las em duas
-      //     listas criaria um segundo caminho para somar;
-      //
-      //     DESDE A HMO-418 A LISTA TEM UM TERCEIRO TIPO DE LINHA, e ele NAO
-      //     atravessa intacto: a despesa de grupo que eu paguei vem agora de
-      //     `financial_transactions`, com conta. Lancada no CARTAO, ela e
-      //     compra no cartao como qualquer outra e sai daqui -- passa a contar
-      //     na fatura, junto com o resto dela, que e o que o banco faz.
-      //
-      //     A assimetria que fica: a MINHA PARTE de uma despesa que outro pagou
-      //     no cartao DELE continua contando no mes da compra. Nao ha fatura
-      //     minha que a contenha -- o que eu devo e um reembolso a uma pessoa,
-      //     nao uma linha de fatura -- e `group_share_entries` nao tem conta
-      //     para a regra olhar.
-      //   * antes da agregacao, porque `agregarTransacoesPorMoeda` continua
-      //     sendo a UNICA funcao que soma. A regra so tira e acrescenta linha;
-      //     nenhuma aritmetica e refeita aqui.
-      const paraAgregar = groupId
-        ? linhas
-        : realizadoComCartaoPelaFatura(linhas, faturasPagas);
-
-      const blocosDoIntervalo = agregarTransacoesPorMoeda(
-        paraAgregar,
-        moedaDoIntervalo
-      );
 
       // O bloco principal, pela mesma regra do caminho mensal: a moeda oficial
       // quando ela tem movimento, senao a mais movimentada. Periodo sem
       // movimento nenhum nao produz bloco, e a resposta sai zerada na oficial.
-      const principalDoIntervalo = blocosDoIntervalo[0] ?? {
-        currency: moedaDoIntervalo,
-        symbol: "",
-        summary: {
-          total_income: 0,
-          total_expense: 0,
-          net: 0,
-          transaction_count: 0,
-        },
-      };
+      const principalDoIntervalo =
+        blocosDoIntervalo[0] ?? resultadoVazio(moedaDoIntervalo);
 
       const comMedias = (resumo: typeof principalDoIntervalo.summary) => ({
         ...resumo,
@@ -560,7 +322,6 @@ export async function GET(request: NextRequest) {
         average_expense: resumo.total_expense,
         average_income: resumo.total_income,
       });
-
       return NextResponse.json({
         // Vazio de proposito -- ver o cabecalho do arquivo.
         months: [],
@@ -627,20 +388,11 @@ export async function GET(request: NextRequest) {
     // O `eq("user_id")` vale para as duas, e na pessoal ele e load-bearing: as
     // policies de grupo tem `OR is_group_member(...)`, e sem o filtro a consulta
     // devolveria a parte dos OUTROS membros junto (medido: 400 em vez de 200).
-    const query = groupId
-      ? supabase
-          .from("monthly_cash_flow")
-          .select("month, income, expense, net, transaction_count, currency")
-          .eq("user_id", user.id)
-          .eq("group_id", groupId)
-          .gte("month", janela.inicio)
-          .lte("month", janela.fim)
-      : supabase
-          .from("personal_monthly_cash_flow")
-          .select("month, income, expense, net, transaction_count, currency")
-          .eq("user_id", user.id)
-          .gte("month", janela.inicio)
-          .lte("month", janela.fim);
+    //
+    // O PESSOAL e o Resultado do mes por mes, e sai de
+    // lib/services/resultado-do-mes.ts -- a mesma leitura que o resumo mensal
+    // usa, com a queda para `monthly_cash_flow` sem grupo na janela entre o
+    // deploy e a colagem da 033 (ver `viewDaParteAusente`).
 
     // A moeda oficial decide qual bloco e o PRINCIPAL da resposta. Lida em
     // paralelo com o relatorio, e sem derrubar nada quando falha: ela so ordena
@@ -652,35 +404,36 @@ export async function GET(request: NextRequest) {
       .eq("id", user.id)
       .maybeSingle();
 
-    const [primeiraTentativa, { data: perfil }] = await Promise.all([
-      query.order("month", { ascending: true }),
+    type LinhaDaView = {
+      month: unknown;
+      income: unknown;
+      expense: unknown;
+      net: unknown;
+      transaction_count: unknown;
+      currency: unknown;
+    };
+    const leitura: Promise<{ data: LinhaDaView[] | null; error: unknown }> = groupId
+      ? Promise.resolve(
+          supabase
+            .from("monthly_cash_flow")
+            .select("month, income, expense, net, transaction_count, currency")
+            .eq("user_id", user.id)
+            .eq("group_id", groupId)
+            .gte("month", janela.inicio)
+            .lte("month", janela.fim)
+            .order("month", { ascending: true })
+        ).then(({ data, error }) => ({ data, error }))
+      : lerResultadoPorMes(supabase, user.id, {
+          desde: janela.inicio,
+          ate: janela.fim,
+        }).then((r) =>
+          r.ok ? { data: r.meses, error: null } : { data: null, error: r.erro }
+        );
+
+    const [{ data, error }, { data: perfil }] = await Promise.all([
+      leitura,
       perfilPromessa,
     ]);
-
-    let { data, error } = primeiraTentativa;
-
-    // A JANELA ENTRE O DEPLOY E A COLAGEM DA 033 (ver viewDaParteAusente)
-    //
-    // Producao nao tem runner de migration. Entre o merge e a colagem da 033 no
-    // SQL Editor, `personal_monthly_cash_flow` nao existe -- e sem isto o bloco
-    // de realizado do painel principal devolveria 500 para todo mundo.
-    //
-    // A queda e para o comportamento ANTIGO, nao para um erro: a parte de grupo
-    // volta a faltar (o bug conhecido, que e o estado em que producao ja esta),
-    // e o painel continua mostrando os numeros do mes.
-    if (error && !groupId && viewDaParteAusente(error)) {
-      const antiga = await supabase
-        .from("monthly_cash_flow")
-        .select("month, income, expense, net, transaction_count, currency")
-        .eq("user_id", user.id)
-        .is("group_id", null)
-        .gte("month", janela.inicio)
-        .lte("month", janela.fim)
-        .order("month", { ascending: true });
-
-      data = antiga.data;
-      error = antiga.error;
-    }
 
     if (error) {
       console.error("Erro no relatório de fluxo de caixa:", error);

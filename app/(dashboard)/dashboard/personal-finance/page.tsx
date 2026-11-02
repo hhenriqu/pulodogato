@@ -63,6 +63,8 @@ import { viewDaParteAusente } from "@/lib/parte-do-grupo-realizada";
 import { faturasPagasComoRealizadas } from "@/lib/fatura-paga-no-resultado";
 import { lerFaturasPagas } from "@/lib/services/fatura-paga-no-resultado";
 import { ehCompraNoCartao } from "@/lib/realizado-do-caixa";
+import { lerResultadoDoPeriodo } from "@/lib/services/resultado-do-mes";
+import type { ResumoDeFluxo } from "@/lib/periodo-do-painel";
 import {
   TAMANHO_DA_PAGINA,
   descreverLista,
@@ -351,6 +353,21 @@ function Lancamentos() {
    * MyBank (fase 5) vem junto, com o selo "MyBank", e a fatura paga do cartao
    * (fase 6), com o selo "Fatura".
    */
+  /**
+   * O RESULTADO DO PERIODO, DO SERVICO UNICO (mapa, prioridade 1).
+   *
+   * Os tres cartoes (Receitas, Despesas, Saldo) somavam `transactions`, que e
+   * a LISTA PAGINADA: com mais lancamentos no mes do que cabem numa pagina, os
+   * cartoes mostravam so a soma da primeira, e o numero mudava a cada "carregar
+   * mais". Agora eles leem lib/services/resultado-do-mes.ts, o mesmo numero do
+   * painel e dos relatorios, com o periodo inteiro.
+   *
+   * `null` enquanto carrega ou quando a leitura falha (offline, por exemplo):
+   * ai os cartoes voltam a somar o que esta na tela, e a nota "parcial" diz
+   * isso.
+   */
+  const [resultadoDoPeriodo, setResultadoDoPeriodo] =
+    useState<ResumoDeFluxo | null>(null);
   const [contasDoFechamento, setContasDoFechamento] = useState<
     ContaDoFechamentoRealizada[]
   >([]);
@@ -856,6 +873,34 @@ function Lancamentos() {
    * lista, porque sao lancamentos com Editar e Excluir, e saem dos cartoes do
    * topo (`calculateBalance`): e a fatura que conta.
    */
+  /**
+   * O Resultado do periodo inteiro, pelo servico unico -- ver
+   * `resultadoDoPeriodo`. Mesmo recorte de data da lista (`periodo.de` a
+   * `periodo.ate`), sem o corte em hoje do painel: esta tela lista tambem o
+   * lancamento com data futura dentro do mes, e os cartoes somam o que a lista
+   * mostra.
+   *
+   * Falhar aqui nao derruba a tela: os cartoes caem na soma local.
+   */
+  const carregarResultadoDoPeriodo = async (userId: string) => {
+    try {
+      const leitura = await lerResultadoDoPeriodo(supabase, userId, {
+        de: periodo.de,
+        ate: periodo.ate,
+      });
+      if (leitura.ok) {
+        setResultadoDoPeriodo(leitura.principal.summary);
+      } else {
+        console.error(
+          `Erro ao carregar o Resultado do período (${leitura.etapa}):`,
+          leitura.erro
+        );
+      }
+    } catch (erro) {
+      console.error("Erro ao carregar o Resultado do período:", erro);
+    }
+  };
+
   const carregarContasDoFechamento = async (userId: string) => {
     const contas: ContaDoFechamentoRealizada[] = [];
 
@@ -1036,6 +1081,7 @@ function Lancamentos() {
     setPartesDeGrupo([]);
     setPartesFalharam(false);
     setContasDoFechamento([]);
+    setResultadoDoPeriodo(null);
 
     try {
       const { data: dadosDeAuth, error: erroDeAuth } =
@@ -1132,6 +1178,7 @@ function Lancamentos() {
       await carregarGrupos();
       await carregarPartesDeGrupo(user.id);
       await carregarContasDoFechamento(user.id);
+      await carregarResultadoDoPeriodo(user.id);
       await carregarCreditoDeGrupo();
 
       // Carregar contas financeiras.
@@ -1230,6 +1277,19 @@ function Lancamentos() {
       partesDeGrupo
     );
 
+    // O Resultado do servico unico manda nos tres numeros quando chegou; a
+    // soma local fica so para as transferencias (que nao entram no Resultado)
+    // e para quando a leitura falhou. Ver `resultadoDoPeriodo`.
+    if (resultadoDoPeriodo) {
+      return {
+        income: resultadoDoPeriodo.total_income,
+        expenses: resultadoDoPeriodo.total_expense,
+        balance: resultadoDoPeriodo.net,
+        transferido: resumo.transferido,
+        transferencias: resumo.transferencias,
+      };
+    }
+
     return {
       income: resumo.receitas,
       expenses: resumo.despesas,
@@ -1327,9 +1387,12 @@ function Lancamentos() {
   // aqui no JSX -- ver o cabecalho daquele arquivo.
   // A linha debaixo dos tres cartoes. Era a string "Este mês", escrita no JSX --
   // ver `notaDoTotal`.
+  // Com o Resultado do servico unico os cartoes ja somam o periodo inteiro, e
+  // a nota "parcial" deixa de valer para eles -- ela continua valendo para a
+  // lista, que e paginada.
   const notaDosTotais = notaDoTotal({
     rotuloDoPeriodo: rotuloDoPeriodo(periodo),
-    temMais,
+    temMais: resultadoDoPeriodo ? false : temMais,
   });
 
   const descricaoDaLista = descreverLista({

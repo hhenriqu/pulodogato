@@ -77,7 +77,6 @@ const CAT = "lib/categorias-do-periodo.ts";
 const CAIXA = "lib/realizado-do-caixa.ts";
 const VSPEND = "lib/variable-spend.ts";
 const RESUMO_MENSAL = "lib/services/monthly-summary.ts";
-const ROTA_FLUXO = "app/api/reports/cash-flow/route.ts";
 const ROTA_CATEGORIAS = "app/api/reports/categories/route.ts";
 
 /** A linha de codigo do predicado dono, com o `return` e o `;`. */
@@ -89,11 +88,12 @@ const FOR_CAT = "  for (const t of apenasNosTotais(transacoes)) {";
 const FOR_VSPEND = "  for (const t of apenasNosTotais(transacoes)) {";
 const SOMA_DA_TELA = "    const soma = linha.soma_nos_totais !== false;";
 
+// O laco de paginacao do relatorio PESSOAL mora no servico do Resultado do mes
+// desde a prioridade 1 do mapa; a rota de cash-flow so o chama.
+const RESULTADO_DO_MES = "lib/services/resultado-do-mes.ts";
 const LACO_DA_ROTA =
-  "        for (const linha of apenasNosTotais(\n" +
-  "          lote as unknown as LinhaDoRealizado[]\n" +
-  "        ))\n" +
-  "          linhas.push(linha);";
+  "    for (const linha of apenasNosTotais(lote as unknown as LinhaDoRealizado[]))\n" +
+  "      linhas.push(linha);";
 
 const FILTRO_DO_RESUMO =
   "  const transacoes = apenasNosTotais(\n" +
@@ -149,11 +149,11 @@ const mutantes = [
     CATEGORIAS,
   ],
   [
-    ROTA_FLUXO,
+    RESULTADO_DO_MES,
     "o LACO DE PAGINACAO volta a nao filtrar: o ramo de INTERVALO discorda do mensal",
     LACO_DA_ROTA,
-    "        for (const linha of lote)\n" +
-      "          linhas.push(linha as unknown as LinhaDoRealizado);",
+    "    for (const linha of lote)\n" +
+      "      linhas.push(linha as unknown as LinhaDoRealizado);",
     SOMAS,
   ],
   [

@@ -625,6 +625,7 @@ next-env.d.ts
 # rotas com duble -- o painel nao le view nenhuma, e so a rota responde
 # (HMO-418, e a secao 8 da HMO-413).
 /.tmp-criterio-do-painel/
+/.tmp-resultado-do-mes/
 
 # O emit de /api/reports/cash-flow para a suite que prova que a SEGUNDA PAGINA
 # do ramo de intervalo entra no total, com fixture de 1001 linhas (HMO-417).
