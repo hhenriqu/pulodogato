@@ -18,6 +18,11 @@ import {
  *
  * Grupo com dia de fechamento recusa (PDG77, 409): o fechamento gera uma conta
  * para cada pessoa com conta, e quem nao tem nao teria onde recebe-la.
+ *
+ * `{ display_name, dependente: true }` (migration 079, tela da casa): o
+ * dependente nasce FORA da divisao (`participa_da_divisao` falso). Ele nao
+ * recebe parte de despesa, nao conta no rateio igual, e por isso entra tambem
+ * na casa que fecha.
  */
 export async function POST(
   request: NextRequest,
@@ -41,6 +46,8 @@ export async function POST(
       return NextResponse.json({ error: nome.erro }, { status: 400 });
     }
 
+    const dependente = body?.dependente === true;
+
     const { data: membro, error } = await supabase
       .from("group_members")
       .insert({
@@ -49,6 +56,9 @@ export async function POST(
         display_name: nome.nome,
         role: "member",
         status: "active",
+        // So vai no corpo quando e dependente: sem a 079 aplicada, o
+        // participante sem conta do evento continua funcionando.
+        ...(dependente ? { participa_da_divisao: false } : {}),
       })
       .select("id, role, status, percentage, display_name")
       .single();
