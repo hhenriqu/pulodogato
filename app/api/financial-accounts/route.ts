@@ -59,6 +59,38 @@ export async function GET(request: NextRequest) {
       });
     }
 
+    // `?conjuntas=1` (078): o formulario de lancamento tambem oferece as
+    // contas conjuntas da casa que sao de OUTRO membro. Quem decide quais sao e
+    // a policy `financial_accounts_conjunta_select`; aqui so se separa o que
+    // nao e meu. O resto do app continua vendo so as proprias contas, porque
+    // saldo, patrimonio e previsao sao pessoais e somariam a conta do outro.
+    if (request.nextUrl.searchParams.get("conjuntas") === "1") {
+      const { data: conjuntas, error: conjuntasError } = await supabase
+        .from("financial_accounts")
+        .select("*")
+        .not("casa_id", "is", null)
+        .neq("user_id", user.id)
+        .eq("is_active", true)
+        .order("name", { ascending: true });
+
+      // Antes da 078 a coluna nao existe: segue sem as conjuntas.
+      if (conjuntasError) {
+        console.warn("Contas conjuntas indisponiveis:", conjuntasError.message);
+      } else if (conjuntas && conjuntas.length > 0) {
+        return NextResponse.json({
+          accounts: [
+            ...(accounts || []),
+            ...conjuntas.map((c) => ({
+              ...c,
+              name: `${c.name} · conjunta`,
+              conjunta_de_outro: true,
+            })),
+          ],
+          created_defaults: false,
+        });
+      }
+    }
+
     return NextResponse.json({
       accounts: accounts || [],
       created_defaults: false,

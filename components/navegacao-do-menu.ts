@@ -42,6 +42,7 @@
  */
 import {
   ArrowRightLeft,
+  Home,
   LayoutDashboard,
   TrendingDown,
   TrendingUp,
@@ -376,6 +377,18 @@ export const menuAgrupado: EntradaDoMenu[] = [
         isPremium: true,
       },
     ],
+  },
+  {
+    // SOLTA, logo antes de Grupos (078). A casa e o pilar "financas da
+    // familia" do mapa do projeto: o mes de quem mora junto somado, as contas
+    // conjuntas e o dependente. Nao mora dentro de Grupos porque Grupos e uma
+    // tela solta (nao ha submenu onde por), e nao vira grupo de menu com Grupos
+    // porque a casa e a pergunta "como a familia fechou o mes", e nao "com quem
+    // eu divido a conta". Sem `requiredFeature`: so le o que os membros ja
+    // lancaram, como Receitas e Despesas.
+    name: "Casa",
+    href: "/dashboard/casa",
+    icon: Home,
   },
   {
     // SOLTO, sem grupo, e com o `requiredFeature` que ele sempre teve. Dividir
