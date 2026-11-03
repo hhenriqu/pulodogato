@@ -96,9 +96,9 @@ O que a família precisa e **não tem**:
   conta como conjunta; os membros veem saldo e extrato e lançam nela.
 - **Metas e orçamento da família.** Metas compartilhadas estão no backlog da
   PRD; o orçamento de grupo existe mas é do grupo, não da casa.
-- **Dependente sem login.** O membro sem conta (`group_members.display_name`,
-  077/078) já aparece na casa. Falta ele ficar fora do rateio e poder estar
-  na casa com dia de fechamento.
+- ~~**Dependente sem login.**~~ Feito na migration 079 (RN024.5): o membro
+  sem conta da casa tem `group_members.participa_da_divisao` falso, não
+  recebe parte de despesa e pode estar na casa com dia de fechamento.
 - ~~**Dizer que o grupo é a casa.**~~ Feito na migration 076 (RN023):
   `expense_groups.group_kind` é `casa` ou `evento`, separado de `group_type`
   (que é a regra de entrada, público ou privado). Os grupos com `closing_day`

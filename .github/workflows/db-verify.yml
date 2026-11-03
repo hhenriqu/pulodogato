@@ -6191,7 +6191,8 @@ jobs:
       # A metade TypeScript da 077: o nome de quem nao tem conta e o pagador.
       - name: O participante sem conta na tela do grupo
         run: npm run test:membro-sem-conta
-=======
+
+      # =====================================================================
       # 078 -- a visao da casa: o mes somado, conta conjunta e dependente
       # =====================================================================
       # As leituras DEFINER da casa (resultado_da_casa, saldos_da_casa,
@@ -6211,6 +6212,28 @@ jobs:
       # A metade TypeScript da 078: a conta que a tela faz com as linhas.
       - name: A soma da casa tira o que um membro deve ao outro
         run: npm run test:resultado-da-casa
+
+      # =====================================================================
+      # 079 -- o dependente fica fora da divisao e pode morar na casa que fecha
+      # =====================================================================
+      # participa_da_divisao no membro sem conta: o rateio igual nao conta ele,
+      # a parte com valor e recusada, so o admin muda, e o PDG77 da 077 deixa
+      # o dependente entrar numa casa com dia de fechamento. A suite roda num
+      # BEGIN com ROLLBACK.
+      - name: 079_dependente_fora_da_divisao
+        run: $PSQL -f database/migrations/079_dependente_fora_da_divisao.sql
+
+      - name: 079 e idempotente
+        run: $PSQL -f database/migrations/079_dependente_fora_da_divisao.sql
+
+      - name: O dependente nao divide despesa e mora na casa que fecha
+        run: $PSQL -f database/tests/079_dependente_fora_da_divisao_test.sql
+
+      - name: O rateio sem conta continua, depois da 079
+        run: $PSQL -f database/tests/077_membro_sem_conta_e_quem_pagou_test.sql
+
+      - name: A casa continua, depois da 079
+        run: $PSQL -f database/tests/078_visao_da_casa_test.sql
 
       - name: schema-columns.json em dia com as migrations
         run: node scripts/gen-schema-columns.mjs --check

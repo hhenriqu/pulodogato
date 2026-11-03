@@ -743,8 +743,13 @@ O Resultado de cada um fecha na responsabilidade, e a soma dá os R$ 2.000.
 - RN024.5 **Dependente sem login.** É o membro sem conta (o mesmo do
   participante sem conta do grupo de evento): só nome, sem login. O admin da
   casa o adiciona pela tela da casa. O dependente aparece entre as pessoas da
-  casa e não tem mês próprio. Ficar fora do rateio e conviver com o dia de
-  fechamento vem numa entrega seguinte.
+  casa e não tem mês próprio. Ele fica fora da divisão (migration 079,
+  `participa_da_divisao`): não recebe parte de despesa, não conta no rateio
+  igual e não tem peso no rateio por percentual. Por isso pode estar na casa
+  que tem dia de fechamento, que continua recusando o participante sem conta
+  que divide. Só o admin muda quem participa, e só para membro sem conta que
+  não tenha parte com valor. Ao aplicar a 079, os membros sem conta que já
+  estavam numa casa saem da divisão.
 
 ### RN025 — Participante sem conta e despesa paga por outro ✅ **(banco + tela)**
 

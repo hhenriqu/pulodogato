@@ -446,6 +446,7 @@
     "group_id",
     "id",
     "joined_at",
+    "participa_da_divisao",
     "percentage",
     "restored_at",
     "role",

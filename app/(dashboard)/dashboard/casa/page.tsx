@@ -455,12 +455,12 @@ function PessoasDaCasa({
     setSalvando(true);
     setErro(null);
     try {
-      // A rota do membro sem conta (077) e a mesma do convidado do churrasco:
-      // o dependente e um membro sem conta num grupo do tipo casa.
+      // A rota do membro sem conta (077) e a mesma do convidado do churrasco;
+      // `dependente: true` (079) faz ele nascer fora da divisao das despesas.
       const resposta = await fetch(`/api/expense-groups/${grupoId}/members`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ display_name: limpo }),
+        body: JSON.stringify({ display_name: limpo, dependente: true }),
       });
       if (!resposta.ok) {
         const corpo = await resposta.json().catch(() => ({}));
@@ -488,7 +488,8 @@ function PessoasDaCasa({
         </CardTitle>
         <CardDescription>
           Dependente é quem faz parte da casa sem ter login no app, como um
-          filho. Ele aparece aqui, mas não tem mês próprio para mostrar.
+          filho. Ele aparece aqui, mas não tem mês próprio para mostrar e
+          não entra na divisão das despesas da casa.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
