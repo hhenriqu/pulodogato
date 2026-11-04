@@ -652,6 +652,18 @@
     "updated_at",
     "user_id"
   ],
+  "pagamentos_entre_pessoas": [
+    "created_at",
+    "data",
+    "descricao",
+    "id",
+    "lancamento_do_pagador",
+    "lancamento_do_recebedor",
+    "pagador_id",
+    "recebedor_id",
+    "recusado_em",
+    "valor"
+  ],
   "payroll_deductions": [
     "amount",
     "created_at",

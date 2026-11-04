@@ -32,6 +32,7 @@
 | 2.11 | 02/11/2026 | RN023 nova: o grupo tem tipo, casa ou evento, separado da regra de entrada (público ou privado). Os grupos que já existiam viraram casa quando tinham dia de fechamento | Helio |
 | 2.12 | 02/11/2026 | RN024 nova: a visão da casa. O mês da família somado (sem contar duas vezes o que um membro deve ao outro), a conta conjunta e o dependente sem login. Cada membro escolhe mostrar o próprio mês | Helio |
 | 2.13 | 02/11/2026 | RN025 nova: o participante sem conta no app (só o nome) divide as despesas do grupo, aparece no saldo e no acerto; quem tem conta lança a despesa que outra pessoa pagou, que fica só no grupo. Nesta versão, nenhum dos dois entra em grupo com dia de fechamento | Helio |
+| 2.14 | 04/11/2026 | RN020.12 nova: o pagamento para uma pessoa da família aparece para quem recebe, que confirma a conta em que o dinheiro entrou | Helio |
 
 > **O que a versão 2.0 corrigiu.** Até aqui esta PRD descrevia um app de carteira
 > de investimentos: o problema era "investidores pessoa física", as personas eram
@@ -646,6 +647,15 @@ O Resultado de cada um fecha na responsabilidade, e a soma dá os R$ 2.000.
 - RN020.11 A tela da conexão (Conexões > Contas) junta o que está registrado
   entre os dois, mês a mês: quanto eu pago, quanto eu recebo e o saldo. Quitar
   continua na agenda (RN020.6).
+- RN020.12 Pagamento para uma pessoa da família (migration 081). Na despesa
+  nova, quem paga pode marcar "Pagamento para alguém da família" (só quem
+  está ativo num grupo ativo com ele). Para quem recebe aparece no painel
+  "<nome> te pagou R$ X": ela escolhe a conta em que o dinheiro entrou e a
+  receita nasce na sessão e na conta dela, na categoria "Recebido da família";
+  ou ela diz "Não recebi". Ninguém lança na conta de outra pessoa (a mesma
+  regra do acerto, RN019). Quem recebe apagar a receita volta o pagamento para
+  "a lançar"; quem paga apagar a despesa leva o pagamento junto, e a receita já
+  confirmada fica com quem recebeu. Decisão do Helio, 04/11/2026.
 
 ### RN021 — MyBank ✅ **(banco)** — fase 5
 
