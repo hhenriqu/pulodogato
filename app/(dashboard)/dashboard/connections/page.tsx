@@ -36,6 +36,7 @@ import {
 import { PARAM_DA_CONEXAO } from "@/lib/conta-da-conexao";
 import { comOrigem } from "@/lib/retorno-do-lancamento";
 
+import { Dica } from "@/components/ui/dica";
 interface Profile {
   id: string;
   full_name: string;
@@ -526,11 +527,11 @@ export default function ConnectionsPage() {
               <CardTitle className="flex items-center gap-2">
                 <Search className="h-5 w-5" />
                 Buscar pessoas
+                <Dica rotulo="Sobre a busca">
+                  Encontre quem já usa o app pelo nome ou pelo apelido. Só aparece
+                  quem deixou o perfil público.
+                </Dica>
               </CardTitle>
-              <CardDescription>
-                Encontre quem já usa o app pelo nome ou pelo apelido. Só aparece
-                quem deixou o perfil público.
-              </CardDescription>
             </CardHeader>
             <CardContent>
               <Input

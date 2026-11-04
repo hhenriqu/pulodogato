@@ -130,6 +130,7 @@ import { useEstaOnline } from "@/lib/hooks/useEstaOnline";
 import { usePreferenciaDeMoeda } from "@/lib/hooks/usePreferenciaDeMoeda";
 import { toast } from "sonner";
 
+import { Dica } from "@/components/ui/dica";
 export default function CartoesPage() {
   const {
     ativas,
@@ -383,10 +384,14 @@ export default function CartoesPage() {
                   mes o total responde. Mesma disposicao de `FaturaDoCartao`. */}
               <div className="flex flex-wrap items-end justify-between gap-3">
                 <div>
-                  <CardDescription>
+                  <CardDescription className="flex items-center gap-1.5">
                     {rotuloDoMes
                       ? `Faturas de ${rotuloDoMes}`
                       : "Faturas do mês"}
+                    <Dica rotulo="Sobre as faturas do mês">
+                      O que os cartões ativos cobram no mês escolhido. Não entra no
+                      saldo: é dívida, não dinheiro que você tem.
+                    </Dica>
                   </CardDescription>
                   <CardTitle className="text-2xl text-warning">
                     {mostraTotal ? (
@@ -414,10 +419,6 @@ export default function CartoesPage() {
               </div>
             </CardHeader>
             <CardContent className="space-y-2">
-              <p className="text-xs text-muted-foreground">
-                O que os cartões ativos cobram no mês escolhido. Não entra no
-                saldo: é dívida, não dinheiro que você tem.
-              </p>
 
               {/* A FRASE DO CARTAO FORA DOS TOTAIS (HMO-434).
                   REQUISITO, nao enfeite -- ver `avisoDosCartoesForaDosTotais`.

@@ -50,6 +50,7 @@ import {
   type RealizadoDoPeriodo,
 } from "@/lib/previsto-x-realizado";
 
+import { Dica } from "@/components/ui/dica";
 const moeda = (valor: number) =>
   new Intl.NumberFormat("pt-BR", {
     style: "currency",
@@ -112,11 +113,27 @@ export function PrevistoXRealizado({
     realizado
   );
 
+  // A nota que impede a leitura errada mora na dica do titulo, e so quando ha
+  // comparacao na tela: sem ela a diferenca em despesas se le como estouro de
+  // orcamento, e o que ela mede na maioria dos meses e apenas o gasto que
+  // ninguem agenda.
+  const comComparacao = !indisponivel && !semPrevisao;
   const cabecalho = (
     <CardHeader className="pb-3">
       <CardTitle className="flex items-center gap-2 text-lg">
         <Scale className="h-5 w-5" />
         Previsto x Realizado
+        {comComparacao && (
+          <Dica rotulo="De onde vem o previsto">
+            O previsto vem da agenda —{" "}
+            {previsto.quantidade === 1
+              ? "1 conta ou receita"
+              : `${previsto.quantidade} contas e receitas`}{" "}
+            com vencimento em {rotulo}. Gasto que não está na agenda (mercado,
+            combustível, compras do dia) aparece só no realizado, então despesa
+            realizada acima da prevista é o normal.
+          </Dica>
+        )}
       </CardTitle>
       <CardDescription className="capitalize">{rotulo}</CardDescription>
     </CardHeader>
@@ -246,18 +263,6 @@ export function PrevistoXRealizado({
           </div>
         ))}
 
-        {/* A nota que impede a leitura errada. Ela nao e decorativa: sem ela a
-            diferenca em despesas se le como estouro de orcamento, e o que ela
-            mede na maioria dos meses e apenas o gasto que ninguem agenda. */}
-        <p className="text-xs text-muted-foreground">
-          O previsto vem da agenda —{" "}
-          {previsto.quantidade === 1
-            ? "1 conta ou receita"
-            : `${previsto.quantidade} contas e receitas`}{" "}
-          com vencimento em {rotulo}. Gasto que não está na agenda (mercado,
-          combustível, compras do dia) aparece só no realizado, então despesa
-          realizada acima da prevista é o normal.
-        </p>
 
         <Button variant="outline" size="sm" asChild>
           <Link href="/dashboard/bills">Ver a agenda do período</Link>

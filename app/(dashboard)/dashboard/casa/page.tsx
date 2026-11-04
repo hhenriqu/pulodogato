@@ -38,6 +38,7 @@ import type {
 } from "@/lib/resultado-da-casa";
 import { ContasConjuntasDaCasa, ExtratoDaConjunta } from "@/components/casa/ContaConjunta";
 
+import { Dica } from "@/components/ui/dica";
 interface GrupoCasa {
   id: string;
   name: string;
@@ -256,10 +257,12 @@ function VisaoDaCasa({ grupoId, mes }: { grupoId: string; mes: string }) {
       <Card className={eu?.compartilha ? undefined : "border-primary"}>
         <CardContent className="flex items-center justify-between gap-4 pt-6">
           <div>
-            <p className="font-medium">Mostrar o meu mês para a casa</p>
-            <p className="text-sm text-muted-foreground">
-              A casa vê só os seus totais (entrou, saiu, resultado) e o total
-              do saldo das suas contas. Nenhum lançamento seu aparece.
+            <p className="flex items-center gap-1.5 font-medium">
+              Mostrar o meu mês para a casa
+              <Dica rotulo="O que a casa vê">
+                A casa vê só os seus totais (entrou, saiu, resultado) e o total
+                do saldo das suas contas. Nenhum lançamento seu aparece.
+              </Dica>
             </p>
           </div>
           <Switch
@@ -273,11 +276,13 @@ function VisaoDaCasa({ grupoId, mes }: { grupoId: string; mes: string }) {
 
       <Card>
         <CardHeader>
-          <CardTitle>O mês da casa</CardTitle>
-          <CardDescription>
-            A soma do Resultado de quem mostra o mês, sem contar duas vezes o
-            que um membro deve ao outro.
-          </CardDescription>
+          <CardTitle className="flex items-center gap-1.5">
+            O mês da casa
+            <Dica rotulo="Como o mês da casa é somado">
+              A soma do Resultado de quem mostra o mês, sem contar duas vezes o
+              que um membro deve ao outro.
+            </Dica>
+          </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           {totais.map((t) => (
@@ -485,12 +490,12 @@ function PessoasDaCasa({
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Users className="h-5 w-5" /> Quem mora na casa
+          <Dica rotulo="Sobre dependentes">
+            Dependente é quem faz parte da casa sem ter login no app, como um
+            filho. Ele aparece aqui, mas não tem mês próprio para mostrar e
+            não entra na divisão das despesas da casa.
+          </Dica>
         </CardTitle>
-        <CardDescription>
-          Dependente é quem faz parte da casa sem ter login no app, como um
-          filho. Ele aparece aqui, mas não tem mês próprio para mostrar e
-          não entra na divisão das despesas da casa.
-        </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
         <ul className="divide-y">

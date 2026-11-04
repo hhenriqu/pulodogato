@@ -80,6 +80,7 @@ import {
 import { useEstaOnline } from "@/lib/hooks/useEstaOnline";
 import { usePreferenciaDeMoeda } from "@/lib/hooks/usePreferenciaDeMoeda";
 
+import { Dica } from "@/components/ui/dica";
 /**
  * A tela le `?tipo=` com `useSearchParams` (HMO-423), e o `<Suspense>` e a
  * fronteira que o Next pede para o hook em rota estatica.
@@ -482,12 +483,16 @@ function TelaDeContas() {
         <>
           <Card>
             <CardHeader className="pb-2">
-              <CardDescription>
+              <CardDescription className="flex items-center gap-1.5">
                 {recorte
                   ? `Saldo somado das contas de ${porTipo(
                       recorte
                     ).rotulo.toLowerCase()}`
                   : "Saldo somado das contas"}
+                <Dica rotulo="Por que o cartão fica de fora">
+                  Cartão de crédito fica de fora: ele guarda o que foi gasto, não
+                  o que você tem.
+                </Dica>
               </CardDescription>
               <CardTitle
                 className={`text-2xl ${
@@ -504,10 +509,6 @@ function TelaDeContas() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-1">
-              <p className="text-xs text-muted-foreground">
-                Cartão de crédito fica de fora: ele guarda o que foi gasto, não
-                o que você tem.
-              </p>
               {/* Ver o comentario de `contasComCarteira`, acima. */}
               {podeMostrarNumero(estado) && contasComCarteira > 0 && (
                 <p

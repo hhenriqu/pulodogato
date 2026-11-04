@@ -13,13 +13,13 @@ import { Switch } from "@/components/ui/switch";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
 import { formatarValor } from "@/lib/dinheiro";
 import { dataCurtaNaTela } from "@/lib/data-na-tela";
 
+import { Dica } from "@/components/ui/dica";
 interface MinhaConta {
   id: string;
   name: string;
@@ -84,13 +84,15 @@ export function ContasConjuntasDaCasa({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Minhas contas conjuntas</CardTitle>
-        <CardDescription>
-          Marque a conta que é da casa. Quem mora com você passa a ver o saldo
-          e o extrato dela e pode lançar nela. Nome e dados da conta continuam
-          só com você. Cartão de crédito não entra: a fatura é de quem tem o
-          cartão.
-        </CardDescription>
+        <CardTitle className="flex items-center gap-1.5">
+          Minhas contas conjuntas
+          <Dica rotulo="Sobre contas conjuntas">
+            Marque a conta que é da casa. Quem mora com você passa a ver o saldo
+            e o extrato dela e pode lançar nela. Nome e dados da conta continuam
+            só com você. Cartão de crédito não entra: a fatura é de quem tem o
+            cartão.
+          </Dica>
+        </CardTitle>
       </CardHeader>
       <CardContent className="space-y-2">
         {contas === null && !erro && (

@@ -16,6 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { Archive, ArrowLeft, RotateCcw, Users, AlertCircle } from "lucide-react";
 
+import { Dica } from "@/components/ui/dica";
 interface MembroArquivado {
   id: string;
   user_id: string;
@@ -113,11 +114,11 @@ export default function GruposArquivadosPage() {
           <h1 className="flex items-center gap-2 text-2xl font-bold text-foreground">
             <Archive className="h-6 w-6" />
             Grupos arquivados
+            <Dica rotulo="Sobre os grupos arquivados">
+              Grupos que voce arquivou ou dos quais foi o ultimo a sair. O
+              historico de transacoes continua guardado.
+            </Dica>
           </h1>
-          <p className="text-sm text-muted-foreground">
-            Grupos que voce arquivou ou dos quais foi o ultimo a sair. O
-            historico de transacoes continua guardado.
-          </p>
         </div>
         <Button variant="outline" asChild>
           <Link href="/dashboard/expense-groups">

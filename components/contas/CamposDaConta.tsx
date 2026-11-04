@@ -37,6 +37,7 @@ import { Switch } from "@/components/ui/switch";
 import { opcoesDeMoeda } from "@/lib/moeda";
 import type { AccountType } from "@/types/financial";
 
+import { Dica } from "@/components/ui/dica";
 interface CamposDaContaProps {
   escopo: EscopoDeConta;
   valores: ValoresDaConta;
@@ -86,7 +87,15 @@ export function CamposDaConta({
       */}
       {campos.tipo && (
         <div className="space-y-2">
-          <Label>Tipo</Label>
+          <div className="flex items-center gap-1">
+            <Label>Tipo</Label>
+            {editando && (
+              <Dica rotulo="Por que o tipo não muda">
+                O tipo não muda depois de criada: ele decide como os lançamentos
+                já feitos são lidos.
+              </Dica>
+            )}
+          </div>
           <Select
             value={valores.account_type}
             onValueChange={(valor) =>
@@ -107,12 +116,6 @@ export function CamposDaConta({
               ))}
             </SelectContent>
           </Select>
-          {editando && (
-            <p className="text-xs text-muted-foreground">
-              O tipo não muda depois de criada: ele decide como os lançamentos
-              já feitos são lidos.
-            </p>
-          )}
         </div>
       )}
 
@@ -206,7 +209,13 @@ export function CamposDaConta({
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="due">Dia do vencimento</Label>
+              <div className="flex items-center gap-1">
+                <Label htmlFor="due">Dia do vencimento</Label>
+                <Dica rotulo="Sobre fechamento e vencimento">
+                  Sem esses dois dias a fatura não fecha, e uma compra feita depois do
+                  fechamento aparece no mês errado.
+                </Dica>
+              </div>
               <Input
                 id="due"
                 inputMode="numeric"
@@ -217,10 +226,6 @@ export function CamposDaConta({
             </div>
           </div>
 
-          <p className="text-xs text-muted-foreground">
-            Sem esses dois dias a fatura não fecha, e uma compra feita depois do
-            fechamento aparece no mês errado.
-          </p>
         </>
       )}
 

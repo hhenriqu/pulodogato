@@ -62,6 +62,7 @@ import type {
   ExpenseGroup,
 } from "@/types/financial";
 
+import { Dica } from "@/components/ui/dica";
 const moeda = (valor: number) =>
   new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(
     valor
@@ -443,7 +444,13 @@ export default function GoalsPage() {
               </div>
 
               <div className="space-y-2">
-                <Label>Onde o dinheiro fica guardado</Label>
+                <div className="flex items-center gap-1">
+                  <Label>Onde o dinheiro fica guardado</Label>
+                  <Dica rotulo="Sobre a conta da meta">
+                    Só uma anotação. O progresso vem dos aportes que você
+                    registrar, não do saldo da conta.
+                  </Dica>
+                </div>
                 <Select
                   value={form.account_id || "nenhuma"}
                   onValueChange={(v) =>
@@ -462,15 +469,17 @@ export default function GoalsPage() {
                     ))}
                   </SelectContent>
                 </Select>
-                <p className="text-xs text-muted-foreground">
-                  Só uma anotação. O progresso vem dos aportes que você
-                  registrar, não do saldo da conta.
-                </p>
               </div>
 
               {grupos.length > 0 && (
                 <div className="space-y-2">
-                  <Label>Meta de grupo</Label>
+                  <div className="flex items-center gap-1">
+                    <Label>Meta de grupo</Label>
+                    <Dica rotulo="Sobre meta de grupo">
+                      Numa meta de grupo, cada membro registra o próprio aporte e
+                      todos veem o total.
+                    </Dica>
+                  </div>
                   <Select
                     value={form.group_id || "pessoal"}
                     onValueChange={(v) =>
@@ -489,10 +498,6 @@ export default function GoalsPage() {
                       ))}
                     </SelectContent>
                   </Select>
-                  <p className="text-xs text-muted-foreground">
-                    Numa meta de grupo, cada membro registra o próprio aporte e
-                    todos veem o total.
-                  </p>
                 </div>
               )}
 
@@ -709,8 +714,12 @@ export default function GoalsPage() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>
+            <DialogTitle className="flex items-center gap-1.5">
               Guardar dinheiro · {metaDoAporte?.title}
+              <Dica rotulo="Sobre o aporte">
+                O aporte não movimenta o saldo das suas contas. Se você
+                transferiu o dinheiro de verdade, lance a transferência também.
+              </Dica>
             </DialogTitle>
           </DialogHeader>
 
@@ -734,11 +743,6 @@ export default function GoalsPage() {
                 />
               </div>
             </div>
-
-            <p className="text-xs text-muted-foreground">
-              O aporte não movimenta o saldo das suas contas. Se você
-              transferiu o dinheiro de verdade, lance a transferência também.
-            </p>
 
             <Button
               className="w-full"

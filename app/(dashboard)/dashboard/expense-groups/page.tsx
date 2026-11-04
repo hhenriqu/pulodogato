@@ -72,6 +72,7 @@ import {
 } from "lucide-react";
 import { useGroupInvitations } from "@/lib/hooks/useGroupInvitations";
 
+import { Dica } from "@/components/ui/dica";
 interface ExpenseGroup {
   id: string;
   name: string;
@@ -726,7 +727,14 @@ export default function ExpenseGroupsPage() {
                   saldo. Nao e o denominador do saldo: a view devolve BRL, com
                   cada despesa convertida pela cotacao congelada do dia dela. */}
               <div className="space-y-2">
-                <Label htmlFor="group_currency">Moeda do grupo</Label>
+                <div className="flex items-center gap-1">
+                  <Label htmlFor="group_currency">Moeda do grupo</Label>
+                  <Dica rotulo="Sobre a moeda do grupo">
+                    Sugerida em cada despesa desta viagem e usada para apresentar o
+                    saldo. Cada despesa guarda a cotação do dia em que foi feita, e
+                    esse valor não muda depois.
+                  </Dica>
+                </div>
                 <Select
                   value={createForm.currency}
                   onValueChange={(value) =>
@@ -744,11 +752,6 @@ export default function ExpenseGroupsPage() {
                     ))}
                   </SelectContent>
                 </Select>
-                <p className="text-xs text-muted-foreground">
-                  Sugerida em cada despesa desta viagem e usada para apresentar o
-                  saldo. Cada despesa guarda a cotação do dia em que foi feita, e
-                  esse valor não muda depois.
-                </p>
               </div>
 
               <div className="flex gap-2">
@@ -1448,7 +1451,14 @@ export default function ExpenseGroupsPage() {
                     saldo continua saindo em real da view -- o que muda e o que o
                     formulario sugere e a moeda em que a tela escreve o saldo. */}
                 <div className="space-y-2">
-                  <Label htmlFor="edit_group_currency">Moeda do grupo</Label>
+                  <div className="flex items-center gap-1">
+                    <Label htmlFor="edit_group_currency">Moeda do grupo</Label>
+                    <Dica rotulo="Sobre trocar a moeda">
+                      Trocar a moeda não altera nenhuma despesa já lançada: cada uma
+                      guarda a cotação do próprio dia. Muda o que é sugerido nas
+                      próximas e a moeda em que o saldo aparece.
+                    </Dica>
+                  </div>
                   <Select
                     value={editForm.currency}
                     onValueChange={(value) =>
@@ -1466,11 +1476,6 @@ export default function ExpenseGroupsPage() {
                       ))}
                     </SelectContent>
                   </Select>
-                  <p className="text-xs text-muted-foreground">
-                    Trocar a moeda não altera nenhuma despesa já lançada: cada uma
-                    guarda a cotação do próprio dia. Muda o que é sugerido nas
-                    próximas e a moeda em que o saldo aparece.
-                  </p>
                 </div>
 
                 <div className="flex gap-2">

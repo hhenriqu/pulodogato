@@ -70,6 +70,7 @@ import {
   type NaturezaDespesa,
 } from "@/lib/lancamento";
 
+import { Dica } from "@/components/ui/dica";
 /**
  * O rotulo de cada natureza nesta tela.
  *
@@ -324,21 +325,29 @@ export function FormularioDeTransferencia() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="amount">Valor *</Label>
+                <div className="flex items-center gap-1">
+                  <Label htmlFor="amount">Valor *</Label>
+                  <Dica rotulo="Sobre o valor">
+                    Digite quanto andou, sem sinal. Sai da origem e entra no
+                    destino pelo mesmo valor.
+                  </Dica>
+                </div>
                 <CampoDeValor
                   id="amount"
                   value={valores.valor}
                   onChange={(valor) => aoMudar({ valor })}
                   required
                 />
-                <p className="text-xs text-muted-foreground">
-                  Digite quanto andou, sem sinal. Sai da origem e entra no
-                  destino pelo mesmo valor.
-                </p>
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="origem">De qual conta saiu *</Label>
+                <div className="flex items-center gap-1">
+                  <Label htmlFor="origem">De qual conta saiu *</Label>
+                  <Dica rotulo="Por que o cartão não aparece">
+                    Cartão de crédito não aparece aqui: ele não tem saldo de onde
+                    tirar. Para quitar a fatura, use Contas Previstas.
+                  </Dica>
+                </div>
                 <Select
                   value={valores.origemId}
                   onValueChange={(value: string) => aoMudar({ origemId: value })}
@@ -356,14 +365,17 @@ export function FormularioDeTransferencia() {
                 </Select>
                 {/* Cartao fora da origem, e a tela diz por que. Sem esta linha
                     o cartao "some" da lista e parece defeito de carregamento. */}
-                <p className="text-xs text-muted-foreground">
-                  Cartão de crédito não aparece aqui: ele não tem saldo de onde
-                  tirar. Para quitar a fatura, use Contas Previstas.
-                </p>
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="destino">Para qual conta foi *</Label>
+                <div className="flex items-center gap-1">
+                  <Label htmlFor="destino">Para qual conta foi *</Label>
+                  <Dica rotulo="Por que o cartão não aparece">
+                    Cartão de crédito também não aparece aqui: ele só recebe
+                    dinheiro pelo pagamento da fatura, no «Pagar» da fatura em
+                    Contas Previstas.
+                  </Dica>
+                </div>
                 <Select
                   value={valores.destinoId}
                   onValueChange={(value: string) =>
@@ -387,17 +399,20 @@ export function FormularioDeTransferencia() {
                     frase da origem: sem ela o cartao "some" e parece defeito.
                     A frase diz o caminho que sobrou, que e o «Pagar» da
                     fatura (`destino_e_cartao`, lib/transferencia.ts). */}
-                <p className="text-xs text-muted-foreground">
-                  Cartão de crédito também não aparece aqui: ele só recebe
-                  dinheiro pelo pagamento da fatura, no «Pagar» da fatura em
-                  Contas Previstas.
-                </p>
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="date">
-                  {campos.diaDeVencimento ? "A partir de *" : "Data *"}
-                </Label>
+                <div className="flex items-center gap-1">
+                  <Label htmlFor="date">
+                    {campos.diaDeVencimento ? "A partir de *" : "Data *"}
+                  </Label>
+                  {campos.diaDeVencimento && (
+                    <Dica rotulo="Sobre a data de início">
+                      Quando a repetição começa. O dinheiro só anda quando você
+                      confirmar cada mês em Contas Previstas.
+                    </Dica>
+                  )}
+                </div>
                 {/* `CampoDeData` e nao o controle de data nativo (HMO-240). O
                     `required` continua aqui pelo campo vazio, mas quem recusa a
                     data pela metade e `validarTransferencia` ("Informe a
@@ -418,12 +433,6 @@ export function FormularioDeTransferencia() {
                     regra, nao o dia em que o dinheiro andou. Sem esta frase,
                     quem escolhe "todo mes" le "Data" como "hoje" e nao entende
                     por que nada apareceu no extrato. */}
-                {campos.diaDeVencimento && (
-                  <p className="text-xs text-muted-foreground">
-                    Quando a repetição começa. O dinheiro só anda quando você
-                    confirmar cada mês em Contas Previstas.
-                  </p>
-                )}
               </div>
 
               {/* O BLOCO DA RECORRENCIA (HMO-172)

@@ -9,13 +9,13 @@ import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
 import { porTipo } from "@/lib/contas";
 import type { FinancialAccount } from "@/types/financial";
 
+import { Dica } from "@/components/ui/dica";
 interface ContasArquivadasProps {
   contas: FinancialAccount[];
   aoReativar: (conta: FinancialAccount) => void;
@@ -36,11 +36,11 @@ export function ContasArquivadas({
           <span className="text-sm font-normal text-muted-foreground">
             ({contas.length})
           </span>
+          <Dica rotulo="O que acontece ao arquivar">
+            Some da lista e dos seletores, mas o histórico de lançamentos continua
+            inteiro.
+          </Dica>
         </CardTitle>
-        <CardDescription>
-          Some da lista e dos seletores, mas o histórico de lançamentos continua
-          inteiro.
-        </CardDescription>
       </CardHeader>
       <CardContent className="space-y-2">
         {contas.map((conta) => (

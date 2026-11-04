@@ -31,13 +31,13 @@
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
 import { formatarValor } from "@/lib/dinheiro";
 import type { CarteiraPorConta as CarteiraComposta } from "@/lib/carteira-na-tela";
 
+import { Dica } from "@/components/ui/dica";
 interface CarteiraPorContaProps {
   /** O que `comporCarteiraPorConta` devolveu. Importado com alias porque o
    *  tipo e o componente se chamam igual. */
@@ -63,11 +63,13 @@ export function CarteiraPorConta({
   return (
     <Card data-bloco="carteira-por-conta">
       <CardHeader>
-        <CardTitle>Carteira por conta</CardTitle>
-        <CardDescription>
-          Onde cada ativo está. O que está atrelado a uma Conta Investimento
-          entra no saldo dela e no seu patrimônio.
-        </CardDescription>
+        <CardTitle className="flex items-center gap-1.5">
+          Carteira por conta
+          <Dica rotulo="Sobre a carteira por conta">
+            Onde cada ativo está. O que está atrelado a uma Conta Investimento
+            entra no saldo dela e no seu patrimônio.
+          </Dica>
+        </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
         {/* O AVISO DO BANCO CENTRAL VEM PRIMEIRO: ele muda como se le TODO

@@ -132,6 +132,7 @@ import type {
   RecurrenceFrequency,
 } from "@/types/financial";
 
+import { Dica } from "@/components/ui/dica";
 const FREQUENCIAS: Array<{ valor: RecurrenceFrequency; rotulo: string }> = [
   { valor: "weekly", rotulo: "Semanal" },
   { valor: "biweekly", rotulo: "Quinzenal" },
@@ -1289,7 +1290,13 @@ export default function BillsPage() {
                     membros. So aparece para quem tem grupo. */}
                 {gruposDespesa.length > 0 && (
                   <div>
-                    <Label>Dividir com um grupo (opcional)</Label>
+                    <div className="flex items-center gap-1">
+                      <Label>Dividir com um grupo (opcional)</Label>
+                      <Dica rotulo="Sobre dividir com um grupo">
+                        Os membros do grupo passam a ver esta conta na agenda
+                        deles — sem enxergar o resto das suas contas.
+                      </Dica>
+                    </div>
                     <Select
                       value={formFixo.group_id || "pessoal"}
                       onValueChange={(valor) =>
@@ -1311,10 +1318,6 @@ export default function BillsPage() {
                         ))}
                       </SelectContent>
                     </Select>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Os membros do grupo passam a ver esta conta na agenda
-                      deles — sem enxergar o resto das suas contas.
-                    </p>
                   </div>
                 )}
 

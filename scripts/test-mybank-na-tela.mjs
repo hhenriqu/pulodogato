@@ -242,6 +242,11 @@ const PARTES = [
   "components/ui/badge.js",
   "components/ui/input.js",
   "components/ui/label.js",
+  // O ICONE DE INFORMACAO, ANTES DO PAINEL QUE O USA: o titulo do MyBank, o
+  // cartao das contas que emprestam e o campo da conta de pagamento guardam o
+  // texto explicativo nele. Fora daqui o mount morre em `ReferenceError: Dica
+  // is not defined`, no primeiro render, e todos os casos reprovam juntos.
+  "components/ui/dica.js",
   "components/movimentacoes/PerguntaDaBaseDoValor.js",
   // OS DOIS CAMPOS DO JURO (HMO-448), ANTES DO PAINEL QUE OS USA. Eles sao
   // `const` no script classico, e `const` nao sobe: declarados DEPOIS do
@@ -402,6 +407,19 @@ button, input, select, textarea { font-family: inherit; font-size: 100%; line-he
 .font-semibold { font-weight: 600; }
 .font-bold { font-weight: 700; }
 .tracking-tight { letter-spacing: -0.025em; }
+
+/* O icone de informacao (components/ui/dica): o botao de 20px, o icone de
+   14px, o vao ao lado do titulo e o \`sr-only\` do Tailwind, que tira o texto
+   explicativo da geometria e o deixa so para o leitor de tela. Sem a ultima
+   regra o texto inteiro entra na linha do titulo e a medida acusa um estouro
+   que o app nao tem. */
+.gap-1 { gap: 0.25rem; }
+.gap-1\\.5 { gap: 0.375rem; }
+.h-5 { height: 1.25rem; }
+.w-5 { width: 1.25rem; }
+.h-3\\.5 { height: 0.875rem; }
+.w-3\\.5 { width: 0.875rem; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border-width: 0; }
 `;
 
 /**
@@ -449,7 +467,9 @@ const PAGINA = `<!doctype html>
 // abaixo) eles passam a ser locais DELA, e nenhuma funcao de producao os
 // alcanca: o erro e \`ReferenceError: useState is not defined\`, estourado la
 // dentro do primeiro render -- e ele nao se le como um problema de escopo.
-const { useCallback, useEffect, useMemo, useRef, useState } = React;
+const { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } = React;
+// O balao de components/ui/dica vai para o <body> por portal.
+const { createPortal } = ReactDOM;
 
 // --- os esbocos (ver o cabecalho do .mjs) ------------------------------------
 
@@ -465,11 +485,12 @@ const Slot = React.forwardRef(function Slot(props, ref) {
   return React.cloneElement(children, { ...resto, ref });
 });
 
-/** Os sete icones. Icone novo estoura como ReferenceError, e isso e bom. */
+/** Os oito icones. Icone novo estoura como ReferenceError, e isso e bom. */
 const icone = (nome) => (props) =>
   React.createElement("svg", { "data-icone": nome, className: props.className });
 const AlertCircle = icone("AlertCircle");
 const HandCoins = icone("HandCoins");
+const Info = icone("Info");
 const Landmark = icone("Landmark");
 const Loader2 = icone("Loader2");
 const PiggyBank = icone("PiggyBank");

@@ -44,6 +44,7 @@ import {
 } from "@/components/SemRede";
 import { toast } from "sonner";
 
+import { Dica } from "@/components/ui/dica";
 // =====================================================
 // Previsao de fluxo de caixa (HMO-145)
 // =====================================================
@@ -364,7 +365,13 @@ function AberturaPorCategoria({
 
   return (
     <div className="space-y-2 rounded-md border border-border p-3">
-      <p className="text-xs font-medium text-foreground">De onde vem</p>
+      <p className="flex items-center gap-1.5 text-xs font-medium text-foreground">
+        De onde vem
+        <Dica rotulo="Como ajustar uma categoria">
+          Digite um valor e aperte Enter para trocar a mediana de uma categoria. O
+          total acima anda exatamente o que você mexer.
+        </Dica>
+      </p>
       <ul className="space-y-1.5">
         {categorias.map((c) => {
           const ajustada = Object.prototype.hasOwnProperty.call(ajustes, c.categoriaId);
@@ -439,8 +446,15 @@ function AberturaPorCategoria({
 
         {Math.abs(residuoPorMes) >= 1 && (
           <li className="flex items-center justify-between gap-3 border-t border-border pt-1.5">
-            <span className="text-sm text-muted-foreground">
+            <span className="flex items-center gap-1 text-sm text-muted-foreground">
               Ajuste da mediana
+              <Dica rotulo="O que é o ajuste da mediana">
+                As categorias não somam o total porque cada uma tem a{" "}
+                <strong className="text-foreground">sua própria</strong> mediana, e os
+                meses caros de cada uma são meses diferentes. Esta linha é a diferença
+                — ela fecha a conta e não é uma despesa que você possa procurar no
+                extrato.
+              </Dica>
             </span>
             <span className="text-sm text-muted-foreground">
               {residuoPorMes > 0 ? "+" : "−"}
@@ -450,19 +464,6 @@ function AberturaPorCategoria({
         )}
       </ul>
 
-      {Math.abs(residuoPorMes) >= 1 && (
-        <p className="text-xs text-muted-foreground">
-          As categorias não somam o total porque cada uma tem a{" "}
-          <strong className="text-foreground">sua própria</strong> mediana, e os
-          meses caros de cada uma são meses diferentes. Esta linha é a diferença
-          — ela fecha a conta e não é uma despesa que você possa procurar no
-          extrato.
-        </p>
-      )}
-      <p className="text-xs text-muted-foreground">
-        Digite um valor e aperte Enter para trocar a mediana de uma categoria. O
-        total acima anda exatamente o que você mexer.
-      </p>
     </div>
   );
 }
@@ -908,6 +909,26 @@ export default function CashFlowPage() {
           <h1 className="flex items-center gap-2 text-2xl font-bold text-foreground">
             <LineChart className="h-6 w-6 text-primary" />
             Previsão de fluxo de caixa
+            <Dica rotulo="Como a previsão é feita">
+              {comFaixa ? (
+                <>
+                  A linha otimista tem datas: contas previstas e assinaturas
+                  detectadas. A provável soma a ela uma{" "}
+                  <strong>média</strong> de gasto do dia a dia — uma média não
+                  sabe em que dia você vai ao mercado, então trate a data dela
+                  como uma semana, não como um dia exato. Compras no cartão
+                  aparecem quando a fatura fecha e vira conta prevista.
+                </>
+              ) : (
+                <>
+                  A previsão considera apenas o que já está comprometido: contas
+                  previstas e assinaturas detectadas. Gasto do dia a dia (mercado,
+                  restaurante, combustível) <strong>não entra</strong> — na prática
+                  o saldo tende a ser menor do que a linha mostra. Compras no
+                  cartão aparecem quando a fatura fecha e vira conta prevista.
+                </>
+              )}
+            </Dica>
           </h1>
           <p className="text-sm text-muted-foreground">
             Como o seu saldo caminha, dia a dia, com o que já está comprometido.
@@ -1095,17 +1116,17 @@ export default function CashFlowPage() {
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <Card>
               <CardHeader className="pb-2">
-                <CardDescription>Saldo hoje</CardDescription>
+                <CardDescription className="flex items-center gap-1.5">
+                  Saldo hoje
+                  <Dica rotulo="Quais contas entram">
+                    Contas onde o dinheiro está disponível. Investimento e cartão
+                    ficam de fora.
+                  </Dica>
+                </CardDescription>
                 <CardTitle className="text-xl text-foreground">
                   {formatarBRL(fluxo.saldoInicial)}
                 </CardTitle>
               </CardHeader>
-              <CardContent>
-                <p className="text-xs text-muted-foreground">
-                  Contas onde o dinheiro está disponível. Investimento e cartão
-                  ficam de fora.
-                </p>
-              </CardContent>
             </Card>
 
             <Card>
@@ -1268,26 +1289,6 @@ export default function CashFlowPage() {
               comentario do codigo. Ver o cabecalho do lib. O texto MUDA com a
               faixa: repetir "gasto do dia a dia nao entra" agora que ele entra
               seria a tela desmentindo a propria manchete. */}
-          <p className="text-xs text-muted-foreground">
-            {comFaixa ? (
-              <>
-                A linha otimista tem datas: contas previstas e assinaturas
-                detectadas. A provável soma a ela uma{" "}
-                <strong>média</strong> de gasto do dia a dia — uma média não
-                sabe em que dia você vai ao mercado, então trate a data dela
-                como uma semana, não como um dia exato. Compras no cartão
-                aparecem quando a fatura fecha e vira conta prevista.
-              </>
-            ) : (
-              <>
-                A previsão considera apenas o que já está comprometido: contas
-                previstas e assinaturas detectadas. Gasto do dia a dia (mercado,
-                restaurante, combustível) <strong>não entra</strong> — na prática
-                o saldo tende a ser menor do que a linha mostra. Compras no
-                cartão aparecem quando a fatura fecha e vira conta prevista.
-              </>
-            )}
-          </p>
         </>
       )}
     </div>

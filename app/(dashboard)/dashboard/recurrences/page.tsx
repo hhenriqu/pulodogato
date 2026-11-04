@@ -38,6 +38,7 @@ import {
 import { useEstaOnline } from "@/lib/hooks/useEstaOnline";
 import { toast } from "sonner";
 
+import { Dica } from "@/components/ui/dica";
 // =====================================================
 // Assinaturas e cobrancas recorrentes (HMO-145)
 // =====================================================
@@ -284,7 +285,13 @@ export default function RecurrencesPage() {
       {/* O numero pelo qual a tela existe. */}
       <Card>
         <CardHeader className="pb-2">
-          <CardDescription>Total por mês</CardDescription>
+          <CardDescription className="flex items-center gap-1.5">
+            Total por mês
+            <Dica rotulo="O que entra na soma">
+              Soma do que está detectado e confirmado. O que você ignorou ou
+              cancelou não entra na conta.
+            </Dica>
+          </CardDescription>
           <CardTitle className="text-3xl text-foreground">
             {podeMostrarNumero(estado) ? (
               formatarBRL(totalMensal)
@@ -293,12 +300,6 @@ export default function RecurrencesPage() {
             )}
           </CardTitle>
         </CardHeader>
-        <CardContent>
-          <p className="text-xs text-muted-foreground">
-            Soma do que está detectado e confirmado. O que você ignorou ou
-            cancelou não entra na conta.
-          </p>
-        </CardContent>
       </Card>
 
       {alertas.length > 0 && (

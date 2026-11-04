@@ -70,6 +70,7 @@ import {
   type ValoresDeLancamento,
 } from "@/lib/lancamento";
 
+import { Dica } from "@/components/ui/dica";
 // ---------------------------------------------------------------------------
 // OS ROTULOS DE CADA LUGAR, POR TELA (HMO-254)
 // ---------------------------------------------------------------------------
@@ -524,9 +525,15 @@ export function CamposDeLancamento({
 
             {campos.diaDeVencimento && (
               <div className="space-y-2">
-                <Label htmlFor="due_day">
-                  {tipo === "expense" ? "Vence todo dia *" : "Cai todo dia *"}
-                </Label>
+                <div className="flex items-center gap-1">
+                  <Label htmlFor="due_day">
+                    {tipo === "expense" ? "Vence todo dia *" : "Cai todo dia *"}
+                  </Label>
+                  <Dica rotulo="Sobre os dias 29, 30 e 31">
+                    Dia 29, 30 ou 31 cai no último dia do mês quando o mês for
+                    mais curto.
+                  </Dica>
+                </div>
                 <Input
                   id="due_day"
                   type="number"
@@ -560,10 +567,6 @@ export function CamposDeLancamento({
                     mês, se ele ainda não passou; no mês que vem, se já passou.
                   </p>
                 )}
-                <p className="text-xs text-muted-foreground">
-                  Dia 29, 30 ou 31 cai no último dia do mês quando o mês for
-                  mais curto.
-                </p>
               </div>
             )}
 

@@ -106,6 +106,7 @@ import { ModalDeLancamento } from "@/components/movimentacoes/ModalDeLancamento"
 import { SalvarEContinuar } from "@/components/movimentacoes/SalvarEContinuar";
 import { proximaDespesaDeGrupo } from "@/lib/retorno-do-lancamento";
 
+import { Dica } from "@/components/ui/dica";
 /**
  * O estado do formulario de "Adicionar Nova Despesa" como ele ABRE (HMO-251).
  *
@@ -2156,13 +2157,13 @@ export default function GroupDetailPage() {
                 {/* Transfer Suggestions */}
                 {transfers.length > 0 ? (
                   <div className="space-y-3">
-                    <h3 className="text-lg font-semibold">
+                    <h3 className="flex items-center gap-1.5 text-lg font-semibold">
                       Sugestões de Pagamento
+                      <Dica rotulo="Sobre as sugestões de pagamento">
+                        O menor número de transferências que zera o grupo. Ao
+                        registrar, a sugestão sai da lista.
+                      </Dica>
                     </h3>
-                    <p className="text-sm text-muted-foreground">
-                      O menor número de transferências que zera o grupo. Ao
-                      registrar, a sugestão sai da lista.
-                    </p>
                     <div className="space-y-2">
                       {transfers.map((transfer, index) => {
                         const chave = `${transfer.from.id}->${transfer.to.id}`;
@@ -2784,7 +2785,15 @@ export default function GroupDetailPage() {
                 nenhuma, entra inteira no saldo de quem pagou, e a divisao e a
                 regra do grupo. */}
             <div className="space-y-2">
-              <Label htmlFor="paid_by_member">Quem pagou</Label>
+              <div className="flex items-center gap-1">
+                <Label htmlFor="paid_by_member">Quem pagou</Label>
+                {expenseForm.paid_by_member_id && (
+                  <Dica rotulo="Sobre quem pagou">
+                    Fica só no grupo: não entra em nenhuma conta, e é dividida
+                    pela regra do grupo.
+                  </Dica>
+                )}
+              </div>
               <Select
                 value={expenseForm.paid_by_member_id || "eu"}
                 onValueChange={(value) =>
@@ -2811,12 +2820,6 @@ export default function GroupDetailPage() {
                     ))}
                 </SelectContent>
               </Select>
-              {expenseForm.paid_by_member_id && (
-                <p className="text-xs text-muted-foreground">
-                  Fica só no grupo: não entra em nenhuma conta, e é dividida
-                  pela regra do grupo.
-                </p>
-              )}
             </div>
 
             <div className="space-y-2">

@@ -89,6 +89,7 @@ import {
   type ResultadoDePasso,
 } from "@/lib/account-reset";
 
+import { Dica } from "@/components/ui/dica";
 interface RespostaDeReset {
   ok: boolean;
   total_apagado: number;
@@ -285,11 +286,13 @@ export default function ConfiguracoesPage() {
         <TabsContent value="painel" className="space-y-4 mt-4">
           <Card>
             <CardHeader>
-              <CardTitle className="text-lg">Blocos da tela inicial</CardTitle>
-              <CardDescription>
-                Desligue o que não usa e arraste para mudar a ordem. No celular,
-                use as setas — arrastar não funciona em tela de toque.
-              </CardDescription>
+              <CardTitle className="flex items-center gap-1.5 text-lg">
+                Blocos da tela inicial
+                <Dica rotulo="Como organizar os blocos">
+                  Desligue o que não usa e arraste para mudar a ordem. No celular,
+                  use as setas — arrastar não funciona em tela de toque.
+                </Dica>
+              </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
               {layout.map((item, indice) => {
@@ -439,11 +442,11 @@ export default function ConfiguracoesPage() {
               <CardTitle className="text-lg flex items-center gap-2">
                 <StickyNote className="h-5 w-5" aria-hidden="true" />
                 Papel de pão
+                <Dica rotulo="Sobre o modo papel de pão">
+                  Deixa o app marrom e bege, com letra manuscrita. O mesmo
+                  interruptor está no papelzinho do cabeçalho.
+                </Dica>
               </CardTitle>
-              <CardDescription>
-                Deixa o app marrom e bege, com letra manuscrita. O mesmo
-                interruptor está no papelzinho do cabeçalho.
-              </CardDescription>
             </CardHeader>
             <CardContent>
               <ConfiguracaoDePapel />

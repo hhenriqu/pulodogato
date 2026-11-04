@@ -31,7 +31,6 @@ import { useState } from "react";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -58,6 +57,7 @@ import {
   type LinhaDeIndicadores,
 } from "@/lib/crivos";
 
+import { Dica } from "@/components/ui/dica";
 /** O que GET /api/investments/crivos devolve. */
 export interface DadosDosCrivos {
   ativos: AtivoParaCrivos[];
@@ -214,12 +214,12 @@ export function CrivosDeFundamento({ dados, onSalvar }: CrivosDeFundamentoProps)
         <CardTitle className="flex items-center gap-2">
           <ListChecks className="h-5 w-5" />
           Critérios de fundamento
+          <Dica rotulo="Sobre os critérios">
+            Os limites são seus: o app mostra se o seu critério bateu, e não opina
+            sobre o ativo. Os números saem do último balanço anual que cada empresa
+            entregou à CVM, e a data-base aparece em cada ativo.
+          </Dica>
         </CardTitle>
-        <CardDescription>
-          Os limites são seus: o app mostra se o seu critério bateu, e não opina
-          sobre o ativo. Os números saem do último balanço anual que cada empresa
-          entregou à CVM, e a data-base aparece em cada ativo.
-        </CardDescription>
       </CardHeader>
 
       <CardContent className="space-y-6">

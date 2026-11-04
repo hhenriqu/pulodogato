@@ -48,7 +48,6 @@ import { useState } from "react";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -78,6 +77,7 @@ import {
   type Projecao,
 } from "@/lib/renda-fixa";
 
+import { Dica } from "@/components/ui/dica";
 export interface ResumoDeRendaFixa {
   bruto: number;
   liquido: number;
@@ -288,15 +288,15 @@ export function RendaFixaDaCarteira({ dados }: { dados: RendaFixaDaRota | null }
         <CardTitle className="flex items-center gap-2">
           <TrendingUp className="h-4 w-4" />
           Renda fixa
+          <Dica rotulo="Como o rendimento é calculado">
+            O rendimento sai da taxa publicada pelo Banco Central e do percentual
+            que você cadastrou. O líquido é estimado: ele supõe resgate hoje, e a
+            alíquota de IR cai com o tempo. A lista vem ordenada pelo % do CDI
+            realizado — é esse número que compara um 110% do CDI com um prefixado
+            de 13% a.a., e ele é medido no bruto, para que a isenção da LCI não
+            apareça como rendimento.
+          </Dica>
         </CardTitle>
-        <CardDescription>
-          O rendimento sai da taxa publicada pelo Banco Central e do percentual
-          que você cadastrou. O líquido é estimado: ele supõe resgate hoje, e a
-          alíquota de IR cai com o tempo. A lista vem ordenada pelo % do CDI
-          realizado — é esse número que compara um 110% do CDI com um prefixado
-          de 13% a.a., e ele é medido no bruto, para que a isenção da LCI não
-          apareça como rendimento.
-        </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {temAlgum && (
@@ -441,7 +441,13 @@ export function CamposDeRendaFixa({
     <div className="space-y-4 sm:col-span-2 lg:col-span-4">
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <div className="space-y-2">
-          <Label htmlFor={`${idPrefixo}-produto`}>Produto</Label>
+          <div className="flex items-center gap-1">
+            <Label htmlFor={`${idPrefixo}-produto`}>Produto</Label>
+            <Dica rotulo="Sobre o produto">
+              LCI, LCA, CRI, CRA e poupança são isentas de IR — é o produto que
+              decide isso, não o indexador.
+            </Dica>
+          </div>
           <Select
             value={valores.fixedIncomeProduct}
             onValueChange={(v) => mudar("fixedIncomeProduct", v)}
@@ -458,10 +464,6 @@ export function CamposDeRendaFixa({
               ))}
             </SelectContent>
           </Select>
-          <p className="text-xs text-muted-foreground">
-            LCI, LCA, CRI, CRA e poupança são isentas de IR — é o produto que
-            decide isso, não o indexador.
-          </p>
         </div>
 
         <div className="space-y-2">
@@ -528,17 +530,19 @@ export function CamposDeRendaFixa({
         </div>
 
         <div className="space-y-2">
-          <Label htmlFor={`${idPrefixo}-aplicacao`}>Data de aplicação</Label>
+          <div className="flex items-center gap-1">
+            <Label htmlFor={`${idPrefixo}-aplicacao`}>Data de aplicação</Label>
+            <Dica rotulo="Sobre a data de aplicação">
+              É ela que decide a alíquota de IR (22,5% até 180 dias, caindo a 15%
+              acima de 720).
+            </Dica>
+          </div>
           <CampoDeData
             id={`${idPrefixo}-aplicacao`}
             value={valores.appliedDate}
             onChange={(v) => mudar("appliedDate", v)}
             disabled={desabilitado}
           />
-          <p className="text-xs text-muted-foreground">
-            É ela que decide a alíquota de IR (22,5% até 180 dias, caindo a 15%
-            acima de 720).
-          </p>
         </div>
 
         <div className="space-y-2">
