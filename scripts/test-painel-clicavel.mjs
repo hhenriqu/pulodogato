@@ -556,6 +556,12 @@ MODULOS["@/components/SemRede"] = {
 MODULOS["@/components/papel-de-pao/ConversaDePapel"] = {
   ConversaDePapel: esboco("CONVERSA-DE-PAPEL"),
 };
+// O aviso de pagamento a lancar (081) busca a propria rota e nao desenha nada
+// quando nao ha pendencia -- e o caso aqui. Nulo, e nao esboco: um esboco
+// apareceria na tela e mudaria a lista que "nenhum esboco novo" confere.
+MODULOS["@/components/pagamentos/PagamentosParaLancar"] = {
+  PagamentosParaLancar: () => null,
+};
 // O portao dos dois paineis le o \`localStorage\`, que \`file://\` nega. O ramo
 // medido e o do painel completo, e \`mounted:false\` mostraria so o giro.
 MODULOS["@/components/ModoPapelProvider"] = {

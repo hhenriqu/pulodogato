@@ -133,6 +133,7 @@ import { useModoPapel } from "@/components/ModoPapelProvider";
 // mudou: o modo, a pele `.papel`, o `ModoPapelProvider`, o `PapelToggle` e o
 // script de pre-pintura. A conversa substituiu o PAINEL, nao o MODO.
 import { ConversaDePapel } from "@/components/papel-de-pao/ConversaDePapel";
+import { PagamentosParaLancar } from "@/components/pagamentos/PagamentosParaLancar";
 
 const moeda = (valor: number) =>
   new Intl.NumberFormat("pt-BR", {
@@ -1520,6 +1521,11 @@ function PainelCompleto() {
           </Button>
         </div>
       </div>
+
+      {/* Pagamento de alguem da familia esperando a confirmacao (081). Fora
+          do mapa `blocos` pelo mesmo motivo do seletor: e uma pendencia, nao
+          um bloco que se desliga. Some sozinho quando nao ha nada. */}
+      <PagamentosParaLancar />
 
       {/* O seletor fica FORA do mapa `blocos`, com o cabecalho e o estado
           vazio: ele nao e um bloco de conteudo, e a moldura da tela. Se

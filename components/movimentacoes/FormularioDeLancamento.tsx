@@ -29,6 +29,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { User } from "@supabase/supabase-js";
 import { createClient } from "@/utils/supabase/client";
 import { toast } from "sonner";
+import { CampoPagoPara } from "@/components/pagamentos/CampoPagoPara";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -286,6 +287,12 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
    * saber se gravou.
    */
   const [continuar, setContinuar] = useState(false);
+  /**
+   * Para quem foi esta despesa, quando ela e um pagamento a alguem da familia
+   * (081). Fora de `valores` de proposito: nao e coluna do lancamento, e uma
+   * linha a mais em `pagamentos_entre_pessoas` criada depois do insert.
+   */
+  const [pagoPara, setPagoPara] = useState("");
   // Decide se a checkbox de moeda aparece, e qual moeda um lancamento novo ganha.
   const { moeda: preferenciaDeMoeda, carregando: carregandoMoeda } =
     usePreferenciaDeMoeda();
@@ -1808,6 +1815,24 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
       if (error) throw error;
     }
 
+    // PAGAMENTO PARA ALGUEM DA FAMILIA (081). So no lancamento novo e sem
+    // divisao: com grupo ou rateio a despesa ja e de varias pessoas. A falha
+    // aqui nao desfaz a despesa -- o dinheiro saiu --, so avisa.
+    if (!editando && pagoPara && !temGrupo && !temRateio && valor < 0) {
+      const aviso = await fetch("/api/pagamentos-entre-pessoas", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lancamento_id: transacao.id, recebedor_id: pagoPara }),
+      }).catch(() => null);
+      if (!aviso?.ok) {
+        const j = aviso ? await aviso.json().catch(() => ({})) : {};
+        toast.error(
+          j.error ??
+            "A despesa foi lançada, mas não consegui avisar quem recebeu."
+        );
+      }
+    }
+
     toast.success(editando ? copia.atualizado : copia.salvo);
     return transacao;
   };
@@ -1915,6 +1940,12 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
               // ganha o marcador, em vez de a primeira ganhar por descuido.
               mesDaFaturaEmAberto={faturaEmAberto ?? undefined}
               rateio={
+                <>
+                {!editando &&
+                  !valores.grupoId &&
+                  !(valores.compartilhado && valores.rateios.length > 0) && (
+                    <CampoPagoPara valor={pagoPara} aoMudar={setPagoPara} />
+                  )}
                 <SoftFeatureGuard feature="expense_groups" user={user}>
                   <div className="space-y-4 p-4 border rounded-lg bg-muted/20">
                     <div className="flex items-center gap-2">
@@ -2073,6 +2104,7 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
                     )}
                   </div>
                 </SoftFeatureGuard>
+                </>
               }
             />
 
