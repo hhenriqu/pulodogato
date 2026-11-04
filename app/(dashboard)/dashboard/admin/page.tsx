@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { createClient } from "@/utils/supabase/client";
 import { useSubscription } from "@/lib/hooks/useSubscription";
 import { PlanGuard } from "@/components/subscription/PlanGuards";
+import { EntrarComo } from "@/components/admin/EntrarComo";
 import {
   Card,
   CardContent,
@@ -177,6 +178,8 @@ export default function AdminPage() {
             Administrador
           </Badge>
         </div>
+
+        <EntrarComo />
 
         {/* Stats Cards */}
         {stats && (
