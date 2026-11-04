@@ -1148,3 +1148,82 @@ test("reservaDaMeta devolve a meta zerada com o aporte preservado", () => {
   assert.equal(r.alvoMensal, 0);
   assert.equal(r.aportado, 120);
 });
+
+// ---------------------------------------------------------------------------
+// 11. O saldo dos meses anteriores nao e verba do mes (04/11/2026)
+// ---------------------------------------------------------------------------
+// O sintoma em producao: o cartao mostrava quase o dobro do Resultado do mes,
+// porque o `disponivel` e o saldo de HOJE, com o que sobrou dos meses
+// anteriores dentro.
+
+test("o que sobrou dos meses anteriores sai do livre e aparece como guardado", () => {
+  // Comecou o mes com 2.000 e hoje tem 3.000: o mes rendeu 1.000.
+  const r = base({ saldoNoComecoDoMes: 2000 });
+
+  assert.equal(r.guardado, 2000);
+  assert.equal(r.disponivel, 3000);
+  // Sem a armadilha 11 este assert viria 3000 -- o mes mais a poupanca.
+  assert.equal(r.livre, 1000);
+  assert.equal(r.porDia, 1000 / 21);
+});
+
+test("comecar o mes no vermelho nao soma dinheiro: o guardado tem piso zero", () => {
+  // Comecou devendo 500 no cheque especial e hoje tem 3.000.
+  const r = base({ saldoNoComecoDoMes: -500 });
+
+  assert.equal(r.guardado, 0);
+  // Subtrair o comeco negativo daria 3500 -- dinheiro que nao existe.
+  assert.equal(r.livre, 3000);
+});
+
+test("sem o saldo do comeco (leitura falhou), o numero e o de antes", () => {
+  const r = base({ saldoNoComecoDoMes: 0 });
+  assert.equal(r.guardado, 0);
+  assert.equal(r.livre, 3000);
+});
+
+test("guardado convive com previstas, cartao e metas sem mudar as outras parcelas", () => {
+  const r = calcularQuantoPossoGastar({
+    contas: [corrente(3000), cartao(-400)],
+    previstas: [
+      prevista(1500, "2026-09-25", { tipo: "income" }),
+      prevista(700, "2026-09-15"),
+    ],
+    saldoNoComecoDoMes: "1200.00",
+    hoje: HOJE,
+  });
+
+  assert.equal(r.guardado, 1200);
+  assert.equal(r.receitasPrevistas, 1500);
+  assert.equal(r.compromissos, 700);
+  assert.equal(r.dividaDeCartao, 400);
+  // 3000 - 1200 + 1500 - 700 - 400
+  assert.equal(r.livre, 2200);
+});
+
+// ---------------------------------------------------------------------------
+// 12. Receita prevista de mes que ja passou (04/11/2026)
+// ---------------------------------------------------------------------------
+
+test("receita pendente de mes passado fica fora do livre e sai a parte", () => {
+  const r = base({
+    previstas: [
+      // O salario de agosto que caiu na conta e nao recebeu baixa.
+      prevista(5000, "2026-08-05", { tipo: "income" }),
+      // Receita deste mes, vencida e ainda nao recebida: continua entrando.
+      prevista(800, "2026-09-05", { tipo: "income" }),
+    ],
+  });
+
+  assert.equal(r.receitasDeMesesAnteriores, 5000);
+  assert.equal(r.receitasPrevistas, 800);
+  // Com a receita de agosto contada, viria 8800.
+  assert.equal(r.livre, 3800);
+});
+
+test("conta a pagar de mes passado continua descontando (armadilha 5 intacta)", () => {
+  const r = base({ previstas: [prevista(400, "2026-08-20")] });
+  assert.equal(r.compromissos, 400);
+  assert.equal(r.compromissosVencidos, 400);
+  assert.equal(r.livre, 2600);
+});
