@@ -77,7 +77,6 @@ import {
   Users,
   ArrowRight,
   Coins,
-  CreditCard,
   Settings,
 } from "lucide-react";
 import {
@@ -89,6 +88,7 @@ import {
 import { today } from "@/lib/recurrence";
 import {
   contemHoje,
+  ehPeriodoCorrente,
   lerPeriodo,
   periodoParaQuery,
   rotaDaTelaDoLado,
@@ -113,6 +113,8 @@ import {
   janelaDaPrevisao,
   janelaDoRealizado,
   montarPainel,
+  sobraDoMes,
+  diasQueFaltam,
   type LadosDoPeriodo,
 } from "@/lib/realizado-e-previsao";
 import {
@@ -370,18 +372,6 @@ function PainelCompleto() {
   // escreve "indisponivel" em vez de R$ 0,00: zero seria uma afirmacao sobre o
   // dinheiro do usuario que ninguem conferiu.
   const [reservaIndisponivel, setReservaIndisponivel] = useState(false);
-  const [guardadoIndisponivel, setGuardadoIndisponivel] = useState(false);
-  // A rota nao conseguiu ler as faturas, e portanto voltou a descontar a divida
-  // INTEIRA dos cartoes (HMO-290). O numero fica conservador, mas `dividaDiferida`
-  // vem 0 -- e "R$ 0,00 em parcelas futuras" ao lado de um desconto que
-  // justamente tira as parcelas futuras sao duas afirmacoes que se contradizem.
-  const [diferidoIndisponivel, setDiferidoIndisponivel] = useState(false);
-  // A view da agenda nao entregou `direction` (HMO-308), e sem ela TODA previsao
-  // foi contada como despesa -- o numero fica conservador, mas «A receber» vem
-  // R$ 0,00 e «A pagar» engoliu o que havia a receber. Os dois tiles param de
-  // afirmar valor: "+ R$ 0,00 · Receitas previstas" embaixo de um «A pagar» que
-  // somou o salario e a afirmacao falsa que ninguem confere.
-  const [direcaoIndisponivel, setDirecaoIndisponivel] = useState(false);
   // A ordem e a visibilidade dos blocos, escolhidas em /dashboard/settings.
   // Comeca no padrao -- TUDO visivel -- e so muda se a rota responder. Um
   // erro de rede aqui nao pode esconder bloco nenhum: a tela inicial mostrando
@@ -535,9 +525,6 @@ function PainelCompleto() {
         const d = await rPossoGastar.json();
         setPossoGastar(d.safe_to_spend ?? null);
         setReservaIndisponivel(Boolean(d.reserva_indisponivel));
-        setGuardadoIndisponivel(Boolean(d.guardado_indisponivel));
-        setDiferidoIndisponivel(Boolean(d.diferido_indisponivel));
-        setDirecaoIndisponivel(Boolean(d.direcao_indisponivel));
       } else if (!periodoTemHoje) {
         // Limpar e obrigatorio, nao higiene. Sem isto, quem navega de setembro
         // para julho continua vendo o cartao "quanto ainda posso gastar" com o
@@ -614,6 +601,20 @@ function PainelCompleto() {
     },
     previsaoParaOTile
   );
+
+  // «QUANTO AINDA POSSO GASTAR» (04/11/2026): a sobra sai dos MESMOS totais
+  // dos tiles Receitas e Despesas, do periodo da tela (ver `sobraDoMes`).
+  // Enquanto a previsao nao chega, nada: o total ainda seria so o realizado, e
+  // o cartao piscaria um numero maior que o real.
+  const sobra =
+    contemHoje(periodo, hoje) && possoGastar && previsaoDoPeriodo
+      ? sobraDoMes({
+          receitas: numerosDoPainel.receita.total,
+          despesas: numerosDoPainel.despesa.total,
+          reservaDeMetas: reservaIndisponivel ? 0 : possoGastar.reservaDeMetas,
+          diasRestantes: diasQueFaltam(hoje, periodo.ate),
+        })
+      : null;
 
   const janelaPrevisao = janelaDaPrevisao(periodo, hoje);
   const janelaRealizadoDaTela = janelaDoRealizado(periodo, hoje);
@@ -973,17 +974,18 @@ function PainelCompleto() {
             Quanto ainda posso gastar
           </CardTitle>
           <CardDescription>
-            Só existe para o mês corrente: a conta é o que sobra dos próximos
-            dias depois do que já está comprometido. Não há versão dela para{" "}
+            Só existe para um período que inclui hoje: a conta é o que sobra
+            das Receitas depois das Despesas, dividido pelos dias que faltam.
+            Não há versão dela para{" "}
             {rotulo}.
           </CardDescription>
         </CardHeader>
       </Card>
     ) : (
-      possoGastar && (
+      sobra && possoGastar && (
       <Card
         className={
-          possoGastar.livre < 0 ? "border-destructive/40" : "border-primary/40"
+          sobra.livre < 0 ? "border-destructive/40" : "border-primary/40"
         }
       >
         <CardHeader className="pb-3">
@@ -992,8 +994,9 @@ function PainelCompleto() {
             Quanto ainda posso gastar
           </CardTitle>
           <CardDescription>
-            O que sobra até {diaEMes(possoGastar.ate)} depois de tudo que já
-            está comprometido
+            O que sobra até {diaEMes(periodo.ate)}: Receitas menos Despesas
+            {ehPeriodoCorrente(periodo, hoje) ? " do mês" : " do período"}
+            {sobra.reservaDeMetas > 0 ? ", e o que falta nas metas" : ""}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -1001,19 +1004,19 @@ function PainelCompleto() {
             <div>
               <div
                 className={`text-3xl font-bold ${
-                  possoGastar.livre < 0 ? "text-destructive" : "text-success"
+                  sobra.livre < 0 ? "text-destructive" : "text-success"
                 }`}
               >
-                {moeda(possoGastar.livre)}
+                {moeda(sobra.livre)}
               </div>
               <p className="text-sm text-muted-foreground mt-1">
-                {possoGastar.livre > 0
-                  ? `${moeda(possoGastar.porDia)} por dia nos ${
-                      possoGastar.diasRestantes
+                {sobra.livre > 0
+                  ? `${moeda(sobra.porDia)} por dia nos ${
+                      sobra.diasRestantes
                     } ${
-                      possoGastar.diasRestantes === 1 ? "dia" : "dias"
+                      sobra.diasRestantes === 1 ? "dia" : "dias"
                     } que faltam`
-                  : "O mês já está comprometido além do que existe em conta — não há verba diária"}
+                  : "As Despesas do mês já passam das Receitas — não há verba diária"}
               </p>
             </div>
             <Button variant="outline" size="sm" asChild>
@@ -1024,35 +1027,11 @@ function PainelCompleto() {
             </Button>
           </div>
 
-          {/*
-            A PERGUNTA QUE ESTE NUMERO RESPONDE (HMO-364, fase F5 da HMO-360).
-
-            Este cartao conta a conta de grupo so pela MINHA PARTE (HMO-306/308),
-            e desde a fase F1b a aba Despesas conta a mesma conta INTEIRA quando
-            sou eu que a pago. Os dois estao certos -- "quanto posso gastar" e
-            "quanto sai da minha conta" sao perguntas diferentes -- e vao
-            discordar na mesma navegacao.
-
-            A legenda e o que separa isso de bug. Este app ja pagou quatro vezes
-            pela familia `despesa-de-grupo-tem-tres-convencoes`: telas mostrando
-            990 / 950 / 900 lado a lado, nenhuma errada sozinha e nenhuma com
-            rotulo. O texto mora em lib/legenda-do-bruto-e-do-liquido.ts junto
-            com o da outra tela, porque as duas frases sao uma explicacao so
-            dita de dois lados.
-
-            E O LINK LEVA A JANELA DA TELA (HMO-415), pela mesma razao dos dois
-            tiles la em cima: `lerPeriodo`, do outro lado, cai no MES CORRENTE
-            quando nao acha `?de=&ate=`, e um link nu aqui mandaria quem clicou
-            para outro periodo sem erro, sem tela vazia e sem nada dizendo que o
-            periodo mudou no caminho.
-
-            Este cartao erra MENOS que os tiles, e nao por acerto: ele so
-            aparece quando o periodo contem hoje (`temHoje`, logo acima). Mas
-            conter hoje nao e ser o mes corrente -- num periodo de 15/09 a 20/10
-            o link nu abria outubro inteiro a partir de uma legenda que fala do
-            intervalo. Por isso o endereco sai de `rotaDaTelaDoLado`, e nao de
-            um literal: e a mesma `periodoParaQuery` do seletor de periodo.
-          */}
+          {/* A LEGENDA DO LIQUIDO (HMO-364) continua valendo: as Despesas
+                deste cartao sao as do tile do painel, que conta a conta de
+                grupo em aberto pela minha parte, e a aba Despesas a conta
+                inteira quando sou eu que pago. O link leva a janela da tela
+                (HMO-415). */}
           <p className="text-xs text-muted-foreground">
             {LEGENDA_DO_LIQUIDO}{" "}
             <Link
@@ -1063,119 +1042,29 @@ function PainelCompleto() {
             </Link>
           </p>
 
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+          {/* As tres parcelas sao os MESMOS numeros dos tiles Receitas e
+                Despesas (total = realizado + previsao) e da reserva das metas:
+                quem soma de cabeca chega no numero de cima. Ver `sobraDoMes`
+                em lib/safe-to-spend.ts. */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div className="rounded-lg bg-muted p-3">
-              <p className="text-xs text-muted-foreground">Em conta</p>
-              <p className="font-semibold">{moeda(possoGastar.disponivel)}</p>
-              <p className="text-xs text-muted-foreground mt-1">
-                Sem investimentos
-              </p>
-            </div>
-            {/* O QUE SOBROU DOS MESES ANTERIORES (armadilha 11). Fica ao lado do
-                  «Em conta» porque e a parte dele que nao e verba deste mes, e
-                  aparece SEMPRE, zerado inclusive, pela mesma razao do tile das
-                  metas: a soma dos tiles tem de fechar com o total. "—" quando
-                  a leitura falhou: ali nada foi tirado, e "R$ 0,00" diria que
-                  nao ha nada guardado. */}
-            <div className="rounded-lg bg-muted p-3">
-              <p className="text-xs text-muted-foreground">Guardado</p>
-              <p
-                className={`font-semibold ${
-                  guardadoIndisponivel ? "text-muted-foreground" : ""
-                }`}
-              >
-                {guardadoIndisponivel
-                  ? "—"
-                  : `− ${moeda(possoGastar.guardado)}`}
+              <p className="text-xs text-muted-foreground">Receitas</p>
+              <p className="font-semibold text-success">
+                + {moeda(sobra.receitas)}
               </p>
               <p className="text-xs text-muted-foreground mt-1">
-                {guardadoIndisponivel
-                  ? "Não foi possível separar"
-                  : "Sobrou dos meses anteriores"}
-              </p>
-            </div>
-            {/* OS DOIS TILES DA DIRECAO (HMO-308). Sem `direction` a rota conta
-                  TODA previsao como despesa -- o "posso gastar" fica
-                  conservador de proposito (zerar as contas levantaria o
-                  numero, e esta tela nao pode prometer dinheiro), mas a
-                  REPARTICAO entre os dois tiles fica errada: o que havia a
-                  receber esta dentro do «A pagar». Por isso os dois calam
-                  juntos: mostrar "+ R$ 0,00 · Receitas previstas" seria afirmar
-                  que nao ha nada a receber, e e a afirmacao tranquilizadora --
-                  a que ninguem confere. */}
-            <div className="rounded-lg bg-muted p-3">
-              <p className="text-xs text-muted-foreground">A receber</p>
-              <p
-                className={`font-semibold ${
-                  direcaoIndisponivel ? "text-muted-foreground" : "text-success"
-                }`}
-              >
-                {direcaoIndisponivel
-                  ? "—"
-                  : `+ ${moeda(possoGastar.receitasPrevistas)}`}
-              </p>
-              <p className="text-xs text-muted-foreground mt-1">
-                {direcaoIndisponivel
-                  ? "Não foi possível separar o que entra"
-                  : possoGastar.receitasDeMesesAnteriores > 0
-                    ? `Receitas do mês · ${moeda(possoGastar.receitasDeMesesAnteriores)} de meses anteriores sem baixa, fora da conta`
-                    : "Receitas do mês"}
+                Recebidas e a receber
               </p>
             </div>
             <div className="rounded-lg bg-muted p-3">
-              <p className="text-xs text-muted-foreground">A pagar</p>
-              <p
-                className={`font-semibold ${
-                  direcaoIndisponivel
-                    ? "text-muted-foreground"
-                    : "text-destructive"
-                }`}
-              >
-                {direcaoIndisponivel
-                  ? "—"
-                  : `− ${moeda(possoGastar.compromissos)}`}
-              </p>
-              <p className="text-xs text-muted-foreground mt-1">
-                {direcaoIndisponivel
-                  ? "Tudo contado como conta a pagar"
-                  : possoGastar.compromissosVencidos > 0
-                    ? `${moeda(possoGastar.compromissosVencidos)} em atraso`
-                    : "Contas do mês"}
-              </p>
-            </div>
-            <div className="rounded-lg bg-muted p-3">
-              <p className="text-xs text-muted-foreground flex items-center gap-1">
-                <CreditCard className="h-3 w-3" />
-                No cartão
-              </p>
+              <p className="text-xs text-muted-foreground">Despesas</p>
               <p className="font-semibold text-destructive">
-                − {moeda(possoGastar.dividaDeCartao)}
+                − {moeda(sobra.despesas)}
               </p>
-              {/* A REGUA MUDOU NA HMO-290, e esta linha e o que diz isso.
-                  O desconto era a divida INTEIRA do cartao; agora e so o que
-                  vence ate o fim do mes. Sem o que sobrou escrito aqui, uma
-                  compra de R$ 3.000 em 10x derruba o desconto de R$ 3.000 para
-                  R$ 300 e a tela nao da nenhuma pista de que os R$ 2.700
-                  continuam existindo -- um numero otimista com cara do mesmo
-                  numero conservador de antes.
-
-                  "Não foi possível separar" quando a leitura das faturas
-                  falhou: ali o desconto voltou a ser a divida inteira, e dizer
-                  "nada depois deste mês" seria afirmar o contrario do que
-                  aconteceu. */}
               <p className="text-xs text-muted-foreground mt-1">
-                {diferidoIndisponivel
-                  ? "Dívida inteira: não foi possível separar as faturas"
-                  : possoGastar.dividaDiferida > 0
-                    ? `Vence até ${possoGastar.ate.slice(8, 10)}/${possoGastar.ate.slice(5, 7)} · ${moeda(possoGastar.dividaDiferida)} depois`
-                    : "Fatura e período aberto"}
+                Pagas e a pagar, com a fatura do mês
               </p>
             </div>
-            {/* A quinta parcela. Aparece SEMPRE, inclusive zerada: um tile
-                  que some quando o valor e zero faz a soma das parcelas nao
-                  fechar com o total para quem esta conferindo a conta na mao --
-                  e "some quando e zero" e indistinguivel de "o desconto parou
-                  de funcionar". */}
             <div className="rounded-lg bg-muted p-3">
               <p className="text-xs text-muted-foreground flex items-center gap-1">
                 <Target className="h-3 w-3" />
@@ -1190,36 +1079,18 @@ function PainelCompleto() {
               >
                 {reservaIndisponivel
                   ? "—"
-                  : `− ${moeda(possoGastar.reservaDeMetas)}`}
+                  : `− ${moeda(sobra.reservaDeMetas)}`}
               </p>
               <p className="text-xs text-muted-foreground mt-1">
                 {reservaIndisponivel
                   ? "Não foi possível ler as metas"
-                  : possoGastar.reservaDeMetas > 0
+                  : sobra.reservaDeMetas > 0
                     ? "Falta aportar no mês"
                     : "Nada a separar este mês"}
               </p>
             </div>
           </div>
 
-          {/* A divida do cartao e a parcela que mais surpreende quem olha:
-                ela inclui a compra de ontem, que ainda nao esta em fatura
-                nenhuma. Abrir por cartao e o que evita a conclusao de que o
-                numero esta errado. */}
-          {possoGastar.cartoes.some((c) => c.divida > 0) && (
-            <p className="text-xs text-muted-foreground">
-              Cartões:{" "}
-              {possoGastar.cartoes
-                .filter((c) => c.divida > 0)
-                .map((c) => `${c.name} ${moeda(c.divida)}`)
-                .join(" · ")}
-            </p>
-          )}
-
-          {/* Abrir por meta pelo mesmo motivo do cartao: o valor descontado
-                NAO e o alvo mensal, e o que ainda falta aportar. Quem ja
-                aportou R$ 200 de um alvo de R$ 500 ve "− R$ 300", e sem esta
-                linha concluiria que o app esqueceu o aporte. */}
           {possoGastar.metas.length > 0 && (
             <p className="text-xs text-muted-foreground">
               Metas:{" "}

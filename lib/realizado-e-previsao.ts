@@ -379,3 +379,72 @@ export function estimativaVariavel(
     total: centavos(saneado * dias),
   };
 }
+
+// =====================================================
+// A SOBRA DO MES (04/11/2026, RN016.7 reescrita)
+// =====================================================
+// O numero do cartao «Quanto ainda posso gastar» passou a ser a conta que a
+// pessoa faz de cabeca, e que o painel ja mostra nos tiles Receitas e
+// Despesas:
+//
+//   sobra = Receitas do mes - Despesas do mes - reserva de metas
+//   por dia = sobra / dias que faltam
+//
+// No mes corrente, "o mes" e o mes. Num periodo que contem hoje sem ser o mes
+// (15/10 a 20/11), os tiles falam DAQUELE periodo, e o cartao tambem: a sobra
+// e a do periodo da tela, e os dias sao os que faltam ate o fim dele. Um
+// cartao com o mes enquanto os tiles mostram outra janela seria a mesma
+// discordancia de fontes que este cartao acabou de deixar de ter.
+//
+// Receitas e Despesas sao o TOTAL dos tiles (realizado + previsao, com a
+// mesma composicao do Resultado do mes, RN016/RN017). O cartao NAO tem uma
+// terceira consulta: ele recebe os dois totais que o painel ja desenhou. Com
+// uma soma propria, o cartao e os tiles discordariam -- que foi exatamente o
+// defeito: a conta antiga partia do saldo em conta (`calcularQuantoPossoGastar`,
+// lib/safe-to-spend.ts, que segue dando a reserva das metas e os dias)
+// e qualquer dinheiro que entrou na conta sem ser Receita (resgate, saldo
+// ajustado a mao, transferencia da conta conjunta) virava "posso gastar".
+//
+// A reserva das metas continua saindo, e aparece como parcela propria no
+// cartao: e dinheiro do mes que a pessoa ja decidiu nao gastar.
+
+export interface SobraDoMes {
+  receitas: number;
+  despesas: number;
+  reservaDeMetas: number;
+  /** O numero da tela. Pode ser negativo. */
+  livre: number;
+  /** 0 quando `livre` <= 0 (armadilha 6 de lib/safe-to-spend.ts). */
+  porDia: number;
+  diasRestantes: number;
+}
+
+export function sobraDoMes(entrada: {
+  receitas: number | string | null | undefined;
+  despesas: number | string | null | undefined;
+  reservaDeMetas: number | string | null | undefined;
+  diasRestantes: number;
+}): SobraDoMes {
+  const receitas = centavos(Math.abs(numero(entrada.receitas)));
+  const despesas = centavos(Math.abs(numero(entrada.despesas)));
+  const reservaDeMetas = centavos(Math.max(0, numero(entrada.reservaDeMetas)));
+  const livre = centavos(receitas - despesas - reservaDeMetas);
+  // Divisor nunca 0: o dia de hoje conta (armadilha 6 de lib/safe-to-spend.ts).
+  const dias = Math.max(1, Math.floor(entrada.diasRestantes || 1));
+  return {
+    receitas,
+    despesas,
+    reservaDeMetas,
+    livre,
+    porDia: livre > 0 ? livre / dias : 0,
+    diasRestantes: dias,
+  };
+}
+
+/**
+ * Dias que faltam do periodo, contando hoje -- o divisor da verba diaria.
+ * Nunca menos que 1 (armadilha 6 de lib/safe-to-spend.ts).
+ */
+export function diasQueFaltam(hoje: string, ate: string): number {
+  return Math.max(1, diasEntre(hoje, ate) + 1);
+}
