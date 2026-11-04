@@ -62,6 +62,15 @@ test("admin sem grupo nao assume ninguem", () => {
 
 test("o cookie do aviso vai e volta, e estragado vira null", () => {
   assert.deepEqual(lerEntrouComo(escreverEntrouComo("Letícia")), { nome: "Letícia" });
+  // Como chega no navegador: o Next codifica uma vez ao gravar.
+  const gravado = encodeURIComponent(escreverEntrouComo("Lais Bernucio"));
+  assert.deepEqual(lerEntrouComo(gravado), { nome: "Lais Bernucio" });
+  // O valor real visto em producao com a primeira versao (codificado duas vezes).
+  assert.deepEqual(
+    lerEntrouComo("%257B%2522nome%2522%253A%2522Lais%2520Bernucio%2522%257D"),
+    { nome: "Lais Bernucio" }
+  );
+  assert.equal(lerEntrouComo("%E0%A4%A"), null);
   assert.equal(lerEntrouComo("%7Bquebrado"), null);
   assert.equal(lerEntrouComo(undefined), null);
   assert.equal(lerEntrouComo(escreverEntrouComo("  ")), null);

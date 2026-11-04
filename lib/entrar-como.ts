@@ -89,13 +89,29 @@ export function possoAssumir(
   );
 }
 
-/** Le o cookie do aviso. Valor estragado vira `null`, nunca excecao. */
+/**
+ * Le o cookie do aviso. Valor estragado vira `null`, nunca excecao.
+ *
+ * O `cookies().set` do Next ja codifica o valor (encodeURIComponent) ao
+ * gravar, entao `escreverEntrouComo` devolve o JSON cru. A leitura decodifica
+ * ate o texto virar JSON, porque o que chega do `document.cookie` vem
+ * codificado uma vez -- e um valor gravado por quem codificou de novo (a
+ * primeira versao desta funcao fazia isso) vem duas.
+ */
 export function lerEntrouComo(
   valor: string | undefined | null
 ): { nome: string } | null {
   if (!valor) return null;
+  let texto = valor;
+  for (let i = 0; i < 3 && !texto.trimStart().startsWith("{"); i++) {
+    try {
+      texto = decodeURIComponent(texto);
+    } catch {
+      return null;
+    }
+  }
   try {
-    const obj = JSON.parse(decodeURIComponent(valor));
+    const obj = JSON.parse(texto);
     if (obj && typeof obj.nome === "string" && obj.nome.trim()) {
       return { nome: obj.nome.trim() };
     }
@@ -105,6 +121,7 @@ export function lerEntrouComo(
   return null;
 }
 
+/** Valor do cookie do aviso. Cru: o Next codifica ao gravar. */
 export function escreverEntrouComo(nome: string): string {
-  return encodeURIComponent(JSON.stringify({ nome }));
+  return JSON.stringify({ nome });
 }
