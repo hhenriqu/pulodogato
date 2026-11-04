@@ -7,6 +7,7 @@ import Sidebar from "@/components/Sidebar";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { OfflineBanner } from "@/components/OfflineBanner";
 import { PuxarParaAtualizar } from "@/components/PuxarParaAtualizar";
+import { AvisoEntrouComo } from "@/components/admin/AvisoEntrouComo";
 
 export default function DashboardLayout({
   children,
@@ -53,6 +54,7 @@ export default function DashboardLayout({
         telas, e com a mesma especificidade quem vem depois vence.
       */}
       <div className="print:hidden">
+        <AvisoEntrouComo />
         <DashboardHeader
           user={user}
           isMobileMenuOpen={isMobileMenuOpen}

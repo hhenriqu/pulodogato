@@ -790,6 +790,14 @@
     "updated_at",
     "user_id"
   ],
+  "registro_entrar_como": [
+    "admin_id",
+    "alvo_id",
+    "entrou_em",
+    "id",
+    "saiu_em",
+    "user_agent"
+  ],
   "scheduled_splits": [
     "created_at",
     "id",

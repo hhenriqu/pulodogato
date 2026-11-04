@@ -894,6 +894,13 @@ migration é passo manual no SQL Editor do Supabase.
 - **Segredos** `SUPABASE_SERVICE_ROLE_KEY` e `CRON_SECRET` só no servidor, lidos
   dentro do handler. Nada de segredo no bundle do cliente.
 - **Comprovantes** em bucket privado.
+- **Entrar como** (painel Admin) o administrador do app entra na conta de
+  quem está ativo num grupo ativo com ele, para validar o fluxo da família
+  pelos olhos do outro membro. Ninguém fora dos grupos dele. Cada entrada vai
+  para `registro_entrar_como` (migration 080), gravada só pela service role e
+  legível pelo admin e pela pessoa cuja conta foi usada. A volta usa o refresh
+  token do admin num cookie httpOnly de 4 h; se falhar, o navegador sai
+  deslogado, nunca preso na conta do membro.
 - **LGPD** dados do próprio usuário; o painel de configurações permite zerar a
   conta (RN022), e o plano de apagamento respeita a ordem das dependências e
   não apaga o que é de outra pessoa.
