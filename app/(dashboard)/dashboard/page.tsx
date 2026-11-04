@@ -103,6 +103,7 @@ import {
 import { SeletorDePeriodo } from "@/components/dashboard/SeletorDePeriodo";
 import { NumeroIndisponivel } from "@/components/SemRede";
 import { PrevistoXRealizado } from "@/components/dashboard/PrevistoXRealizado";
+import { MapaDeCalor } from "@/components/dashboard/MapaDeCalor";
 import {
   somarMesesPrevistos,
   type PrevistoDoPeriodo,
@@ -1373,6 +1374,14 @@ function PainelCompleto() {
           )}
         </CardContent>
       </Card>
+    ),
+
+    // ------------------------------------------------------------------
+    // Mapa de calor: em que dias o dinheiro sai. Busca os proprios dados --
+    // ver o cabecalho de components/dashboard/MapaDeCalor.tsx.
+    // ------------------------------------------------------------------
+    "mapa-de-calor": (
+      <MapaDeCalor de={periodo.de} ate={periodo.ate} rotulo={rotulo} />
     ),
 
     // ------------------------------------------------------------------

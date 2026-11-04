@@ -106,6 +106,12 @@ export const SECOES_DO_PAINEL: SecaoDoPainel[] = [
     descricao: "O progresso das suas metas ativas",
   },
   {
+    id: "mapa-de-calor",
+    titulo: "Mapa de calor dos gastos",
+    descricao:
+      "Um calendário do período com cada dia pintado pelo quanto saiu nele",
+  },
+  {
     id: "contas",
     titulo: "Suas contas",
     descricao: "O saldo de cada conta, uma a uma",

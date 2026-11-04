@@ -2624,6 +2624,9 @@ jobs:
       - name: Bloco novo nasce visivel, e arrastar para no lugar certo
         run: npm run test:dashboard-layout
 
+      - name: O mapa de calor apaga o futuro e nao deixa o aluguel achatar o mes
+        run: npm run test:mapa-de-calor
+
       # nota: verificacao-notas.md -> "O painel abre no mes certo, e a transferencia fica fora da soma"
       - name: O painel abre no mes certo, e a transferencia fica fora da soma
         run: npm run test:periodo-painel
