@@ -91,6 +91,7 @@ import {
 } from "@/lib/acoes-da-previsao-do-cartao";
 import { NumeroIndisponivel } from "@/components/SemRede";
 
+import { Dica } from "@/components/ui/dica";
 interface FaturaDoCartaoProps {
   conta: FinancialAccount;
   /** `null` = a rota nao trouxe fatura para este cartao neste mes. */
@@ -774,15 +775,15 @@ export function FaturaDoCartao({
       {cobrancas !== null && cobrancas.length > 0 && (
         <Card data-cobrancas-previstas={cobrancas.length}>
           <CardHeader className="pb-2">
-            <CardTitle className="text-base">
+            <CardTitle className="flex items-center gap-1.5 text-base">
               {cobrancas.length === 1
                 ? "1 cobrança prevista nesta fatura"
                 : `${cobrancas.length} cobranças previstas nesta fatura`}
+              <Dica rotulo="Sobre as cobranças previstas">
+                Viram compra sozinhas no dia da cobrança. Até lá, somam no total
+                previsto da fatura.
+              </Dica>
             </CardTitle>
-            <CardDescription>
-              Viram compra sozinhas no dia da cobrança. Até lá, somam no total
-              previsto da fatura.
-            </CardDescription>
           </CardHeader>
           <CardContent className="divide-y divide-border p-0">
             {cobrancas.map((cobranca) => (
@@ -871,21 +872,21 @@ export function FaturaDoCartao({
       {previsoes !== null && previsoes.length > 0 && (
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-base">
+            <CardTitle className="flex items-center gap-1.5 text-base">
               {previsoes.length === 1
                 ? "1 conta prevista neste cartão"
                 : `${previsoes.length} contas previstas neste cartão`}
+              <Dica rotulo="Sobre as contas previstas do cartão">
+                Cobranças cadastradas com este cartão. Cada uma entra como
+                prevista na fatura do mês em que cai e vira compra sozinha no dia
+                da cobrança. Aqui você muda o valor, pula um mês ou encerra.
+              </Dica>
             </CardTitle>
             {/* A FRASE MUDOU COM A COBRANCA NO CARTAO (24/10/2026). Ate aqui
                 ela dizia que estas linhas "nao entram no total da fatura" --
                 e era o defeito: a assinatura nao contava em lugar nenhum.
                 Agora cada uma entra na fatura do mes em que cai, e este bloco
                 e onde ela se MUDA, para todos os meses. */}
-            <CardDescription>
-              Cobranças cadastradas com este cartão. Cada uma entra como
-              prevista na fatura do mês em que cai e vira compra sozinha no dia
-              da cobrança. Aqui você muda o valor, pula um mês ou encerra.
-            </CardDescription>
           </CardHeader>
           <CardContent className="divide-y divide-border p-0">
             {previsoes.map((previsao) => (

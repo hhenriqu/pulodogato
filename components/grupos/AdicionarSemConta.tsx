@@ -11,6 +11,7 @@ import {
   nomeDoParticipanteParaGravar,
 } from "@/lib/membro-sem-conta";
 
+import { Dica } from "@/components/ui/dica";
 /**
  * Adicionar ao grupo alguem que nao tem conta no app (migration 077).
  *
@@ -66,13 +67,15 @@ export function AdicionarSemConta({
 
   return (
     <form onSubmit={adicionar} className="space-y-2 border rounded-lg p-4">
-      <Label htmlFor="participante-sem-conta">
-        Adicionar participante sem conta no app
-      </Label>
-      <p className="text-sm text-muted-foreground">
-        Para o amigo que não vai instalar o app. Ele divide as despesas e
-        aparece no saldo; você registra por ele o que ele pagou.
-      </p>
+      <div className="flex items-center gap-1">
+        <Label htmlFor="participante-sem-conta">
+          Adicionar participante sem conta no app
+        </Label>
+        <Dica rotulo="Sobre participante sem conta">
+          Para o amigo que não vai instalar o app. Ele divide as despesas e
+          aparece no saldo; você registra por ele o que ele pagou.
+        </Dica>
+      </div>
       <div className="flex gap-2">
         <Input
           id="participante-sem-conta"

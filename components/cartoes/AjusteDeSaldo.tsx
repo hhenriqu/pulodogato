@@ -51,7 +51,6 @@ import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -69,6 +68,7 @@ import {
   type CategoriaDeAjuste,
 } from "@/lib/ajuste-de-fatura";
 
+import { Dica } from "@/components/ui/dica";
 interface AjusteDeSaldoProps {
   /** 'outubro de 2026'. `null` quando o mes nao da para ler -- ver o item 3. */
   rotuloDoMes: string | null;
@@ -145,11 +145,11 @@ export function AjusteDeSaldo({
             <CardTitle className="flex items-center gap-2 text-base">
               <Scale className="h-4 w-4 text-muted-foreground" />
               Ajuste de saldo
+              <Dica rotulo="Para que serve o ajuste">
+                Para a fatura fechar igual à do banco sem detalhar o que foi o
+                gasto.
+              </Dica>
             </CardTitle>
-            <CardDescription>
-              Para a fatura fechar igual à do banco sem detalhar o que foi o
-              gasto.
-            </CardDescription>
           </div>
 
           {/* ----------------------------------------------------------------

@@ -43,6 +43,7 @@ import { formatarValor } from "@/lib/dinheiro";
 import { today } from "@/lib/recurrence";
 import { ArrowDownCircle, ArrowUpCircle, PieChart, Wallet } from "lucide-react";
 
+import { Dica } from "@/components/ui/dica";
 interface CategoriaDoPainel {
   category_id: string;
   category: { name: string; color_hex?: string | null } | null;
@@ -129,12 +130,12 @@ export function PainelDoGrupo({
           <CardTitle className="flex items-center gap-2">
             <PieChart className="h-5 w-5" />
             Painel do grupo
+            <Dica rotulo="Sobre o painel do grupo">
+              Os valores abaixo são do grupo inteiro, somando o que todos os
+              membros lançaram — não apenas a sua parte. Quanto cada um deve está
+              na aba Balanços.
+            </Dica>
           </CardTitle>
-          <CardDescription>
-            Os valores abaixo são do grupo inteiro, somando o que todos os
-            membros lançaram — não apenas a sua parte. Quanto cada um deve está
-            na aba Balanços.
-          </CardDescription>
         </CardHeader>
         <CardContent>
           <SeletorDePeriodo

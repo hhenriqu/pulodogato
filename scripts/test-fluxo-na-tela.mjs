@@ -80,7 +80,8 @@
 //   lib/dinheiro.js         -- sem import proprio, e o campo de valor a usa;
 //   components/ui/*.js      -- button, card e badge: a faixa e os dois paineis
 //                              sao feitos deles, e e o texto DELES que as
-//                              assercoes leem;
+//                              assercoes leem; e dica, o icone de informacao
+//                              que guarda os textos explicativos da pagina;
 //   components/SemRede.js   -- a faixa `FaixaDadoDoAparelho`, `PainelSemRede` e
 //                              `PainelErroDoServidor`. ELES SAO A ASSERCAO:
 //                              esbocados, a sonda mediria a propria sonda;
@@ -260,6 +261,7 @@ const PARTES = [
   "components/ui/button.js",
   "components/ui/card.js",
   "components/ui/badge.js",
+  "components/ui/dica.js",
   "components/SemRede.js",
   PAGINA_COMPILADA,
 ];
@@ -343,7 +345,9 @@ try {
 
 // --- os hooks por nome -------------------------------------------------------
 // O \`import\` deles foi removido junto com o resto da fiacao de modulo.
-const { useCallback, useEffect, useMemo, useRef, useState } = React;
+const { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } = React;
+// O balao de components/ui/dica vai para o <body> por portal.
+const { createPortal } = ReactDOM;
 
 // --- a fiacao de classe dos componentes de ui --------------------------------
 
@@ -369,6 +373,8 @@ const Repeat = icone("Repeat");
 const ShoppingCart = icone("ShoppingCart");
 const TrendingDown = icone("TrendingDown");
 const TrendingUp = icone("TrendingUp");
+// ...o de components/ui/dica...
+const Info = icone("Info");
 // ...e os tres de components/SemRede.
 const CloudOff = icone("CloudOff");
 const RefreshCw = icone("RefreshCw");

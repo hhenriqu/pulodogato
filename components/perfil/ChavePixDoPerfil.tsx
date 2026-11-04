@@ -31,7 +31,6 @@ import { Label } from "@/components/ui/label";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -46,6 +45,7 @@ import {
   type TipoDeChavePix,
 } from "@/lib/chave-pix";
 
+import { Dica } from "@/components/ui/dica";
 export function ChavePixDoPerfil({ userId }: { userId: string }) {
   const supabase = createClient();
 
@@ -167,11 +167,11 @@ export function ChavePixDoPerfil({ userId }: { userId: string }) {
         <CardTitle className="flex items-center gap-2">
           <KeyRound className="h-5 w-5" />
           Chave Pix
+          <Dica rotulo="Quem vê a chave Pix">
+            Quem divide um grupo de despesas com você vê esta chave e pode copiá-la
+            para te pagar. Ninguém mais no aplicativo tem acesso a ela.
+          </Dica>
         </CardTitle>
-        <CardDescription>
-          Quem divide um grupo de despesas com você vê esta chave e pode copiá-la
-          para te pagar. Ninguém mais no aplicativo tem acesso a ela.
-        </CardDescription>
       </CardHeader>
 
       <CardContent className="space-y-4">

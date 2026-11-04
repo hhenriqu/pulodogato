@@ -31,7 +31,6 @@ import { PerformanceChart } from "@/components/charts/PerformanceChart";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -77,6 +76,7 @@ import {
   type ValoresDeRendaFixa,
 } from "@/components/RendaFixaDaCarteira";
 
+import { Dica } from "@/components/ui/dica";
 interface AtivoDaTela {
   id: string;
   symbol: string;
@@ -583,12 +583,12 @@ export default function InvestmentsPage() {
             <h1 className="text-3xl font-bold flex items-center gap-2">
               <TrendingUp className="h-8 w-8" />
               Investimentos
+              <Dica rotulo="Sobre a carteira">
+                Carteira lançada por você. Ações e FIIs têm o preço atualizado
+                todo dia útil depois do fechamento da bolsa; os demais você
+                informa.
+              </Dica>
             </h1>
-            <p className="text-muted-foreground">
-              Carteira lançada por você. Ações e FIIs têm o preço atualizado
-              todo dia útil depois do fechamento da bolsa; os demais você
-              informa.
-            </p>
           </div>
           <div className="flex flex-wrap gap-2">
             {/* Lancar vem primeiro e e o botao cheio: cadastrar ativo se faz
@@ -663,14 +663,14 @@ export default function InvestmentsPage() {
         {resumo && resumo.realizedProfitLoss !== 0 && (
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium">
+              <CardTitle className="flex items-center gap-1.5 text-sm font-medium">
                 Resultado já realizado
+                <Dica rotulo="Sobre o resultado das vendas">
+                  O que as vendas fecharam. Fica separado do lucro da carteira de
+                  propósito: vender no lucro não aumenta o valor do que você ainda
+                  tem.
+                </Dica>
               </CardTitle>
-              <CardDescription>
-                O que as vendas fecharam. Fica separado do lucro da carteira de
-                propósito: vender no lucro não aumenta o valor do que você ainda
-                tem.
-              </CardDescription>
             </CardHeader>
             <CardContent>
               <div
@@ -750,12 +750,14 @@ export default function InvestmentsPage() {
         {/* --- Ativos cadastrados, com o preço atual editável ---------------- */}
         <Card>
           <CardHeader>
-            <CardTitle>Ativos cadastrados</CardTitle>
-            <CardDescription>
-              Ações e FIIs são cotados automaticamente; você pode corrigir o
-              preço de qualquer ativo. A data ao lado é de quando o preço foi
-              apurado.
-            </CardDescription>
+            <CardTitle className="flex items-center gap-1.5">
+              Ativos cadastrados
+              <Dica rotulo="Sobre as cotações">
+                Ações e FIIs são cotados automaticamente; você pode corrigir o
+                preço de qualquer ativo. A data ao lado é de quando o preço foi
+                apurado.
+              </Dica>
+            </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             {ativos.length === 0 && (

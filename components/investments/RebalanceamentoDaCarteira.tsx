@@ -24,7 +24,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -58,6 +57,7 @@ import {
 import { CalculadoraDePeso } from "@/components/investments/CalculadoraDePeso";
 import { GraficosDoRebalanceamento } from "@/components/charts/GraficosDoRebalanceamento";
 
+import { Dica } from "@/components/ui/dica";
 interface AtivoDaCarteira {
   id: string;
   symbol: string;
@@ -242,12 +242,12 @@ export function RebalanceamentoDaCarteira({
         <CardTitle className="flex items-center gap-2">
           <Scale className="h-5 w-5" />
           Rebalanceamento
+          <Dica rotulo="Como o rebalanceamento funciona">
+            Dê um peso a cada ativo: o % ideal é o peso dividido pela soma dos
+            pesos. Ativo sem peso fica fora da conta; peso 0 quer dizer zerar o
+            ativo. A conta é sua, com os pesos que você escolher.
+          </Dica>
         </CardTitle>
-        <CardDescription>
-          Dê um peso a cada ativo: o % ideal é o peso dividido pela soma dos
-          pesos. Ativo sem peso fica fora da conta; peso 0 quer dizer zerar o
-          ativo. A conta é sua, com os pesos que você escolher.
-        </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {carregando && <p className="text-sm text-muted-foreground">Carregando…</p>}

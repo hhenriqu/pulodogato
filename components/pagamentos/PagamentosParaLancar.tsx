@@ -17,6 +17,7 @@ import {
   type PagamentoEntrePessoas,
 } from "@/lib/pagamento-entre-pessoas";
 
+import { Dica } from "@/components/ui/dica";
 interface Conta {
   id: string;
   name: string;
@@ -110,11 +111,11 @@ export function PagamentosParaLancar() {
       <div className="flex items-center gap-2 font-medium">
         <HandCoins className="h-5 w-5" />
         Pagamentos para você lançar
+        <Dica rotulo="Sobre estes pagamentos">
+          Alguém da família registrou um pagamento para você. Escolha a conta em
+          que o dinheiro entrou para ele aparecer no seu saldo e no seu mês.
+        </Dica>
       </div>
-      <p className="text-sm text-muted-foreground">
-        Alguém da família registrou um pagamento para você. Escolha a conta em
-        que o dinheiro entrou para ele aparecer no seu saldo e no seu mês.
-      </p>
       {pendentes.map((p) => (
         <div
           key={p.id}

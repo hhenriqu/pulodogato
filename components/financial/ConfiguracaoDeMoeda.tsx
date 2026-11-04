@@ -33,7 +33,6 @@ import { useEffect, useState } from "react";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -57,6 +56,7 @@ import {
 } from "@/lib/moeda";
 import { formatarValor } from "@/lib/dinheiro";
 
+import { Dica } from "@/components/ui/dica";
 export function ConfiguracaoDeMoeda() {
   const [carregando, setCarregando] = useState(true);
   const [salvando, setSalvando] = useState(false);
@@ -131,11 +131,13 @@ export function ConfiguracaoDeMoeda() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-lg">Moeda</CardTitle>
-        <CardDescription>
-          A sua moeda principal e, se você quiser, a opção de escolher outra
-          moeda em cada lançamento.
-        </CardDescription>
+        <CardTitle className="flex items-center gap-1.5 text-lg">
+          Moeda
+          <Dica rotulo="Sobre a moeda">
+            A sua moeda principal e, se você quiser, a opção de escolher outra
+            moeda em cada lançamento.
+          </Dica>
+        </CardTitle>
       </CardHeader>
 
       <CardContent className="space-y-6">
@@ -180,15 +182,17 @@ export function ConfiguracaoDeMoeda() {
 
         <div className="flex items-start justify-between gap-4 rounded-lg border p-4">
           <div className="space-y-1">
-            <Label htmlFor="moeda-por-lancamento" className="cursor-pointer">
-              Escolher a moeda em cada lançamento
-            </Label>
-            <p className="text-sm text-muted-foreground">
-              Liga uma opção de moeda no formulário de receita e despesa, e
-              também nas contas. Use se você movimenta mais de uma moeda — nos
-              períodos com moedas diferentes, os resultados aparecem separados
-              por moeda.
-            </p>
+            <div className="flex items-center gap-1">
+              <Label htmlFor="moeda-por-lancamento" className="cursor-pointer">
+                Escolher a moeda em cada lançamento
+              </Label>
+              <Dica rotulo="Sobre a moeda em cada lançamento">
+                Liga uma opção de moeda no formulário de receita e despesa, e
+                também nas contas. Use se você movimenta mais de uma moeda — nos
+                períodos com moedas diferentes, os resultados aparecem separados
+                por moeda.
+              </Dica>
+            </div>
           </div>
           <Switch
             id="moeda-por-lancamento"

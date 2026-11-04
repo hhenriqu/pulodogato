@@ -35,6 +35,7 @@ import {
   TrendingUp,
 } from "lucide-react";
 
+import { Dica } from "@/components/ui/dica";
 const moeda = (valor: number | string) =>
   new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(
     Math.abs(Number(valor))
@@ -295,11 +296,13 @@ export default function NotificationsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">Avisos</h1>
-        <p className="text-muted-foreground">
-          O que vence, o que já venceu, o que ficou mais caro, e quantos dias antes você
-          quer ser lembrado.
-        </p>
+        <h1 className="flex items-center gap-1.5 text-2xl font-bold tracking-tight">
+          Avisos
+          <Dica rotulo="Sobre os avisos">
+            O que vence, o que já venceu, o que ficou mais caro, e quantos dias antes você
+            quer ser lembrado.
+          </Dica>
+        </h1>
       </div>
 
       {vencidas.length > 0 && (
@@ -373,11 +376,11 @@ export default function NotificationsPage() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-lg text-warning">
               <TrendingUp className="h-5 w-5" /> Assinaturas
+              <Dica rotulo="Sobre estes avisos">
+                Preço que subiu e cobrança depois de cancelada. O aviso sai uma vez por
+                cobrança.
+              </Dica>
             </CardTitle>
-            <CardDescription>
-              Preço que subiu e cobrança depois de cancelada. O aviso sai uma vez por
-              cobrança.
-            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-2">
             {alertasAssinatura.map((a) => (
@@ -404,7 +407,12 @@ export default function NotificationsPage() {
         </CardHeader>
         <CardContent className="space-y-5">
           <div className="grid gap-2 sm:max-w-xs">
-            <Label htmlFor="dias">Dias de antecedência</Label>
+            <div className="flex items-center gap-1">
+              <Label htmlFor="dias">Dias de antecedência</Label>
+              <Dica rotulo="Sobre a antecedência">
+                0 avisa só no dia do vencimento — que costuma ser tarde demais para pagar sem multa.
+              </Dica>
+            </div>
             <Input
               id="dias"
               type="number"
@@ -415,9 +423,6 @@ export default function NotificationsPage() {
                 setPrefs((p) => ({ ...p, days_before: Number(e.target.value) }))
               }
             />
-            <p className="text-xs text-muted-foreground">
-              0 avisa só no dia do vencimento — que costuma ser tarde demais para pagar sem multa.
-            </p>
           </div>
 
           <div className="flex items-center justify-between gap-4">
@@ -475,10 +480,10 @@ export default function NotificationsPage() {
           <CardTitle className="flex items-center gap-2 text-lg">
             {pushAtivo ? <Bell className="h-5 w-5" /> : <BellOff className="h-5 w-5" />}
             Notificação no celular
+            <Dica rotulo="Sobre as notificações no aparelho">
+              Vale só para este aparelho. Os avisos continuam aparecendo nesta tela de qualquer jeito.
+            </Dica>
           </CardTitle>
-          <CardDescription>
-            Vale só para este aparelho. Os avisos continuam aparecendo nesta tela de qualquer jeito.
-          </CardDescription>
         </CardHeader>
         <CardContent>
           {!chaveVapid ? (

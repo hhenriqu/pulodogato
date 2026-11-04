@@ -12,6 +12,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Tags, Plus, Power, Trash2, Sparkles, Hand, Wand2 } from "lucide-react";
 
+import { Dica } from "@/components/ui/dica";
 // =====================================================
 // Regras de categorizacao (HMO-145)
 // =====================================================
@@ -175,11 +176,13 @@ export default function CategorizationPage() {
       <div className="flex items-center gap-3">
         <Tags className="h-7 w-7 text-primary" />
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Regras de categorização</h1>
-          <p className="text-muted-foreground text-sm">
-            Diga uma vez o que é cada estabelecimento. A próxima cobrança dele já entra
-            categorizada sozinha.
-          </p>
+          <h1 className="flex items-center gap-1.5 text-2xl font-bold tracking-tight">
+            Regras de categorização
+            <Dica rotulo="Sobre as regras de categorização">
+              Diga uma vez o que é cada estabelecimento. A próxima cobrança dele já entra
+              categorizada sozinha.
+            </Dica>
+          </h1>
         </div>
       </div>
 
@@ -220,14 +223,14 @@ export default function CategorizationPage() {
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>Sem regra? Ainda há palpite</CardDescription>
-            <CardTitle className="text-lg">Catálogo embutido</CardTitle>
+            <CardTitle className="flex items-center gap-1.5 text-lg">
+              Catálogo embutido
+              <Dica rotulo="Sobre o catálogo embutido">
+                Lojistas conhecidos (iFood, Uber, Netflix...) aparecem sugeridos na tela de
+                importação — mas só viram categoria se você aceitar.
+              </Dica>
+            </CardTitle>
           </CardHeader>
-          <CardContent>
-            <p className="text-muted-foreground text-xs">
-              Lojistas conhecidos (iFood, Uber, Netflix...) aparecem sugeridos na tela de
-              importação — mas só viram categoria se você aceitar.
-            </p>
-          </CardContent>
         </Card>
       </div>
 
@@ -237,11 +240,11 @@ export default function CategorizationPage() {
           <CardTitle className="flex items-center gap-2 text-base">
             <Plus className="h-4 w-4" />
             Nova regra
+            <Dica rotulo="Como colar o texto do extrato">
+              Cole o texto como ele aparece no extrato — inclusive com os códigos do banco.
+              O app reconhece as outras variações do mesmo estabelecimento sozinho.
+            </Dica>
           </CardTitle>
-          <CardDescription>
-            Cole o texto como ele aparece no extrato — inclusive com os códigos do banco.
-            O app reconhece as outras variações do mesmo estabelecimento sozinho.
-          </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3 md:flex-row">
           <input

@@ -52,6 +52,7 @@ import { today } from "@/lib/recurrence";
 import { mesDaData, rotuloDoMes } from "@/lib/periodo-do-grupo";
 import { ArrowRight, CalendarCheck, Clock, Wallet } from "lucide-react";
 
+import { Dica } from "@/components/ui/dica";
 interface PosicaoNoMes {
   user_id: string;
   full_name?: string | null;
@@ -196,6 +197,11 @@ export function FechamentoDoMes({
             <CardTitle className="flex items-center gap-2">
               <CalendarCheck className="h-5 w-5" />
               Fechamento de {rotuloDoMes(dados.mes)}
+              <Dica rotulo="Sobre o rateio do mês">
+                Este é o rateio do mês, com o previsto contando igual ao realizado —
+                serve para combinar o acerto. O saldo de toda a vida do grupo, só com
+                o que já aconteceu, está na aba Balanços.
+              </Dica>
             </CardTitle>
             <CardDescription>
               Tudo que o grupo paga no mês, previsto e realizado juntos.
@@ -360,11 +366,6 @@ export function FechamentoDoMes({
           </p>
         )}
 
-        <p className="text-xs text-muted-foreground">
-          Este é o rateio do mês, com o previsto contando igual ao realizado —
-          serve para combinar o acerto. O saldo de toda a vida do grupo, só com
-          o que já aconteceu, está na aba Balanços.
-        </p>
       </CardContent>
     </Card>
   );

@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/select";
 import type { PessoaParaPagamento } from "@/lib/pagamento-entre-pessoas";
 
+import { Dica } from "@/components/ui/dica";
 /**
  * "Pagamento para alguém da família" no formulário de despesa (081). Escolher
  * uma pessoa faz a despesa, ao salvar, aparecer para ela como "a lançar".
@@ -42,7 +43,12 @@ export function CampoPagoPara({
 
   return (
     <div className="space-y-2 p-4 border rounded-lg bg-muted/20">
-      <Label>Pagamento para alguém da família</Label>
+      <div className="flex items-center gap-1">
+        <Label>Pagamento para alguém da família</Label>
+        <Dica rotulo="Sobre pagamento para a família">
+          A pessoa vê o pagamento e confirma em qual conta dela o dinheiro entrou.
+        </Dica>
+      </div>
       <Select
         value={valor || "ninguem"}
         onValueChange={(v: string) => aoMudar(v === "ninguem" ? "" : v)}
@@ -59,9 +65,6 @@ export function CampoPagoPara({
           ))}
         </SelectContent>
       </Select>
-      <p className="text-xs text-muted-foreground">
-        A pessoa vê o pagamento e confirma em qual conta dela o dinheiro entrou.
-      </p>
     </div>
   );
 }

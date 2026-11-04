@@ -22,7 +22,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { TrendingUp, Gift, Palmtree, Landmark, Info, AlertTriangle } from "lucide-react";
+import { Dica } from "@/components/ui/dica";
+import { TrendingUp, Gift, Palmtree, Landmark, AlertTriangle } from "lucide-react";
 import {
   calcularDecimoTerceiro,
   calcularFGTS,
@@ -256,11 +257,22 @@ function DetalheTributos({ inss, irrf }: { inss: ResultadoINSS; irrf: ResultadoI
   );
 }
 
-function Resultado({ titulo, children }: { titulo: string; children: React.ReactNode }) {
+function Resultado({
+  titulo,
+  dica,
+  children,
+}: {
+  titulo: string;
+  dica?: React.ReactNode;
+  children: React.ReactNode;
+}) {
   return (
     <Card className="bg-card">
       <CardHeader className="pb-3">
-        <CardTitle className="text-base">{titulo}</CardTitle>
+        <CardTitle className="flex items-center gap-1.5 text-base">
+          {titulo}
+          {dica && <Dica rotulo="Como este calculo funciona">{dica}</Dica>}
+        </CardTitle>
       </CardHeader>
       <CardContent className="space-y-1">{children}</CardContent>
     </Card>
@@ -336,18 +348,17 @@ function CalculadoraJuros() {
           passo="1"
           dica={`${meses} meses`}
         />
-
-        <p className="flex gap-2 rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
-          <Info className="mt-0.5 h-4 w-4 shrink-0" />
-          <span>
-            Taxa ao ano e convertida pela equivalencia real ({pct(r.taxaMensalEfetiva / 100, 4)} ao
-            mes), e nao dividida por 12. Os aportes entram no fim de cada mes.
-          </span>
-        </p>
       </div>
 
       <div className="space-y-4">
-        <Resultado titulo="Resultado">
+        <Resultado titulo="Resultado"
+          dica={
+            <>
+              Taxa ao ano e convertida pela equivalencia real ({pct(r.taxaMensalEfetiva / 100, 4)} ao
+              mes), e nao dividida por 12. Os aportes entram no fim de cada mes.
+            </>
+          }
+        >
           <Linha rotulo="Montante final" valor={brl(r.montante)} destaque />
           <Linha rotulo="Total investido" valor={brl(r.totalInvestido)} />
           <Linha rotulo="Juros ganhos" valor={brl(r.jurosGanhos)} />
@@ -425,19 +436,18 @@ function CalculadoraDecimoTerceiro() {
           dica="Fracao de mes com 15 dias ou mais conta como mes cheio."
         />
         <CampoNumero id="d-dep" rotulo="Dependentes" valor={dependentes} aoMudar={setDependentes} passo="1" />
-
-        <p className="flex gap-2 rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
-          <Info className="mt-0.5 h-4 w-4 shrink-0" />
-          <span>
-            A 1a parcela (ate 30/11) sai <strong>sem desconto</strong>. Todo o INSS e o IRRF do 13o
-            sao retidos de uma vez na 2a parcela, ate 20/12. O IRRF do 13o e calculado isolado do
-            salario do mes.
-          </span>
-        </p>
       </div>
 
       <div className="space-y-4">
-        <Resultado titulo={`13o de ${r.avos}/12 avos`}>
+        <Resultado titulo={`13o de ${r.avos}/12 avos`}
+          dica={
+            <>
+              A 1a parcela (ate 30/11) sai <strong>sem desconto</strong>. Todo o INSS e o IRRF do 13o
+              sao retidos de uma vez na 2a parcela, ate 20/12. O IRRF do 13o e calculado isolado do
+              salario do mes.
+            </>
+          }
+        >
           <Linha rotulo="13o bruto" valor={brl(r.bruto)} />
           <Linha rotulo="1a parcela (ate 30/11)" valor={brl(r.primeiraParcela)} destaque detalhe="Sem descontos" />
           <Linha
@@ -523,18 +533,17 @@ function CalculadoraFerias() {
             <span>{aviso}</span>
           </p>
         ))}
-
-        <p className="flex gap-2 rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
-          <Info className="mt-0.5 h-4 w-4 shrink-0" />
-          <span>
-            O 1/3 constitucional <strong>e</strong> tributado. O abono pecuniario (dias vendidos), o
-            1/3 dele e o adiantamento do 13o <strong>nao</strong> sao: entram inteiros no liquido.
-          </span>
-        </p>
       </div>
 
       <div className="space-y-4">
-        <Resultado titulo="Resultado">
+        <Resultado titulo="Resultado"
+          dica={
+            <>
+              O 1/3 constitucional <strong>e</strong> tributado. O abono pecuniario (dias vendidos), o
+              1/3 dele e o adiantamento do 13o <strong>nao</strong> sao: entram inteiros no liquido.
+            </>
+          }
+        >
           <Linha rotulo="Ferias (descanso)" valor={brl(r.feriasBruto)} />
           <Linha rotulo="1/3 constitucional" valor={brl(r.tercoConstitucional)} />
           {r.abonoBruto > 0 && (
@@ -622,19 +631,18 @@ function CalculadoraFGTS() {
             </SelectContent>
           </Select>
         </div>
-
-        <p className="flex gap-2 rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
-          <Info className="mt-0.5 h-4 w-4 shrink-0" />
-          <span>
-            Deposito de 8% do bruto, mais um deposito extra por ano referente ao 13o. Juros de 3% ao
-            ano creditados mes a mes, sem TR. Se voce ja aderiu ao saque-aniversario, a multa real e
-            maior que a exibida: a base legal inclui os depositos ja sacados.
-          </span>
-        </p>
       </div>
 
       <div className="space-y-4">
-        <Resultado titulo="Projecao">
+        <Resultado titulo="Projecao"
+          dica={
+            <>
+              Deposito de 8% do bruto, mais um deposito extra por ano referente ao 13o. Juros de 3% ao
+              ano creditados mes a mes, sem TR. Se voce ja aderiu ao saque-aniversario, a multa real e
+              maior que a exibida: a base legal inclui os depositos ja sacados.
+            </>
+          }
+        >
           <Linha rotulo="Deposito mensal (8%)" valor={brl(r.depositoMensal)} />
           <Linha rotulo="Total depositado no periodo" valor={brl(r.totalDepositado)} />
           <Linha rotulo="Rendimento" valor={brl(r.rendimento)} />
@@ -692,11 +700,13 @@ export default function CalculatorsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">Calculadoras</h1>
-        <p className="text-muted-foreground">
-          Juros compostos, 13o salario, ferias e FGTS. As contas rodam no seu navegador: nada do que
-          voce digitar aqui e enviado ou gravado.
-        </p>
+        <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight">
+          Calculadoras
+          <Dica rotulo="Sobre as calculadoras">
+            Juros compostos, 13o salario, ferias e FGTS. As contas rodam no seu navegador: nada do
+            que voce digitar aqui e enviado ou gravado.
+          </Dica>
+        </h1>
       </div>
 
       <Tabs defaultValue="juros">

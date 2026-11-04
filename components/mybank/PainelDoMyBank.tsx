@@ -193,6 +193,7 @@ import {
   type FormularioDoAjuste,
 } from "@/lib/ajuste-do-emprestimo-na-tela";
 
+import { Dica } from "@/components/ui/dica";
 /** "eu mesmo" ou "uma conexao" -- o radio que a issue pede. */
 type QuemPaga = "eu" | "conexao";
 
@@ -1078,11 +1079,13 @@ export function PainelDoMyBank({ meuId }: { meuId: string }) {
   return (
     <div className="space-y-6 p-4">
       <div>
-        <h1 className="text-2xl font-bold">MyBank</h1>
-        <p className="text-sm text-muted-foreground">
-          A sua conta de investimento emprestando — para você mesmo ou para uma
-          conexão —, e a dívida voltando parcelada.
-        </p>
+        <h1 className="flex items-center gap-1.5 text-2xl font-bold">
+          MyBank
+          <Dica rotulo="Sobre o MyBank">
+            A sua conta de investimento emprestando — para você mesmo ou para uma
+            conexão —, e a dívida voltando parcelada.
+          </Dica>
+        </h1>
       </div>
 
       {/* =====================================================================
@@ -1093,12 +1096,12 @@ export function PainelDoMyBank({ meuId }: { meuId: string }) {
           <CardTitle className="flex items-center gap-2 text-base">
             <Landmark className="h-4 w-4" />
             Conta que empresta
+            <Dica rotulo="Por que só conta de investimento">
+              Só conta de investimento aparece aqui: é o que a trava do banco
+              exige, e oferecer conta corrente seria oferecer uma opção que o
+              empréstimo recusa.
+            </Dica>
           </CardTitle>
-          <CardDescription>
-            Só conta de investimento aparece aqui: é o que a trava do banco
-            exige, e oferecer conta corrente seria oferecer uma opção que o
-            empréstimo recusa.
-          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <select
@@ -1257,9 +1260,17 @@ export function PainelDoMyBank({ meuId }: { meuId: string }) {
             </div>
           ) : (
             <div className="space-y-2">
-              <Label htmlFor="mybank-conta-de-pagamento">
-                Conta de onde as parcelas saem
-              </Label>
+              <div className="flex items-center gap-1">
+                <Label htmlFor="mybank-conta-de-pagamento">
+                  Conta de onde as parcelas saem
+                </Label>
+                <Dica rotulo="Como a parcela é gravada">
+                  A parcela é gravada como transferência para a conta de
+                  investimento e aparece em Contas a Pagar com o selo MyBank: é
+                  dinheiro que sai da sua conta no dia do vencimento, e não
+                  dinheiro que deixou de ser seu.
+                </Dica>
+              </div>
               <select
                 id="mybank-conta-de-pagamento"
                 className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
@@ -1277,12 +1288,6 @@ export function PainelDoMyBank({ meuId }: { meuId: string }) {
                   </option>
                 ))}
               </select>
-              <p className="text-xs text-muted-foreground">
-                A parcela é gravada como transferência para a conta de
-                investimento e aparece em Contas a Pagar com o selo MyBank: é
-                dinheiro que sai da sua conta no dia do vencimento, e não
-                dinheiro que deixou de ser seu.
-              </p>
             </div>
           )}
 

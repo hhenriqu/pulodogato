@@ -65,6 +65,7 @@ import {
   type Subcategoria,
 } from "@/lib/categorias";
 
+import { Dica } from "@/components/ui/dica";
 /** As duas abas. Receita e despesa nunca se misturam num seletor nem aqui. */
 type Aba = "expense" | "income";
 
@@ -283,11 +284,13 @@ export default function CategoriasPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold">Categorias</h1>
-        <p className="text-sm text-muted-foreground">
-          Renomeie, troque a cor, esconda e crie subcategorias. As que vêm com o
-          app podem ser personalizadas só para você.
-        </p>
+        <h1 className="flex items-center gap-1.5 text-2xl font-bold">
+          Categorias
+          <Dica rotulo="Sobre as categorias">
+            Renomeie, troque a cor, esconda e crie subcategorias. As que vêm com o
+            app podem ser personalizadas só para você.
+          </Dica>
+        </h1>
       </div>
 
       {/* `grid-cols-1` declarado: grid sem coluna estoura a largura no celular. */}

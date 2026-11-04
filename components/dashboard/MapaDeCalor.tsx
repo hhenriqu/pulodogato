@@ -40,6 +40,7 @@ import {
   type NivelDoMapa,
 } from "@/lib/mapa-de-calor";
 
+import { Dica } from "@/components/ui/dica";
 const DIAS_DA_SEMANA = ["D", "S", "T", "Q", "Q", "S", "S"];
 
 /** Uma cor so, em quatro intensidades: tokens do tema, nos dois modos. */
@@ -133,6 +134,22 @@ export function MapaDeCalor({
         <CardTitle className="flex items-center gap-2 text-lg">
           <Flame className="h-5 w-5" />
           Mapa de calor dos gastos
+          <Dica rotulo="Como o mapa conta os gastos">
+            Cada despesa conta no dia em que aconteceu — a compra no cartão no
+            dia da compra, e não no vencimento da fatura. Por isso o total
+            daqui pode diferir das Saídas do resumo. Transferências e
+            lançamentos fora dos totais não entram.
+            {resposta && resposta.outras_moedas > 0 && (
+              <>
+                {" "}
+                {resposta.outras_moedas}{" "}
+                {resposta.outras_moedas === 1
+                  ? "lançamento em outra moeda ficou"
+                  : "lançamentos em outra moeda ficaram"}{" "}
+                de fora.
+              </>
+            )}
+          </Dica>
         </CardTitle>
         <CardDescription>
           Quanto saiu em cada dia — <span className="lowercase">{rotulo}</span>
@@ -211,22 +228,6 @@ export function MapaDeCalor({
               </span>
             </div>
 
-            <p className="text-xs text-muted-foreground">
-              Cada despesa conta no dia em que aconteceu — a compra no cartão no
-              dia da compra, e não no vencimento da fatura. Por isso o total
-              daqui pode diferir das Saídas do resumo. Transferências e
-              lançamentos fora dos totais não entram.
-              {resposta && resposta.outras_moedas > 0 && (
-                <>
-                  {" "}
-                  {resposta.outras_moedas}{" "}
-                  {resposta.outras_moedas === 1
-                    ? "lançamento em outra moeda ficou"
-                    : "lançamentos em outra moeda ficaram"}{" "}
-                  de fora.
-                </>
-              )}
-            </p>
           </div>
         )}
       </CardContent>

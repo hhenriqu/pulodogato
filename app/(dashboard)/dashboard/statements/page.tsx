@@ -46,6 +46,7 @@ import {
 } from "lucide-react";
 import type { FinancialAccount, TransactionCategory } from "@/types/financial";
 
+import { Dica } from "@/components/ui/dica";
 const moeda = (valor: number) =>
   new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(valor);
 
@@ -348,11 +349,13 @@ export default function StatementsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">Importar extrato</h1>
-        <p className="text-muted-foreground">
-          Mande o OFX ou CSV do banco. O app separa o que já está lançado do que é novo —
-          nada entra sem você confirmar.
-        </p>
+        <h1 className="flex items-center gap-1.5 text-2xl font-bold tracking-tight">
+          Importar extrato
+          <Dica rotulo="Como funciona a importação">
+            Mande o OFX ou CSV do banco. O app separa o que já está lançado do que é novo —
+            nada entra sem você confirmar.
+          </Dica>
+        </h1>
       </div>
 
       {totalPendente > 0 && !abertoId && (
@@ -371,11 +374,11 @@ export default function StatementsPage() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-lg">
             <FileUp className="h-5 w-5" /> Novo extrato
+            <Dica rotulo="Por que escolher a conta antes">
+              A conta precisa ser escolhida antes: é por ela que o app sabe com quais lançamentos
+              comparar, e é por ela que um arquivo repetido é reconhecido.
+            </Dica>
           </CardTitle>
-          <CardDescription>
-            A conta precisa ser escolhida antes: é por ela que o app sabe com quais lançamentos
-            comparar, e é por ela que um arquivo repetido é reconhecido.
-          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-4 sm:grid-cols-2">

@@ -40,6 +40,7 @@ import { dataNaTela } from "@/lib/data-na-tela";
 import { DIA_MAXIMO, DIA_MINIMO } from "@/lib/fechamento-por-periodo";
 import { toast } from "sonner";
 
+import { Dica } from "@/components/ui/dica";
 interface PosicaoNoPeriodo {
   user_id: string;
   percentual: number;
@@ -188,7 +189,14 @@ export function FechamentoDoPeriodo({
     <div className="space-y-5">
       {/* 1. O dia */}
       <div className="space-y-2">
-        <Label htmlFor="dia-de-fechamento">Dia de fechamento</Label>
+        <div className="flex items-center gap-1">
+          <Label htmlFor="dia-de-fechamento">Dia de fechamento</Label>
+          <Dica rotulo="Como o fechamento funciona">
+            No dia do fechamento, o saldo de cada um no período vira uma conta: Pagamento
+            ao grupo para quem pagou menos que a parte dele, A receber do grupo para quem
+            pagou mais. Vai de 1 a 28 porque todo mês tem dia 28.
+          </Dica>
+        </div>
         {ehAdmin ? (
           <div className="flex flex-wrap items-center gap-2">
             <Select value={dia} onValueChange={setDia}>
@@ -213,11 +221,6 @@ export function FechamentoDoPeriodo({
             {dados.closing_day ? `Todo dia ${dados.closing_day}` : "O grupo não fecha por período"}
           </p>
         )}
-        <p className="text-xs text-muted-foreground">
-          No dia do fechamento, o saldo de cada um no período vira uma conta: Pagamento
-          ao grupo para quem pagou menos que a parte dele, A receber do grupo para quem
-          pagou mais. Vai de 1 a 28 porque todo mês tem dia 28.
-        </p>
       </div>
 
       {/* 2. A previa do periodo aberto */}
@@ -247,11 +250,13 @@ export function FechamentoDoPeriodo({
       {/* 3. O que esta em aberto, e quem paga quem */}
       {(dados.em_aberto ?? []).length > 0 && (
         <div className="space-y-2">
-          <h4 className="text-sm font-semibold">Em aberto</h4>
-          <p className="text-xs text-muted-foreground">
-            O que os fechamentos geraram e ainda não foi acertado. O acerto quita a conta
-            de quem paga e a de quem recebe ao mesmo tempo.
-          </p>
+          <h4 className="flex items-center gap-1.5 text-sm font-semibold">
+            Em aberto
+            <Dica rotulo="Sobre o que está em aberto">
+              O que os fechamentos geraram e ainda não foi acertado. O acerto quita a conta
+              de quem paga e a de quem recebe ao mesmo tempo.
+            </Dica>
+          </h4>
           <div className="space-y-1">
             {dados.em_aberto.map((m) => (
               <div key={m.user_id} className="flex items-center justify-between gap-3 text-sm">

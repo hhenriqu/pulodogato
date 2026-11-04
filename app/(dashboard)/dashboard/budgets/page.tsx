@@ -61,6 +61,7 @@ import {
   LinhaDeTeto,
 } from "@/components/financial/CartaoOrcamentoGrupo";
 
+import { Dica } from "@/components/ui/dica";
 const moeda = (valor: number) =>
   new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(valor);
 
@@ -493,7 +494,15 @@ export default function BudgetsPage() {
                     membro -- e por isso o texto de apoio abaixo. */}
                 {grupos.length > 0 && (
                   <div className="space-y-2">
-                    <Label>De quem é este teto</Label>
+                    <div className="flex items-center gap-1">
+                      <Label>De quem é este teto</Label>
+                      {formOrcamento.group_id && (
+                        <Dica rotulo="Sobre o teto do grupo">
+                          Vale para o grupo inteiro: o consumo soma o gasto de
+                          todos os membros, e o teto é um só por categoria.
+                        </Dica>
+                      )}
+                    </div>
                     <Select
                       value={formOrcamento.group_id || SEM_GRUPO}
                       onValueChange={(v) =>
@@ -515,12 +524,6 @@ export default function BudgetsPage() {
                         ))}
                       </SelectContent>
                     </Select>
-                    {formOrcamento.group_id && (
-                      <p className="text-xs text-muted-foreground">
-                        Vale para o grupo inteiro: o consumo soma o gasto de
-                        todos os membros, e o teto é um só por categoria.
-                      </p>
-                    )}
                   </div>
                 )}
 
@@ -714,13 +717,15 @@ export default function BudgetsPage() {
               </DialogTrigger>
               <DialogContent>
                 <DialogHeader>
-                  <DialogTitle>Fechamento e vencimento</DialogTitle>
+                  <DialogTitle className="flex items-center gap-1.5">
+                    Fechamento e vencimento
+                    <Dica rotulo="Sobre fechamento e vencimento">
+                      Compra feita depois do fechamento entra na fatura do mês
+                      seguinte. Sem esses dois dias a fatura não pode ser fechada.
+                    </Dica>
+                  </DialogTitle>
                 </DialogHeader>
                 <div className="space-y-4">
-                  <p className="text-sm text-muted-foreground">
-                    Compra feita depois do fechamento entra na fatura do mês
-                    seguinte. Sem esses dois dias a fatura não pode ser fechada.
-                  </p>
 
                   <div className="space-y-2">
                     <Label>Cartão</Label>
