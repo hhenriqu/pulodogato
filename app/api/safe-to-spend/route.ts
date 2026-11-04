@@ -73,6 +73,7 @@
 import { createClient } from "@/utils/supabase/server";
 import { NextResponse } from "next/server";
 import { today } from "@/lib/recurrence";
+import { calcularSaldoEmConta, type LancamentoDoSaldo } from "@/lib/saldo-em-conta";
 import { materializarAgenda } from "@/lib/services/scheduled";
 import {
   montarParticipantesPorGrupo,
@@ -84,6 +85,7 @@ import { contasQueSomam } from "@/lib/contas";
 import { lerDividaDoMyBank } from "@/lib/services/divida-do-mybank";
 import {
   calcularQuantoPossoGastar,
+  entraNoDisponivel,
   fimDoMes,
   type FaturaParaGastar,
   type PrevistaParaGastar,
@@ -572,8 +574,55 @@ export async function GET() {
       })
     );
 
+    // O SALDO DO COMECO DO MES (armadilha 11 de lib/safe-to-spend.ts): o que
+    // sobrou dos meses anteriores sai do numero e aparece ao lado dele. A conta
+    // e a do tile «Saldo em conta» (`calcularSaldoEmConta`), sobre as MESMAS
+    // contas do `disponivel` (`entraNoDisponivel`).
+    //
+    // FALHAR AQUI NAO DERRUBA A TELA: segue com guardado zero, que e o numero
+    // de antes desta correcao (maior que o real), e avisa a tela pelo
+    // `guardado_indisponivel` para ela nao afirmar que nao ha nada guardado.
+    const contasDoDisponivel = (contas ?? []).filter(entraNoDisponivel);
+    const idsDoDisponivel = contasDoDisponivel.map((c) => c.id);
+    let lancamentosDoMes: LancamentoDoSaldo[] = [];
+    let semGuardado = false;
+    const PAGINA = 1000;
+    for (let inicio = 0; idsDoDisponivel.length > 0; inicio += PAGINA) {
+      const { data, error } = await supabase
+        .from("financial_transactions")
+        .select("id, account_id, amount, transaction_date, counterpart_transaction_id")
+        .eq("user_id", user.id)
+        .in("account_id", idsDoDisponivel)
+        .gte("transaction_date", inicioDoMes)
+        .order("id")
+        .range(inicio, inicio + PAGINA - 1);
+
+      if (error) {
+        console.error(
+          "Posso gastar seguiu SEM tirar o saldo dos meses anteriores:",
+          error
+        );
+        semGuardado = true;
+        lancamentosDoMes = [];
+        break;
+      }
+      lancamentosDoMes = lancamentosDoMes.concat((data ?? []) as LancamentoDoSaldo[]);
+      if (!data || data.length < PAGINA) break;
+    }
+
+    const saldoNoComecoDoMes = semGuardado
+      ? 0
+      : calcularSaldoEmConta({
+          contas: contasDoDisponivel,
+          lancamentos: lancamentosDoMes,
+          de: inicioDoMes,
+          ate,
+          hoje,
+        }).saldo_inicial;
+
     return NextResponse.json({
       today: hoje,
+      guardado_indisponivel: semGuardado,
       // A tela usa isto para escrever "indisponivel" no tile em vez de
       // "R$ 0,00" -- zero seria uma afirmacao sobre o dinheiro do usuario que
       // a rota nao tem como sustentar.
@@ -593,6 +642,7 @@ export async function GET() {
         previstas: paraCalculo,
         metas,
         faturas: Array.from(porFatura.values()),
+        saldoNoComecoDoMes,
         hoje,
       }),
     });

@@ -175,6 +175,14 @@ interface PossoGastar {
   ate: string;
   diasRestantes: number;
   disponivel: number;
+  /**
+   * O que sobrou dos meses anteriores (armadilha 11 de lib/safe-to-spend.ts).
+   * Sai do `livre`: sem isso o cartao mostrava "saldo do comeco + Resultado do
+   * mes", o dobro do Resultado para quem comecou o mes com valor parecido.
+   */
+  guardado: number;
+  /** Receita pendente de mes passado: fora do `livre` (armadilha 12). */
+  receitasDeMesesAnteriores: number;
   receitasPrevistas: number;
   compromissos: number;
   compromissosVencidos: number;
@@ -360,6 +368,7 @@ function PainelCompleto() {
   // escreve "indisponivel" em vez de R$ 0,00: zero seria uma afirmacao sobre o
   // dinheiro do usuario que ninguem conferiu.
   const [reservaIndisponivel, setReservaIndisponivel] = useState(false);
+  const [guardadoIndisponivel, setGuardadoIndisponivel] = useState(false);
   // A rota nao conseguiu ler as faturas, e portanto voltou a descontar a divida
   // INTEIRA dos cartoes (HMO-290). O numero fica conservador, mas `dividaDiferida`
   // vem 0 -- e "R$ 0,00 em parcelas futuras" ao lado de um desconto que
@@ -524,6 +533,7 @@ function PainelCompleto() {
         const d = await rPossoGastar.json();
         setPossoGastar(d.safe_to_spend ?? null);
         setReservaIndisponivel(Boolean(d.reserva_indisponivel));
+        setGuardadoIndisponivel(Boolean(d.guardado_indisponivel));
         setDiferidoIndisponivel(Boolean(d.diferido_indisponivel));
         setDirecaoIndisponivel(Boolean(d.direcao_indisponivel));
       } else if (!periodoTemHoje) {
@@ -1051,12 +1061,35 @@ function PainelCompleto() {
             </Link>
           </p>
 
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
             <div className="rounded-lg bg-muted p-3">
               <p className="text-xs text-muted-foreground">Em conta</p>
               <p className="font-semibold">{moeda(possoGastar.disponivel)}</p>
               <p className="text-xs text-muted-foreground mt-1">
                 Sem investimentos
+              </p>
+            </div>
+            {/* O QUE SOBROU DOS MESES ANTERIORES (armadilha 11). Fica ao lado do
+                  «Em conta» porque e a parte dele que nao e verba deste mes, e
+                  aparece SEMPRE, zerado inclusive, pela mesma razao do tile das
+                  metas: a soma dos tiles tem de fechar com o total. "—" quando
+                  a leitura falhou: ali nada foi tirado, e "R$ 0,00" diria que
+                  nao ha nada guardado. */}
+            <div className="rounded-lg bg-muted p-3">
+              <p className="text-xs text-muted-foreground">Guardado</p>
+              <p
+                className={`font-semibold ${
+                  guardadoIndisponivel ? "text-muted-foreground" : ""
+                }`}
+              >
+                {guardadoIndisponivel
+                  ? "—"
+                  : `− ${moeda(possoGastar.guardado)}`}
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">
+                {guardadoIndisponivel
+                  ? "Não foi possível separar"
+                  : "Sobrou dos meses anteriores"}
               </p>
             </div>
             {/* OS DOIS TILES DA DIRECAO (HMO-308). Sem `direction` a rota conta
@@ -1082,7 +1115,9 @@ function PainelCompleto() {
               <p className="text-xs text-muted-foreground mt-1">
                 {direcaoIndisponivel
                   ? "Não foi possível separar o que entra"
-                  : "Receitas previstas"}
+                  : possoGastar.receitasDeMesesAnteriores > 0
+                    ? `Receitas do mês · ${moeda(possoGastar.receitasDeMesesAnteriores)} de meses anteriores sem baixa, fora da conta`
+                    : "Receitas do mês"}
               </p>
             </div>
             <div className="rounded-lg bg-muted p-3">

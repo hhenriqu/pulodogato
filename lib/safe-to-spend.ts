@@ -15,7 +15,7 @@
 // A conta, e por que ela e delicada
 // -----------------------------------------------------------------------
 //
-//   livre = disponivel + receitas previstas
+//   livre = disponivel - guardado de meses anteriores + receitas previstas
 //           - compromissos do mes - divida de cartao - reserva de metas
 //
 // Cada termo tem uma armadilha, e cada armadilha tem teste proprio:
@@ -140,6 +140,39 @@
 //      vencida. Piso de 1 mes, igual ao `GREATEST(d.months_left, 1)` da view
 //      goal_progress: sem ele a divisao produz Infinity (ou um valor negativo),
 //      e Infinity subtraido do `livre` imprime "-R$ Infinity" na tela.
+//
+//  11. O SALDO DOS MESES ANTERIORES CONTADO COMO VERBA DO MES (04/11/2026).
+//      O `disponivel` e o saldo de HOJE, e o saldo de hoje e o saldo do comeco
+//      do mes mais o que ja entrou e saiu neste mes. Sem tirar o comeco, o
+//      numero ficava em "saldo do comeco + Resultado previsto do mes": quem
+//      comecou o mes com um valor parecido com o Resultado via o DOBRO do
+//      Resultado no cartao, e o app oferecia a poupanca como dinheiro do mes.
+//      A pergunta e quanto ESTE MES ainda deixa gastar, entao o que sobrou dos
+//      meses anteriores sai do `livre` e aparece ao lado dele, como guardado:
+//
+//        guardado = max(0, saldo das mesmas contas no fim do mes anterior)
+//
+//      O PISO E ZERO DE PROPOSITO. Comecar o mes no vermelho nao e dinheiro
+//      guardado: o buraco continua dentro do `disponivel` e continua puxando o
+//      numero para baixo, que e o que ele e -- divida que este mes tem de
+//      cobrir. Subtrair um comeco negativo SOMARIA dinheiro ao `livre`.
+//
+//      O saldo do comeco sai de `calcularSaldoEmConta` (lib/saldo-em-conta.ts),
+//      o mesmo do tile «Saldo em conta», sobre as MESMAS contas do
+//      `disponivel`: com contas diferentes a subtracao misturaria saldos.
+//
+//  12. RECEITA PREVISTA DE MES QUE JA PASSOU (04/11/2026). A rota le a agenda
+//      pendente SEM piso de data, de proposito, por causa da armadilha 5. Mas o
+//      que vale para a conta a pagar nao vale para a receita: o salario de
+//      outubro que caiu na conta e nao recebeu baixa na agenda continua
+//      `pending`, e somava DE NOVO em novembro -- o dinheiro dele ja esta no
+//      saldo. Em producao isso pos R$ 44 mil em «A receber» num mes cujas
+//      Receitas previstas eram R$ 27 mil. O «A receber» do painel e da agenda
+//      (`/api/scheduled-transactions/summary`) so le o mes, e aqui passa a ser
+//      igual: a receita que venceu antes do comeco do mes fica fora do `livre`
+//      e sai na resposta em `receitasDeMesesAnteriores`, para a tela dizer que
+//      ha baixa a dar. A receita deste mes ainda nao recebida continua entrando:
+//      e o mesmo mes, e a tela de Receitas tambem a conta.
 //
 // O que esta conta NAO sabe: fatura paga por fora do app continua `pending` na
 // agenda (o saldo do cartao, sim, se corrige -- e e nele que a armadilha 10 se
@@ -296,8 +329,18 @@ export interface QuantoPossoGastar {
   diasRestantes: number;
   /** Saldo somado das contas liquidas e ativas. */
   disponivel: number;
-  /** Receitas previstas pendentes com vencimento ate o fim do mes. */
+  /**
+   * O que sobrou dos meses anteriores nessas contas (armadilha 11): o saldo
+   * delas no fim do mes anterior, com piso zero. Sai do `livre`.
+   */
+  guardado: number;
+  /** Receitas previstas pendentes com vencimento NESTE mes (armadilha 12). */
   receitasPrevistas: number;
+  /**
+   * Receitas pendentes que venceram antes do comeco do mes. NAO entram no
+   * `livre` (armadilha 12): quase sempre ja cairam na conta sem baixa.
+   */
+  receitasDeMesesAnteriores: number;
   /** Despesas previstas pendentes ate o fim do mes, SEM as faturas. */
   compromissos: number;
   /** Parte de `compromissos` que ja venceu e nao foi paga. */
@@ -341,8 +384,29 @@ export interface EntradaDoCalculo {
    * porque o numero menor tambem e plausivel.
    */
   faturas: FaturaParaGastar[];
+  /**
+   * Saldo das contas do `disponivel` no fim do mes anterior (armadilha 11).
+   * OBRIGATORIO pela mesma razao de `metas`: opcional, uma rota que o
+   * esquecesse voltaria a oferecer a poupanca como verba do mes, sem erro de
+   * compilacao. Quem nao conseguiu ler passa 0 e avisa a tela.
+   */
+  saldoNoComecoDoMes: number;
   /** 'YYYY-MM-DD'. Injetado para o teste nao depender do calendario. */
   hoje: string;
+}
+
+/**
+ * As contas que formam o `disponivel`. Exportada porque a rota precisa do
+ * saldo do comeco do mes destas MESMAS contas (armadilha 11): uma segunda
+ * copia do filtro la divergiria na primeira mudanca daqui.
+ */
+export function entraNoDisponivel(
+  conta: Pick<ContaParaGastar, "account_type" | "is_active">
+): boolean {
+  // Investimento fica fora: nao e dinheiro disponivel (armadilha 3).
+  if (classificarConta(String(conta.account_type)) !== "liquido") return false;
+  // Arquivada fica fora: nao e de onde se gasta (armadilha 4).
+  return conta.is_active !== false;
 }
 
 /** Le o valor tolerando o texto que o PostgREST devolve para `numeric`. */
@@ -565,11 +629,7 @@ export function calcularQuantoPossoGastar(
       continue;
     }
 
-    // Investimento fica fora: nao e dinheiro disponivel (armadilha 3).
-    if (classe !== "liquido") continue;
-
-    // Arquivada fica fora: nao e de onde se gasta (armadilha 4).
-    if (conta.is_active === false) continue;
+    if (!entraNoDisponivel(conta)) continue;
 
     disponivel += saldo;
   }
@@ -577,7 +637,9 @@ export function calcularQuantoPossoGastar(
   const dividaDeCartao = cartoes.reduce((s, c) => s + c.divida, 0);
   const dividaDiferida = cartoes.reduce((s, c) => s + c.diferida, 0);
 
+  const inicioDoMes = `${hoje.slice(0, 7)}-01`;
   let receitasPrevistas = 0;
+  let receitasDeMesesAnteriores = 0;
   let compromissos = 0;
   let compromissosVencidos = 0;
 
@@ -590,6 +652,11 @@ export function calcularQuantoPossoGastar(
     const valor = Math.abs(numero(p.amount));
 
     if (p.tipo === "income") {
+      // Armadilha 12: receita de mes passado ainda pendente nao e verba deste.
+      if (p.due_date < inicioDoMes) {
+        receitasDeMesesAnteriores += valor;
+        continue;
+      }
       receitasPrevistas += valor;
       continue;
     }
@@ -605,8 +672,12 @@ export function calcularQuantoPossoGastar(
 
   const reservaDeMetas = metas.reduce((s, m) => s + m.reserva, 0);
 
+  // Armadilha 11. `numero` tolera o `undefined` do JS emitido nos testes.
+  const guardado = Math.max(0, numero(entrada.saldoNoComecoDoMes));
+
   const livre =
-    disponivel +
+    disponivel -
+    guardado +
     receitasPrevistas -
     compromissos -
     dividaDeCartao -
@@ -618,7 +689,9 @@ export function calcularQuantoPossoGastar(
     ate,
     diasRestantes,
     disponivel,
+    guardado,
     receitasPrevistas,
+    receitasDeMesesAnteriores,
     compromissos,
     compromissosVencidos,
     dividaDeCartao,
