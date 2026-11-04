@@ -466,14 +466,12 @@ nas contas que o fechamento gerou.
   investimento e o principal do MyBank não entram em nenhum dos dois totais
   (RN003.3, RN021.2).
 - RN016.6 Conta marcada fora dos totais (058) aparece na lista e não soma.
-- RN016.7 O **Quanto ainda posso gastar** conta só o dinheiro do mês: o saldo
-  das contas de dinheiro hoje, menos o que sobrou dos meses anteriores (o
-  saldo no fim do mês anterior, com piso zero, mostrado como «Guardado»), mais
-  as receitas previstas do mês, menos as contas a pagar (as vencidas de
-  qualquer mês inclusive), a fatura do cartão do mês e a reserva das metas.
-  Receita prevista de mês anterior ainda em aberto fica fora da conta e
-  aparece só como aviso de baixa pendente (`lib/safe-to-spend.ts`, armadilhas
-  11 e 12).
+- RN016.7 O **Quanto ainda posso gastar** é a sobra do período da tela:
+  **Receitas − Despesas − o que falta aportar nas metas**, dividida pelos dias
+  que faltam até o fim do período, contando hoje. Receitas e Despesas são os
+  totais (realizado + previsão) dos tiles do painel, sem uma conta própria do
+  cartão. Ele só aparece em período que inclui hoje
+  (`sobraDoMes`, `lib/realizado-e-previsao.ts`).
 
 ### RN017 — O que é Despesa e o que é Receita ✅ — fases 4 a 6
 
