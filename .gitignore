@@ -120,6 +120,7 @@ next-env.d.ts
 
 # saida do `npm run test:dashboard-layout`
 /.tmp-dashboard-layout/
+/.tmp-mapa-de-calor/
 
 # saida do `npm run test:previsto-x-realizado`
 /.tmp-previsto-x-realizado/

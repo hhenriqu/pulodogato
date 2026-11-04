@@ -118,7 +118,7 @@
 //   `ModoPapelProvider`  -- `{papel:false, mounted:true}`: o portao dos dois
 //     paineis le `localStorage`, que `file://` nega. O ramo medido e o do
 //     painel completo;
-//   `PainelDePapel`, `SeletorDePeriodo`, `PrevistoXRealizado`,
+//   `PainelDePapel`, `SeletorDePeriodo`, `PrevistoXRealizado`, `MapaDeCalor`,
 //   `NumeroIndisponivel`, `ui/progress` -- nenhuma assercao daqui os le, e o
 //     seletor arrasta o Radix e a mascara de digitacao;
 //   `cn`, `cva`, `Slot`  -- a fiacao de classe dos componentes de ui.
@@ -533,6 +533,13 @@ MODULOS["@/components/dashboard/SeletorDePeriodo"] = {
 };
 MODULOS["@/components/dashboard/PrevistoXRealizado"] = {
   PrevistoXRealizado: esboco("PREVISTO-X-REALIZADO"),
+};
+// O mapa de calor busca os proprios dados em /api/dashboard/mapa-de-calor, e
+// nenhuma assercao daqui le o que ele desenha. Esbocado, a rota dele nao entra
+// na rede da sonda -- e a lista de rotas nao modeladas continua conferindo as
+// oito do painel.
+MODULOS["@/components/dashboard/MapaDeCalor"] = {
+  MapaDeCalor: esboco("MAPA-DE-CALOR"),
 };
 MODULOS["@/components/SemRede"] = {
   NumeroIndisponivel: esboco("NUMERO-INDISPONIVEL"),
@@ -992,13 +999,15 @@ for (const [chave, nome, , temCartao] of CASOS) {
     // importar e que a sonda esbocou calada -- e que pode estar justamente no
     // caminho do que as outras assercoes leem.
     //
-    // SAO DOIS, e nao os quatro declarados em MODULOS: `Progress` so desenha
+    // SAO TRES (o mapa de calor desenha em todo periodo), e nao os cinco
+    // declarados em MODULOS: `Progress` so desenha
     // dentro de uma meta (a rota devolve lista vazia) e `NumeroIndisponivel` so
     // quando uma rota falha em ler. (Eram cinco ate a HMO-470: o quinto era o
     // `PainelDePapel`, o outro ramo do portao, apagado com o painel.)
     // Esboco declarado e esboco RENDERIZADO sao coisas diferentes, e e o
     // segundo que pode encostar numa assercao.
     assert.deepEqual(resultado[chave].esbocos, [
+      "[ESBOCO-MAPA-DE-CALOR]",
       "[ESBOCO-PREVISTO-X-REALIZADO]",
       "[ESBOCO-SELETOR-DE-PERIODO]",
     ]);
