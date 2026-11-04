@@ -541,6 +541,16 @@ function GastoDoDiaADia({
         <CardDescription className="flex items-center gap-1">
           <ShoppingCart className="h-3 w-3" />
           Gasto do dia a dia
+          {!ajustado && gasto && gasto.chavesDescartadas > 0 && (
+            <Dica rotulo="O que ficou fora da média">
+              {formatarBRL(gasto.totalComprometidoDescartado)} em{" "}
+              {gasto.chavesDescartadas === 1
+                ? "1 cobrança recorrente ficou"
+                : `${gasto.chavesDescartadas} cobranças recorrentes ficaram`}{" "}
+              de fora desta média, porque {gasto.chavesDescartadas === 1 ? "ela já entra" : "elas já entram"}{" "}
+              na previsão com data própria.
+            </Dica>
+          )}
         </CardDescription>
         <CardTitle className="text-xl text-foreground">
           {semBase ? "Ainda não dá para calcular" : `${formatarBRL(fluxo.gastoDiario)} por dia`}
@@ -593,16 +603,6 @@ function GastoDoDiaADia({
 
         {/* Sem isto o usuario soma as despesas do extrato, acha mais do que a
             tela mostra, e conclui que falta dinheiro na conta. */}
-        {!ajustado && gasto && gasto.chavesDescartadas > 0 && (
-          <p className="text-xs text-muted-foreground">
-            {formatarBRL(gasto.totalComprometidoDescartado)} em{" "}
-            {gasto.chavesDescartadas === 1
-              ? "1 cobrança recorrente ficou"
-              : `${gasto.chavesDescartadas} cobranças recorrentes ficaram`}{" "}
-            de fora desta média, porque {gasto.chavesDescartadas === 1 ? "ela já entra" : "elas já entram"}{" "}
-            na previsão com data própria.
-          </p>
-        )}
 
         {/* A abertura. Fica ACIMA do campo de total de proposito: a pergunta
             "de onde vem?" tem que ser respondida antes de a tela oferecer o
@@ -638,10 +638,10 @@ function GastoDoDiaADia({
               Voltar ao calculado
             </Button>
           )}
+          <Dica rotulo="Onde o ajuste fica guardado">
+            O ajuste vale só neste navegador e não altera nenhum lançamento.
+          </Dica>
         </div>
-        <p className="text-xs text-muted-foreground">
-          O ajuste vale só neste navegador e não altera nenhum lançamento.
-        </p>
       </CardContent>
     </Card>
   );

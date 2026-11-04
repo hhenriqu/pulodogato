@@ -382,11 +382,13 @@ const MUTANTES = [
     // periodo)` casa TRES vezes neste arquivo (o tile, esta legenda e o cartao
     // «posso gastar»), e o runner exige 1x -- ancora ambigua muta o lugar
     // errado e o rotulo mente sobre o que foi medido.
+    // A legenda mora na dica desde que os textos explicativos viraram icone
+    // de informacao; o link continua visivel, logo depois do `</Dica>`.
     de:
-      '          {LEGENDA_DO_CUSTO_REALIZADO}{" "}\n          <Link\n' +
+      '            {LEGENDA_DO_CUSTO_REALIZADO}{" "}\n          </Dica>\n          <Link\n' +
       "            href={rotaDaTelaDoLado(\"despesa\", periodo) as Route}",
     para:
-      '          {LEGENDA_DO_CUSTO_REALIZADO}{" "}\n          <Link\n' +
+      '            {LEGENDA_DO_CUSTO_REALIZADO}{" "}\n          </Dica>\n          <Link\n' +
       '            href={"/dashboard/despesas" as Route}',
     caso: "o par do REALIZADO tambem leva legenda dos dois lados",
   },

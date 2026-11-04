@@ -123,6 +123,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 
+import { Dica } from "@/components/ui/dica";
 interface TransactionCategory {
   id: string;
   service_id: string;
@@ -1437,37 +1438,40 @@ function Lancamentos() {
             aquilo. Um recorte que muda de lugar sem deixar rastro se lê como
             feature removida.
           */}
-          <p className="text-muted-foreground">
-            Seus lançamentos e o resumo de{" "}
-            <span className="font-medium text-foreground">
-              {rotuloDoPeriodo(periodo)}
+          <p className="flex flex-wrap items-center gap-x-1.5 text-muted-foreground">
+            <span>
+              Seus lançamentos e o resumo de{" "}
+              <span className="font-medium text-foreground">
+                {rotuloDoPeriodo(periodo)}
+              </span>
+              .
             </span>
-            . Todos os tipos, numa lista só — receita, despesa e transferência
-            se lançam em telas próprias.
-          </p>
-          <p className="text-sm text-muted-foreground">
-            O total de um tipo só, com o previsto dentro, está em{" "}
-            <Link
-              href="/dashboard/receitas"
-              className="underline hover:text-foreground"
-            >
-              Receitas
-            </Link>
-            ,{" "}
-            <Link
-              href="/dashboard/despesas"
-              className="underline hover:text-foreground"
-            >
-              Despesas
-            </Link>{" "}
-            e{" "}
-            <Link
-              href="/dashboard/transferencias"
-              className="underline hover:text-foreground"
-            >
-              Transferências
-            </Link>
-            .
+            <Dica rotulo="Sobre esta lista" interativa>
+              Todos os tipos, numa lista só — receita, despesa e transferência
+              se lançam em telas próprias. O total de um tipo só, com o previsto
+              dentro, está em{" "}
+              <Link
+                href="/dashboard/receitas"
+                className="underline hover:text-foreground"
+              >
+                Receitas
+              </Link>
+              ,{" "}
+              <Link
+                href="/dashboard/despesas"
+                className="underline hover:text-foreground"
+              >
+                Despesas
+              </Link>{" "}
+              e{" "}
+              <Link
+                href="/dashboard/transferencias"
+                className="underline hover:text-foreground"
+              >
+                Transferências
+              </Link>
+              .
+            </Dica>
           </p>
           {/*
             Sem esta linha, a tela offline mostra as categorias do aparelho e
@@ -1623,7 +1627,14 @@ function Lancamentos() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Despesas</CardTitle>
+            <CardTitle className="flex items-center gap-1.5 text-sm font-medium">
+              Despesas
+              {temCartaoNoPeriodo && (
+                <Dica rotulo="Como o cartão entra aqui">
+                  Compras no cartão entram pela fatura paga, no mês do vencimento.
+                </Dica>
+              )}
+            </CardTitle>
             <TrendingDown className="h-4 w-4 text-destructive" />
           </CardHeader>
           <CardContent>
@@ -1658,11 +1669,6 @@ function Lancamentos() {
             {/* O cartao conta pela fatura (fase 6): a compra de ontem esta na
                 lista e nao neste total. Sem a frase, a soma da lista nao bate
                 e o numero se le como erro. So quando ha cartao no periodo. */}
-            {temCartaoNoPeriodo && (
-              <p className="text-xs text-muted-foreground">
-                compras no cartão entram pela fatura paga, no mês do vencimento
-              </p>
-            )}
             {notaDasPartes && (
               <p className="text-xs text-muted-foreground">
                 inclui {formatCurrency(notaDasPartes.total)} de{" "}
@@ -1762,13 +1768,24 @@ function Lancamentos() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <div className="space-y-1">
-              <CardTitle className="text-sm font-medium">
+              <CardTitle className="flex items-center gap-1.5 text-sm font-medium">
                 A receber dos grupos
+                <Dica rotulo="Sobre o a receber dos grupos">
+                  <span className="block">
+                    Previsto: o que cabe a cada um nas despesas do período e
+                    ainda não foi quitado.
+                  </span>
+                  <span className="mt-2 block">
+                    Deste período. A tela do grupo mostra o acumulado de todos os
+                    meses, só do que já foi pago — os dois números não precisam
+                    bater.
+                  </span>
+                  <span className="mt-2 block">
+                    Entra em Receitas quando a quitação for registrada, na tela do
+                    grupo.
+                  </span>
+                </Dica>
               </CardTitle>
-              <CardDescription>
-                Previsto: o que cabe a cada um nas despesas do período e ainda
-                não foi quitado
-              </CardDescription>
             </div>
             <HandCoins className="h-4 w-4 shrink-0" />
           </CardHeader>
@@ -1816,11 +1833,6 @@ function Lancamentos() {
                 cada um. A frase e curta de proposito: ela existe para o numero
                 desta tela nao ser lido como contradicao do outro.
               */}
-              <p className="text-xs text-muted-foreground">
-                Deste período. A tela do grupo mostra o acumulado de todos os
-                meses, só do que já foi pago — os dois números não precisam
-                bater.
-              </p>
             </div>
 
             {/* `grid-cols-1` explícito: sem ele o trilho automático usa o
@@ -1865,11 +1877,6 @@ function Lancamentos() {
                 );
               })}
             </div>
-
-            <p className="text-xs text-muted-foreground">
-              Entra em Receitas quando a quitação for registrada, na tela do
-              grupo.
-            </p>
           </CardContent>
         </Card>
       )}

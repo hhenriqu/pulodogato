@@ -52,6 +52,7 @@ import type {
   TelaDeMovimentacao as TelaDoCatalogo,
 } from "@/lib/telas-de-movimentacao";
 
+import { Dica } from "@/components/ui/dica";
 const moeda = (valor: number) =>
   new Intl.NumberFormat("pt-BR", {
     style: "currency",
@@ -123,7 +124,14 @@ export function CartoesDaTela({
 
       <Card>
         <CardHeader className="pb-2">
-          <CardDescription>Previsto</CardDescription>
+          <CardDescription className="flex items-center gap-1">
+            Previsto
+            {/* A pergunta que este numero responde (HMO-364, F5): ver o
+                comentario mais abaixo, onde a legenda morava. */}
+            {tela.tipo === "expense" && (
+              <Dica rotulo="O que este número responde">{LEGENDA_DO_BRUTO}</Dica>
+            )}
+          </CardDescription>
           <CardTitle className="text-2xl">{numero(resumo?.previsto)}</CardTitle>
           <p className="text-xs text-muted-foreground">{tela.oQueOPrevistoE}</p>
           {/*
@@ -219,7 +227,10 @@ export function CartoesDaTela({
               {resumo.a_receber_do_mybank.emprestimos === 1
                 ? "empréstimo"
                 : "empréstimos"}{" "}
-              do MyBank — {LEGENDA_DO_A_RECEBER_DO_MYBANK}
+              do MyBank
+              <Dica rotulo="Sobre o a receber do MyBank" className="ml-1">
+                Esse valor {LEGENDA_DO_A_RECEBER_DO_MYBANK}
+              </Dica>
             </p>
           )}
 
@@ -238,9 +249,6 @@ export function CartoesDaTela({
             outro lado: editar um e esquecer o outro produz duas legendas que se
             contradizem, que e pior do que nenhuma.
           */}
-          {tela.tipo === "expense" && (
-            <p className="text-xs text-muted-foreground">{LEGENDA_DO_BRUTO}</p>
-          )}
         </CardHeader>
       </Card>
 

@@ -48,6 +48,7 @@ import {
 import type { FinancialAccount, TransactionCategory } from "@/types/financial";
 import { today } from "@/lib/recurrence";
 
+import { Dica } from "@/components/ui/dica";
 const TIPOS_DESCONTO = [
   { valor: "INSS", rotulo: "INSS" },
   { valor: "IRRF", rotulo: "Imposto de Renda (IRRF)" },
@@ -488,7 +489,13 @@ export default function PayrollPage() {
 
             <div className="space-y-3">
               <div className="flex items-center justify-between">
-                <Label>Descontos em folha</Label>
+                <div className="flex items-center gap-1">
+                  <Label>Descontos em folha</Label>
+                  <Dica rotulo="Por que o FGTS não entra">
+                    O FGTS não entra aqui: ele é depositado pelo empregador e não
+                    reduz o seu bruto.
+                  </Dica>
+                </div>
                 <Button
                   type="button"
                   size="sm"
@@ -553,10 +560,6 @@ export default function PayrollPage() {
                 </div>
               ))}
 
-              <p className="text-xs text-muted-foreground">
-                O FGTS não entra aqui: ele é depositado pelo empregador e não
-                reduz o seu bruto.
-              </p>
             </div>
 
             {/* O resultado aparece antes de salvar. Um zero a mais no IRRF e um
@@ -586,7 +589,13 @@ export default function PayrollPage() {
 
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
-                <Label>Conta onde o líquido cai</Label>
+                <div className="flex items-center gap-1">
+                  <Label>Conta onde o líquido cai</Label>
+                  <Dica rotulo="O que acontece com o líquido">
+                    Com conta e categoria, o líquido vira um lançamento de receita.
+                    Sem eles, o contracheque fica guardado só como registro.
+                  </Dica>
+                </div>
                 <Select value={contaId} onValueChange={setContaId}>
                   <SelectTrigger>
                     <SelectValue placeholder="Opcional" />
@@ -618,11 +627,6 @@ export default function PayrollPage() {
                 </Select>
               </div>
             </div>
-
-            <p className="text-xs text-muted-foreground">
-              Com conta e categoria, o líquido vira um lançamento de receita.
-              Sem eles, o contracheque fica guardado só como registro.
-            </p>
 
             <div className="flex justify-end gap-2 pt-2">
               <Button

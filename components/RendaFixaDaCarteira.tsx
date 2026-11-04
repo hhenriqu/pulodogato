@@ -333,25 +333,26 @@ export function RendaFixaDaCarteira({ dados }: { dados: RendaFixaDaRota | null }
                   sobre os {formatCurrency(summary.principal)} aplicados
                 </span>
                 {summary.percentualDoCdi !== null && (
-                  <Badge variant="secondary">
-                    {formatPercentage(summary.percentualDoCdi)} do CDI
-                  </Badge>
+                  <span className="inline-flex items-center gap-1">
+                    <Badge variant="secondary">
+                      {formatPercentage(summary.percentualDoCdi)} do CDI
+                    </Badge>
+                    {/* Nao ha taxa ao ano consolidada: anualizar exige UMA
+                        janela, e a carteira tem uma por papel. A dica explica
+                        a ausencia, que de outro modo se le como numero que
+                        faltou carregar. */}
+                    <Dica rotulo="Como o % do CDI da carteira é calculado">
+                      O % do CDI da carteira é ponderado pelo dinheiro e pela janela de
+                      cada papel — é o que a carteira rendeu dividido pelo que 100% do
+                      CDI teria rendido sobre o mesmo dinheiro, no mesmo período.
+                      {summary.semRegua > 0 &&
+                        ` ${summary.semRegua} ${summary.semRegua === 1 ? "ativo entrou" : "ativos entraram"} no total mas ${summary.semRegua === 1 ? "ficou" : "ficaram"} fora dessa comparação.`}
+                    </Dica>
+                  </span>
                 )}
               </div>
             )}
 
-            {/* Nao ha taxa ao ano consolidada: anualizar exige UMA janela, e a
-                carteira tem uma por papel. A nota explica a ausencia, que de
-                outro modo se le como numero que faltou carregar. */}
-            {summary.percentualDoCdi !== null && (
-              <p className="text-xs text-muted-foreground">
-                O % do CDI da carteira é ponderado pelo dinheiro e pela janela de
-                cada papel — é o que a carteira rendeu dividido pelo que 100% do
-                CDI teria rendido sobre o mesmo dinheiro, no mesmo período.
-                {summary.semRegua > 0 &&
-                  ` ${summary.semRegua} ${summary.semRegua === 1 ? "ativo entrou" : "ativos entraram"} no total mas ${summary.semRegua === 1 ? "ficou" : "ficaram"} fora dessa comparação.`}
-              </p>
-            )}
           </div>
         )}
 

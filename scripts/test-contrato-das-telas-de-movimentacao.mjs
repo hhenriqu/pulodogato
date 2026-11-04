@@ -1973,10 +1973,12 @@ test("o par do REALIZADO tambem leva legenda dos dois lados (HMO-413)", () => {
   );
 
   const inicioDaVolta = componente.indexOf("{LEGENDA_DO_CAIXA_REALIZADO}");
-  const fimDaVolta = componente.indexOf("</p>", inicioDaVolta);
+  // A volta mora num bloco da Dica do rodape (um <span className="block">),
+  // nao mais num <p>: o recorte vai ate o fim desse bloco.
+  const fimDaVolta = componente.indexOf("</span>", inicioDaVolta);
   assert.ok(
     inicioDaVolta >= 0 && fimDaVolta > inicioDaVolta,
-    "a legenda da volta nao fecha o paragrafo na aba Despesas."
+    "a legenda da volta nao fecha o bloco na aba Despesas."
   );
   assert.ok(
     componente.slice(inicioDaVolta, fimDaVolta).includes("rotaDoPainel(periodo)"),

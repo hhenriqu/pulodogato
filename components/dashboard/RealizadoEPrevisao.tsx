@@ -42,6 +42,7 @@ import {
 } from "@/components/ui/card";
 import type { LadoDoPainel } from "@/lib/realizado-e-previsao";
 
+import { Dica } from "@/components/ui/dica";
 const moeda = (valor: number) =>
   new Intl.NumberFormat("pt-BR", {
     style: "currency",
@@ -180,8 +181,22 @@ export function LinhaDeGastoVariavel({
       <CardContent className="pt-4">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <p className="text-sm text-muted-foreground">
+            {/* A frase que impede a leitura errada mora na dica do rotulo. Sem
+                ela, alguem soma este numero ao Total esperado de cima e conclui
+                que o app se contradiz -- os dois numeros existem de proposito e
+                medem coisas diferentes. */}
+            <p className="flex items-center gap-1 text-sm text-muted-foreground">
               Gasto variável estimado
+              <Dica rotulo="O que entra no gasto variável">
+                Mercado, restaurante, posto: o que não tem conta pedindo.{" "}
+                <strong>Não está somado</strong> na previsão nem no total esperado
+                acima.{" "}
+                {temBase
+                  ? `A média sai de ${mesesBase} ${
+                      mesesBase === 1 ? "mês fechado" : "meses fechados"
+                    }.`
+                  : "Ainda não há meses fechados suficientes para uma média — o valor inicial é zero."}
+              </Dica>
             </p>
             <div className="text-xl font-bold">{moeda(total)}</div>
             <p className="text-xs text-muted-foreground mt-1">
@@ -217,20 +232,6 @@ export function LinhaDeGastoVariavel({
             )}
           </div>
         </div>
-
-        {/* A frase que impede a leitura errada. Sem ela, alguem soma este numero
-            ao Total esperado de cima e conclui que o app se contradiz -- os dois
-            numeros existem de proposito e medem coisas diferentes. */}
-        <p className="text-xs text-muted-foreground mt-3">
-          Mercado, restaurante, posto: o que não tem conta pedindo.{" "}
-          <strong>Não está somado</strong> na previsão nem no total esperado
-          acima.{" "}
-          {temBase
-            ? `A média sai de ${mesesBase} ${
-                mesesBase === 1 ? "mês fechado" : "meses fechados"
-              }.`
-            : "Ainda não há meses fechados suficientes para uma média — o valor inicial é zero."}
-        </p>
       </CardContent>
     </Card>
   );
