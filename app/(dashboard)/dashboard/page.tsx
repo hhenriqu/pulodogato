@@ -815,7 +815,8 @@ function PainelCompleto() {
               {tituloDoResultado}
               <Dica rotulo="Como o realizado é contado">
                 Receitas menos Despesas já realizadas no período.{" "}
-                {LEGENDA_DO_CARTAO.fatura} {LEGENDA_DO_CUSTO_REALIZADO}
+                {LEGENDA_DO_CARTAO.fatura}{" "}
+                {LEGENDA_DO_CUSTO_REALIZADO}{" "}
               </Dica>
             </CardDescription>
           </CardHeader>

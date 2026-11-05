@@ -383,13 +383,15 @@ const MUTANTES = [
     // «posso gastar»), e o runner exige 1x -- ancora ambigua muta o lugar
     // errado e o rotulo mente sobre o que foi medido.
     // A legenda mora na dica desde que os textos explicativos viraram icone
-    // de informacao; o link continua visivel, logo depois do `</Dica>`.
+    // de informacao. Desde 05/11/2026 a dica e o link moram no cartao
+    // «Resultado do mes» dos cartoes principais, e a ancora e o `href` com a
+    // classe do link do cartao (a classe e o que o torna unico).
     de:
-      '            {LEGENDA_DO_CUSTO_REALIZADO}{" "}\n          </Dica>\n          <Link\n' +
-      "            href={rotaDaTelaDoLado(\"despesa\", periodo) as Route}",
+      "                href={rotaDaTelaDoLado(\"despesa\", periodo) as Route}\n" +
+      '                className="text-xs text-muted-foreground underline hover:text-foreground"',
     para:
-      '            {LEGENDA_DO_CUSTO_REALIZADO}{" "}\n          </Dica>\n          <Link\n' +
-      '            href={"/dashboard/despesas" as Route}',
+      '                href={"/dashboard/despesas" as Route}\n' +
+      '                className="text-xs text-muted-foreground underline hover:text-foreground"',
     caso: "o par do REALIZADO tambem leva legenda dos dois lados",
   },
   {
