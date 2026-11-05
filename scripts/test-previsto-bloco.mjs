@@ -79,12 +79,17 @@ const texto = (html) =>
 // 1. A comparacao
 // ---------------------------------------------------------------------------
 
-test("as tres filas aparecem, com os rotulos da issue", () => {
+test("as duas filas aparecem, e o Resultado NAO (ele mora nos cartoes do topo)", () => {
   const t = texto(render({ previsto: PREVISTO, realizado: REALIZADO }));
 
-  for (const rotulo of ["Entradas", "Despesas", "Resultado"]) {
+  for (const rotulo of ["Entradas", "Despesas"]) {
     assert.ok(t.includes(rotulo), `falta a fila "${rotulo}"`);
   }
+  // 05/11/2026: o Resultado do mes saiu deste bloco e foi para os cartoes
+  // principais do painel. A fila voltar aqui o mostraria duas vezes na tela.
+  assert.ok(!t.includes("Resultado"), "a fila Resultado voltou ao bloco");
+  assert.ok(!t.includes("R$ 600,00"), "o resultado realizado voltou ao bloco");
+  assert.ok(!t.includes("R$ 2.000,00"), "o resultado previsto voltou ao bloco");
   // "o previsto de entradas e o previsto de despesas, e o resultado final
   // previsto": as tres colunas tem que estar nomeadas na tela.
   for (const coluna of ["Previsto", "Realizado", "Diferença"]) {
@@ -148,24 +153,17 @@ test("cada numero sai na coluna dele", () => {
     t.includes("Realizado R$ 4.200,00"),
     "despesas realizadas fora da coluna Realizado"
   );
-  assert.ok(
-    t.includes("Previsto R$ 2.000,00"),
-    "resultado previsto fora da coluna Previsto"
-  );
-  assert.ok(
-    t.includes("Realizado R$ 600,00"),
-    "resultado realizado fora da coluna Realizado"
-  );
 });
 
 test("a diferenca sai com sinal, e o sinal segue realizado - previsto", () => {
   const t = texto(render({ previsto: PREVISTO, realizado: REALIZADO }));
 
-  // Entrou R$ 200 menos que o previsto, saiu R$ 1.200 mais, e o resultado ficou
-  // R$ 1.400 abaixo. O "−" e o sinal tipografico (U+2212), nao hifen.
+  // Entrou R$ 200 menos que o previsto e saiu R$ 1.200 mais. O "−" e o sinal
+  // tipografico (U+2212), nao hifen. A diferenca de resultado (R$ 1.400) nao
+  // aparece mais: o Resultado mora nos cartoes do topo.
   assert.ok(t.includes("− R$ 200,00"), "falta a diferenca de entradas");
   assert.ok(t.includes("+ R$ 1.200,00"), "falta a diferenca de despesas");
-  assert.ok(t.includes("− R$ 1.400,00"), "falta a diferenca de resultado");
+  assert.ok(!t.includes("R$ 1.400,00"), "a diferenca de resultado voltou");
 });
 
 test("diferenca zero vira palavra, nao '+ R$ 0,00'", () => {
@@ -298,9 +296,11 @@ test("agenda vazia mostra o realizado e diz que nao ha com que comparar", () => 
     })
   );
 
-  // O numero do realizado aparece -- ele existe e e verdadeiro. O que nao
-  // aparece e uma diferenca contra zero.
-  assert.ok(t.includes("R$ 4.000,00"), "escondeu o realizado tambem");
+  // Os numeros do realizado aparecem -- eles existem e sao verdadeiros. O que
+  // nao aparece e uma diferenca contra zero, nem o Resultado (cartoes do topo).
+  assert.ok(t.includes("R$ 6.000,00"), "escondeu as entradas realizadas");
+  assert.ok(t.includes("R$ 2.000,00"), "escondeu as despesas realizadas");
+  assert.ok(!t.includes("R$ 4.000,00"), "o Resultado voltou ao bloco");
   assert.ok(t.includes("comparar"), "nao disse que falta a previsao");
 });
 

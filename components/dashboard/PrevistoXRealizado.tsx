@@ -3,8 +3,9 @@
 // -----------------------------------------------------------------------------
 // O BLOCO "PREVISTO x REALIZADO" DO PAINEL (HMO-186)
 // -----------------------------------------------------------------------------
-// Tres linhas -- entradas, despesas, resultado -- cada uma com o que o periodo
-// PREVIA e o que de fato ACONTECEU, mais a diferenca entre os dois.
+// Duas linhas -- entradas e despesas -- cada uma com o que o periodo PREVIA e
+// o que de fato ACONTECEU, mais a diferenca entre os dois. (O Resultado saiu
+// daqui em 05/11/2026 e foi para os cartoes principais do painel.)
 //
 // Componente burro, igual ao SeletorDePeriodo: a aritmetica toda (somar a
 // agenda, calcular a diferenca, escalar as barras, decidir em que linha "mais"
@@ -108,9 +109,15 @@ export function PrevistoXRealizado({
   rotulo,
   indisponivel = false,
 }: Props) {
-  const { linhas, semPrevisao } = compararPrevistoRealizado(
-    previsto,
-    realizado
+  const comparacao = compararPrevistoRealizado(previsto, realizado);
+  const { semPrevisao } = comparacao;
+  // A linha "Resultado" saiu deste bloco em 05/11/2026: o Resultado do mes
+  // mora nos cartoes principais do painel, logo acima, com o realizado e o
+  // esperado. Repeti-lo aqui seria o mesmo numero em dois lugares da tela. A
+  // lib continua devolvendo as tres linhas (ela tem suite propria); quem
+  // escolhe o que este bloco desenha e ele.
+  const linhas = comparacao.linhas.filter(
+    (linha) => linha.chave !== "resultado"
   );
 
   // A nota que impede a leitura errada mora na dica do titulo, e so quando ha
@@ -165,9 +172,11 @@ export function PrevistoXRealizado({
         <CardContent className="space-y-3">
           <p className="text-sm text-muted-foreground">
             Não havia nada previsto em {rotulo} — nenhuma conta ou receita na
-            agenda. O realizado do período foi{" "}
-            <span className="font-medium">{moeda(realizado.resultado)}</span>,
-            mas não há previsão para comparar com ele.
+            agenda. No período entraram{" "}
+            <span className="font-medium">{moeda(realizado.entradas)}</span> e
+            saíram{" "}
+            <span className="font-medium">{moeda(realizado.despesas)}</span>,
+            mas não há previsão para comparar com eles.
           </p>
           <Button variant="outline" size="sm" asChild>
             <Link href="/dashboard/recurrences">Cadastrar o que é fixo</Link>

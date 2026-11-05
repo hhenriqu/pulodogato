@@ -1959,11 +1959,16 @@ test("o par do REALIZADO tambem leva legenda dos dois lados (HMO-413)", () => {
   // E O RECORTE E A LEGENDA, nao o arquivo: a MESMA chamada aparece no tile e no
   // cartao «posso gastar», e um `includes` no painel todo ficaria verde com o
   // link daqui nu.
+  //
+  // Desde 05/11/2026 a legenda e o link moram no cartao «Resultado do mes» dos
+  // cartoes principais (a dica no cabecalho, o link no rodape do cartao), e o
+  // recorte vai ate o fim DESSE cartao -- o tile de Despesas e o «posso gastar»
+  // ficam fora dele.
   const inicio = painel.indexOf("{LEGENDA_DO_CUSTO_REALIZADO}");
-  const fim = painel.indexOf("</p>", inicio);
+  const fim = painel.indexOf("</Card>", inicio);
   assert.ok(
     inicio >= 0 && fim > inicio,
-    "a legenda do «Realizado» do painel nao fecha o paragrafo: o recorte abaixo " +
+    "a legenda do «Realizado» do painel nao fecha o cartao: o recorte abaixo " +
       "mediria o arquivo inteiro."
   );
   assert.ok(

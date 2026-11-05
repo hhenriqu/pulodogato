@@ -78,6 +78,7 @@ import {
   ArrowRight,
   Coins,
   Settings,
+  Scale,
 } from "lucide-react";
 import {
   agruparEmLinhas,
@@ -620,6 +621,17 @@ function PainelCompleto() {
   const janelaPrevisao = janelaDaPrevisao(periodo, hoje);
   const janelaRealizadoDaTela = janelaDoRealizado(periodo, hoje);
 
+  // O Resultado do mes nos cartoes principais. O realizado e o `net` da rota
+  // (o servico unico, lib/services/resultado-do-mes.ts); o esperado e a
+  // diferenca dos dois totais dos tiles, sem consulta nova.
+  const resultadoRealizado = fluxo?.net ?? 0;
+  const resultadoEsperado =
+    numerosDoPainel.receita.total - numerosDoPainel.despesa.total;
+  const tituloDoResultado =
+    periodo.modo === "mes" && periodo.de.slice(0, 7) === periodo.ate.slice(0, 7)
+      ? "Resultado do mês"
+      : "Resultado do período";
+
   // A estimativa que a LINHA mostra, com o valor do campo quando ele existe.
   // Mesma funcao pura que o teste exercita -- nao ha uma segunda multiplicacao
   // no servidor para discordar desta.
@@ -649,7 +661,7 @@ function PainelCompleto() {
         {/* `grid-cols-1` explicito e obrigatorio: sem ele o grid nasce numa
             coluna implicita dimensionada pelo conteudo, e no celular a pagina
             ganha rolagem horizontal (HMO-181). */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
         {/* ----------------------------------------------------------------
             O SALDO EM CONTA
             ----------------------------------------------------------------
@@ -780,6 +792,68 @@ function PainelCompleto() {
           />
         </Link>
 
+        {/* ----------------------------------------------------------------
+            O RESULTADO DO MES, NOS CARTOES PRINCIPAIS (05/11/2026)
+            ----------------------------------------------------------------
+            Pedido do Helio: o Resultado do mes e um numero de topo, e nao uma
+            linha dentro do Previsto x Realizado nem um rodape miudo abaixo dos
+            tiles ("Saldo realizado do período", que morava aqui embaixo e foi
+            absorvido por este cartao, com a dica e o link dele).
+
+            O numero e `fluxo.net`, que /api/reports/cash-flow tira de
+            `lerResultadoDoPeriodo` (lib/services/resultado-do-mes.ts) -- o
+            servico unico do Resultado do mes. Nada e somado aqui: o realizado
+            e o mesmo que o bloco Previsto x Realizado continua recebendo, e o
+            esperado e a diferenca dos DOIS totais dos tiles ao lado, a mesma
+            que o «quanto ainda posso gastar» usa. A cor e do SINAL, ao
+            contrario dos tiles de Receitas e Despesas: aqui negativo e de fato
+            "saiu mais do que entrou". */}
+        <Card>
+          <CardHeader className="pb-2">
+            <CardDescription className="flex items-center gap-2">
+              <Scale className="h-4 w-4" />
+              {tituloDoResultado}
+              <Dica rotulo="Como o realizado é contado">
+                Receitas menos Despesas já realizadas no período.{" "}
+                {LEGENDA_DO_CARTAO.fatura}{" "}
+                {LEGENDA_DO_CUSTO_REALIZADO}{" "}
+              </Dica>
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div
+              className={`text-2xl font-bold ${
+                resultadoRealizado < 0 ? "text-destructive" : "text-success"
+              }`}
+            >
+              {fluxo ? moeda(resultadoRealizado) : <NumeroIndisponivel />}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              Realizado <span className="capitalize">{rotulo}</span>
+            </p>
+            <div className="mt-3 pt-3 border-t space-y-1">
+              {janelaPrevisao && previsaoDoPeriodo && (
+                <p className="text-xs text-muted-foreground">
+                  Esperado no fim do período:{" "}
+                  <span
+                    className={`font-semibold ${
+                      resultadoEsperado < 0 ? "text-destructive" : "text-foreground"
+                    }`}
+                  >
+                    {moeda(resultadoEsperado)}
+                  </span>
+                </p>
+              )}
+              <Link
+                href={rotaDaTelaDoLado("despesa", periodo) as Route}
+                className="text-xs text-muted-foreground underline hover:text-foreground"
+              >
+                Comparar em Despesas
+              </Link>
+            </div>
+          </CardContent>
+        </Card>
+
         {/* Outro tile sem eixo de tempo, e de um tipo diferente do saldo: o
             custo fixo sai das regras recorrentes ATIVAS, que sao uma
             afirmacao sobre o presente. Ele nao tem versao de julho nem
@@ -804,88 +878,12 @@ function PainelCompleto() {
         </Card>
         </div>
 
-        {/* ----------------------------------------------------------------
-            O SALDO DO PERIODO, QUE SAIU DE DENTRO DO TILE DE DESPESA
-            ----------------------------------------------------------------
-            Ele morava na nota de rodape do tile "Saiu". Nao cabe mais la: o
-            tile agora tem tres numeros proprios, e um quarto -- que mistura os
-            DOIS lados -- se leria como parte da mesma conta. `net` continua
-            vindo inteiro de /api/reports/cash-flow, e por isso e o REALIZADO:
-            o esperado do periodo se le subtraindo os dois totais acima. */}
-
-        {/* ----------------------------------------------------------------
-            A LEGENDA DO CRITERIO DO CARTAO (HMO-266)
-            ----------------------------------------------------------------
-            O Realizado acima conta o cartao na FATURA PAGA, no mes do
-            vencimento, e a tela de Relatorios conta igual desde a fase 6. A
-            HMO-266 tinha as duas telas em criterios diferentes, e esta linha
-            explicava a diferenca; hoje ela diz a regra, porque quem lancou a
-            compra de ontem e nao a ve no Realizado precisa saber onde ela esta.
-
-            Constante e nao `fluxo.cartao` porque esta tela nao guarda o campo --
-            ela guarda so `d.summary`. O painel e sempre pessoal, e a rota conta
-            todo relatorio pessoal pela fatura. O texto em si mora em
-            lib/criterio-do-cartao.ts, junto do par dele. */}
-
-        {/* ----------------------------------------------------------------
-            A LEGENDA DO CRITERIO DE GRUPO DO «REALIZADO» (HMO-413)
-            ----------------------------------------------------------------
-            A terceira legenda deste bloco, e as tres falam de UM numero so: o
-            «Realizado» dos dois tiles. A de cima diz quando o CARTAO conta
-            (fatura paga, nao compra); esta diz quanto da DESPESA DE GRUPO
-            conta.
-
-            POR QUE ELA NASCEU DEPOIS DO NUMERO FICAR CERTO. A HMO-418 pos o
-            criterio aprovado em 08/10/2026 aqui -- 1.010,00, bruto + reembolso
-            -- e com isso trocou a divergencia de lugar em vez de encerra-la: o
-            tile acima e um LINK para a aba Despesas desde a HMO-408, a aba
-            responde "quanto SAI da minha conta" (990,00 na fixture de maio) e
-            os dois passaram a discordar em UMA perna, a um clique, sem nada
-            ligando um numero ao outro. A perna e a minha parte do que OUTRO
-            pagou: ela me CUSTOU e nao SAIU da minha conta.
-
-            O LINK NAO E ENFEITE E O ENDERECO NAO E LITERAL, pela razao do
-            cartao de baixo: `lerPeriodo`, do outro lado, cai no mes corrente
-            quando nao acha `?de=&ate=`. Uma legenda que fala do numero de
-            agosto abrindo outubro e pior que legenda nenhuma -- ela
-            apresentaria dois numeros que de fato nao se comparam como se
-            fossem o par explicado aqui. Por isso `rotaDaTelaDoLado`, a mesma
-            dos tiles e do cartao de baixo.
-
-            O par da frase mora em lib/legenda-do-bruto-e-do-liquido.ts: a
-            metade de LA (`LEGENDA_DO_CAIXA_REALIZADO`, na aba Despesas) aponta
-            de volta para este numero. As duas sao uma explicacao dita de dois
-            lados, e e por isso que elas estao no mesmo arquivo -- editar uma e
-            esquecer a outra produz duas legendas que se contradizem.
-
-            O ROTULO NAO E "Abrir Despesas", E ISSO E DELIBERADO. O cartao de
-            baixo ja tem um link com esse texto e para o MESMO endereco. Dois
-            anchors de texto identico na mesma tela sao ruins de duas maneiras
-            de uma vez: quem navega por lista de links le a mesma frase duas
-            vezes sem saber que uma fala do previsto e a outra do realizado, e
-            `scripts/test-painel-clicavel.mjs` acha o link do cartao por TEXTO
-            EXATO (`linkPorTexto`) -- com dois iguais ela devolve
-            `quantos: 2, href: null` e o caso da HMO-415 reprova. Medido: foi
-            exatamente o que aconteceu na primeira volta desta mudanca. O verbo
-            tambem diz melhor o que o clique faz: daqui se vai COMPARAR o
-            1.010,00 com o 990,00. */}
-        {/* As tres coisas numa linha so: o saldo, a dica com as duas legendas
-            do «Realizado» (o criterio do cartao e o da despesa de grupo) e o
-            link para comparar. O texto das legendas continua no HTML (a dica o
-            guarda em sr-only) e o link continua visivel, fora do balao. */}
-        <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground">
-          <span>Saldo realizado do período: {moeda(fluxo?.net ?? 0)}</span>
-          <Dica rotulo="Como o realizado é contado">
-            {LEGENDA_DO_CARTAO.fatura}{" "}
-            {LEGENDA_DO_CUSTO_REALIZADO}{" "}
-          </Dica>
-          <Link
-            href={rotaDaTelaDoLado("despesa", periodo) as Route}
-            className="underline hover:text-foreground"
-          >
-            Comparar em Despesas
-          </Link>
-        </p>
+        {/* As legendas do «Realizado» (o criterio do cartao, HMO-266, e o da
+            despesa de grupo, HMO-413) e o link «Comparar em Despesas» moravam
+            aqui, numa linha com o "Saldo realizado do período". Os tres foram
+            para o cartao Resultado do mes, acima: as legendas falam do mesmo
+            numero que ele mostra, e o link continua com o mesmo texto e o
+            mesmo destino (scripts/test-painel-clicavel.mjs o acha por texto). */}
 
         {/* ----------------------------------------------------------------
             A LINHA DO GASTO VARIAVEL, DE FORA DOS SEIS NUMEROS
