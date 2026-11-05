@@ -66,7 +66,7 @@ const render = (props) =>
       vencido: SEM_VENCIDO,
       estado: "fresco",
       ...props,
-    }),
+    })
   );
 
 /**
@@ -114,13 +114,10 @@ test("cada numero sai no cartao certo -- e nao no do lado", () => {
   // afirmar POSICAO: os tres numeros aparecem no HTML de qualquer jeito, e
   // trocados dois a dois o `includes` de cada um continuaria verde.
   assert.ok(t.includes("Total R$ 3.090,10"), `Total fora de lugar em: ${t}`);
-  assert.ok(
-    t.includes("Previsto R$ 159,90"),
-    `Previsto fora de lugar em: ${t}`,
-  );
+  assert.ok(t.includes("Previsto R$ 159,90"), `Previsto fora de lugar em: ${t}`);
   assert.ok(
     t.includes("Realizado R$ 2.930,20"),
-    `Realizado fora de lugar em: ${t}`,
+    `Realizado fora de lugar em: ${t}`
   );
 
   // CONTROLE: os dois pares que o defeito produziria. Sem estas negacoes, a
@@ -207,17 +204,16 @@ test("resposta SEM o campo `resumo` tambem nao imprime valor", () => {
 
 test("o vencido aparece como nota, com o valor e a contagem", () => {
   const t = texto(
-    render({ vencido: { total: 400, quantidade: 2 }, resumo: RESUMO }),
+    render({ vencido: { total: 400, quantidade: 2 }, resumo: RESUMO })
   );
 
   assert.ok(t.includes("R$ 400,00 em 2 linhas que já venceram"), t);
   // E ele NAO soma com o previsto: o cartao continua mostrando o previsto
   // inteiro, do qual o vencido e um recorte. R$ 559,90 seria a soma errada.
-  assert.ok(
-    visivel(
-      render({ vencido: { total: 400, quantidade: 2 }, resumo: RESUMO }),
-    ).includes("Previsto R$ 159,90"),
+  const visto = visivel(
+    render({ vencido: { total: 400, quantidade: 2 }, resumo: RESUMO })
   );
+  assert.ok(visto.includes("Previsto R$ 159,90"));
   assert.ok(!t.includes("R$ 559,90"));
 });
 
@@ -239,7 +235,7 @@ test("sem leitura a nota de vencido tambem cala", () => {
   // "R$ 400 já venceu" dito sobre uma copia de ontem e uma divida que pode ja
   // ter sido paga.
   const t = texto(
-    render({ estado: null, vencido: { total: 400, quantidade: 2 } }),
+    render({ estado: null, vencido: { total: 400, quantidade: 2 } })
   );
   assert.ok(!t.includes("venceram"), t);
 });
@@ -276,11 +272,8 @@ test("o reembolso previsto aparece como nota do «Previsto», no plural certo", 
   const t = texto(
     render({
       tela: RECEITAS,
-      resumo: {
-        ...RESUMO,
-        reembolso_previsto: { total: 300, quantos: 3, grupos: 2 },
-      },
-    }),
+      resumo: { ...RESUMO, reembolso_previsto: { total: 300, quantos: 3, grupos: 2 } },
+    })
   );
 
   assert.match(t, /inclui R\$ 300,00 de reembolso previsto/);
@@ -292,33 +285,27 @@ test("o reembolso previsto aparece como nota do «Previsto», no plural certo", 
 
 test("um devedor em um grupo fala no singular", () => {
   const t = texto(
-    render({
-      tela: RECEITAS,
-      resumo: { ...RESUMO, reembolso_previsto: REEMBOLSO },
-    }),
+    render({ tela: RECEITAS, resumo: { ...RESUMO, reembolso_previsto: REEMBOLSO } })
   );
 
   assert.match(t, /1 pessoa em 1 grupo/);
   assert.ok(
     !/1 pessoas|1 grupos/.test(t),
     "a frase concorda em numero com `quantos` e `grupos` -- e a concordancia " +
-      "nao pode ser calculada no meio do JSX",
+      "nao pode ser calculada no meio do JSX"
   );
 });
 
 test("sem reembolso a nota NAO aparece -- nem 'R$ 0,00 de reembolso'", () => {
   for (const vazio of [null, undefined]) {
     const t = texto(
-      render({
-        tela: RECEITAS,
-        resumo: { ...RESUMO, reembolso_previsto: vazio },
-      }),
+      render({ tela: RECEITAS, resumo: { ...RESUMO, reembolso_previsto: vazio } })
     );
     assert.ok(
       !t.includes("reembolso"),
       `com reembolso_previsto=${vazio} a tela escreveu a frase. "R$ 0,00 de ` +
         `reembolso previsto" na tela de quem nao tem grupo e ruido que parece ` +
-        `recurso quebrado.`,
+        `recurso quebrado.`
     );
   }
 });
@@ -337,11 +324,11 @@ test("sem leitura a nota de reembolso tambem cala", () => {
         tela: RECEITAS,
         resumo: { ...RESUMO, reembolso_previsto: REEMBOLSO },
         ...props,
-      }),
+      })
     );
     assert.ok(
       !t.includes("reembolso"),
-      `com ${JSON.stringify(props)} a nota de reembolso apareceu`,
+      `com ${JSON.stringify(props)} a nota de reembolso apareceu`
     );
   }
 });
@@ -365,24 +352,19 @@ test("sem leitura a nota de reembolso tambem cala", () => {
 const A_RECEBER = { total: 30, parcelas: 4, devedores: 3, emprestimos: 2 };
 
 test("o «a receber» do MyBank aparece como nota do «Previsto», no plural certo", () => {
-  const t = texto(
-    render({
-      tela: RECEITAS,
-      resumo: { ...RESUMO, a_receber_do_mybank: A_RECEBER },
-    }),
-  );
+  const t = texto(render({ tela: RECEITAS, resumo: { ...RESUMO, a_receber_do_mybank: A_RECEBER } }));
 
   assert.match(
     t,
     /inclui juros de R\$ 30,00 a receber/,
     "o cartao nao imprime o TOTAL do «a receber» -- uma frase sem o valor nao " +
-      "diz quanto do «Previsto» e promessa",
+      "diz quanto do «Previsto» e promessa"
   );
   assert.match(
     t,
     /3 pessoas em 2 empréstimos do MyBank/,
     "a frase tem de contar PESSOAS e EMPRESTIMOS, e nos campos certos: " +
-      "`parcelas` (4) nao e nenhum dos dois",
+      "`parcelas` (4) nao e nenhum dos dois"
   );
   // A ORACAO QUE IMPORTA: o numero NAO esta no «Quanto ainda posso gastar», que
   // e o outro cartao que a pessoa olha no mesmo minuto. Sem ela, ver R$ 30,00
@@ -390,7 +372,7 @@ test("o «a receber» do MyBank aparece como nota do «Previsto», no plural cer
   assert.match(
     t,
     /não entra em «Quanto ainda posso gastar»/,
-    "a legenda perdeu a oracao do safe-to-spend (LEGENDA_DO_A_RECEBER_DO_MYBANK)",
+    "a legenda perdeu a oracao do safe-to-spend (LEGENDA_DO_A_RECEBER_DO_MYBANK)"
   );
   assert.match(t, /é promessa e não dinheiro/);
 });
@@ -401,14 +383,9 @@ test("um devedor em um emprestimo fala no singular", () => {
       tela: RECEITAS,
       resumo: {
         ...RESUMO,
-        a_receber_do_mybank: {
-          total: 30,
-          parcelas: 1,
-          devedores: 1,
-          emprestimos: 1,
-        },
+        a_receber_do_mybank: { total: 30, parcelas: 1, devedores: 1, emprestimos: 1 },
       },
-    }),
+    })
   );
 
   // O caso da issue, medido em prod: {"total":30,"parcelas":1,"devedores":1,"emprestimos":1}.
@@ -416,7 +393,7 @@ test("um devedor em um emprestimo fala no singular", () => {
   assert.ok(
     !/1 pessoas|1 empréstimos/.test(t),
     "a frase concorda em numero com `devedores` e `emprestimos` -- e a " +
-      "concordancia nao pode ser calculada no meio do JSX",
+      "concordancia nao pode ser calculada no meio do JSX"
   );
 });
 
@@ -426,18 +403,15 @@ test("sem MyBank a nota NAO aparece -- o CONTROLE NEGATIVO da conta vazia", () =
   // de quem nao tem conexao e ruido que parece recurso quebrado.
   for (const vazio of [null, undefined]) {
     const t = texto(
-      render({
-        tela: RECEITAS,
-        resumo: { ...RESUMO, a_receber_do_mybank: vazio },
-      }),
+      render({ tela: RECEITAS, resumo: { ...RESUMO, a_receber_do_mybank: vazio } })
     );
     assert.ok(
       !t.includes("MyBank"),
-      `com a_receber_do_mybank=${vazio} a tela escreveu a frase`,
+      `com a_receber_do_mybank=${vazio} a tela escreveu a frase`
     );
     assert.ok(
       !t.includes("a receber"),
-      `com a_receber_do_mybank=${vazio} a tela falou de "a receber"`,
+      `com a_receber_do_mybank=${vazio} a tela falou de "a receber"`
     );
   }
 });
@@ -446,21 +420,13 @@ test("sem leitura a nota do MyBank tambem cala", () => {
   // Mesmo motivo do vencido e do reembolso: "R$ 30,00 a receber" dito sobre um
   // cache de ontem pode ja ter sido pago. E `resumo: null` e o outro estado --
   // a resposta guardada no aparelho de ANTES desta feature, que nem tem o campo.
-  for (const props of [
-    { estado: null },
-    { estado: "sem-rede" },
-    { resumo: null },
-  ]) {
+  for (const props of [{ estado: null }, { estado: "sem-rede" }, { resumo: null }]) {
     const t = texto(
-      render({
-        tela: RECEITAS,
-        resumo: { ...RESUMO, a_receber_do_mybank: A_RECEBER },
-        ...props,
-      }),
+      render({ tela: RECEITAS, resumo: { ...RESUMO, a_receber_do_mybank: A_RECEBER }, ...props })
     );
     assert.ok(
       !t.includes("MyBank"),
-      `com ${JSON.stringify(props)} a nota do MyBank apareceu`,
+      `com ${JSON.stringify(props)} a nota do MyBank apareceu`
     );
   }
 });
@@ -473,12 +439,8 @@ test("as DUAS promessas se dizem em separado quando as duas existem", () => {
   const t = texto(
     render({
       tela: RECEITAS,
-      resumo: {
-        ...RESUMO,
-        reembolso_previsto: REEMBOLSO,
-        a_receber_do_mybank: A_RECEBER,
-      },
-    }),
+      resumo: { ...RESUMO, reembolso_previsto: REEMBOLSO, a_receber_do_mybank: A_RECEBER },
+    })
   );
 
   assert.match(t, /inclui R\$ 300,00 de reembolso previsto/);
@@ -497,7 +459,7 @@ test("a legenda do bruto sai na aba Despesas, e SO nela", () => {
     despesas,
     /Quanto ainda posso gastar/,
     "a legenda tem de dizer ONDE a outra pergunta e respondida -- uma frase " +
-      "que explica so o proprio numero deixa o outro sem explicacao",
+      "que explica so o proprio numero deixa o outro sem explicacao"
   );
 
   // Em Receitas e em Transferencias a mesma frase estaria errada: aquele
@@ -505,7 +467,7 @@ test("a legenda do bruto sai na aba Despesas, e SO nela", () => {
   for (const tela of [RECEITAS, telaDoTipo("transfer")]) {
     assert.ok(
       !texto(render({ tela })).includes("quanto sai da sua conta"),
-      `a legenda do bruto apareceu na tela ${tela.tipo}`,
+      `a legenda do bruto apareceu na tela ${tela.tipo}`
     );
   }
 });

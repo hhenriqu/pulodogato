@@ -65,6 +65,7 @@ const {
   montarLado,
   montarPainel,
   somarLinhaNaJanela,
+  sobraDoMes,
 } = await import("../.tmp-realizado-e-previsao/realizado-e-previsao.js");
 
 /** Setembro de 2026 inteiro, e hoje e o dia 15. */
@@ -470,4 +471,52 @@ test("media negativa vira zero, nao receita", () => {
 
   assert.equal(estimativa.porDia, 0);
   assert.equal(estimativa.total, 0);
+});
+
+// ---------------------------------------------------------------------------
+// A sobra do mes: o numero do cartao (04/11/2026)
+// ---------------------------------------------------------------------------
+
+test("sobra do mes e Receitas menos Despesas, dividida pelos dias que faltam", () => {
+  // O caso do Helio: renda de 28 mil, 8 mil de despesa certa, 27 dias.
+  const r = sobraDoMes({
+    receitas: 28000,
+    despesas: 8000,
+    reservaDeMetas: 0,
+    diasRestantes: 27,
+  });
+  assert.equal(r.livre, 20000);
+  assert.equal(r.porDia, 20000 / 27);
+});
+
+test("sobra do mes desconta a reserva das metas", () => {
+  const r = sobraDoMes({
+    receitas: "28000.00",
+    despesas: 8000,
+    reservaDeMetas: 1500,
+    diasRestantes: 27,
+  });
+  assert.equal(r.livre, 18500);
+});
+
+test("mes no vermelho: sobra negativa e sem verba diaria", () => {
+  const r = sobraDoMes({
+    receitas: 5000,
+    despesas: 7000,
+    reservaDeMetas: 0,
+    diasRestantes: 10,
+  });
+  assert.equal(r.livre, -2000);
+  assert.equal(r.porDia, 0);
+});
+
+test("despesa negativa (sinal do banco) nao vira receita", () => {
+  const r = sobraDoMes({
+    receitas: 3000,
+    despesas: -1000,
+    reservaDeMetas: 0,
+    diasRestantes: 1,
+  });
+  assert.equal(r.livre, 2000);
+  assert.equal(r.porDia, 2000);
 });
