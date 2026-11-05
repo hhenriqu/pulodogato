@@ -353,6 +353,9 @@ const PARTES = [
   "components/ui/card.js",
   "components/ui/button.js",
   "components/ui/badge.js",
+  // A Dica (o icone que guarda o texto explicativo) entrou no tile e na
+  // pagina: vai real, como as outras pecas de ui.
+  "components/ui/dica.js",
   "components/dashboard/RealizadoEPrevisao.js",
   PAGINA_COMPILADA,
 ];
@@ -481,6 +484,8 @@ const esboco = (nome) => function Esboco() {
 };
 
 MODULOS["react"] = React;
+// A Dica abre o balao por \`createPortal\`.
+MODULOS["react-dom"] = ReactDOM;
 
 // O \`next/link\` renderiza um \`<a>\` com os atributos que recebeu. O \`href\`
 // que esta suite mede continua sendo o da PAGINA: o esboco e o papel, nao a

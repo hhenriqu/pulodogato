@@ -280,7 +280,8 @@ function VisaoDaCasa({ grupoId, mes }: { grupoId: string; mes: string }) {
             O mês da casa
             <Dica rotulo="Como o mês da casa é somado">
               A soma do Resultado de quem mostra o mês, sem contar duas vezes o
-              que um membro deve ao outro.
+              que um membro deve ao outro. Cada linha da tabela é o mesmo número
+              que a pessoa vê no painel dela.
             </Dica>
           </CardTitle>
         </CardHeader>
@@ -339,9 +340,6 @@ function VisaoDaCasa({ grupoId, mes }: { grupoId: string; mes: string }) {
                   ))}
                 </tbody>
               </table>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Cada linha é o mesmo número que a pessoa vê no painel dela.
-              </p>
             </div>
           )}
         </CardContent>

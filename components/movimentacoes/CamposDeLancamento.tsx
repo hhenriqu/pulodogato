@@ -618,7 +618,13 @@ export function CamposDeLancamento({
 
                 {valores.duracao === "contada" && (
                   <div className="space-y-2">
-                    <Label htmlFor="meses_de_repeticao">Quantos meses *</Label>
+                    <div className="flex items-center gap-1">
+                      <Label htmlFor="meses_de_repeticao">Quantos meses *</Label>
+                      <Dica rotulo="Como a contagem funciona">
+                        Conta a partir deste mês. Depois do último, a cobrança para
+                        sozinha.
+                      </Dica>
+                    </div>
                     <Input
                       id="meses_de_repeticao"
                       type="number"
@@ -630,10 +636,6 @@ export function CamposDeLancamento({
                       }
                       placeholder="Ex: 12"
                     />
-                    <p className="text-xs text-muted-foreground">
-                      Conta a partir deste mês. Depois do último, a cobrança para
-                      sozinha.
-                    </p>
                   </div>
                 )}
 
@@ -885,7 +887,12 @@ export function CamposDeLancamento({
               ordem, e o seletor passaria a discordar do cabecalho da fatura. */}
           {campos.faturaDoLancamento && (
             <div className="space-y-2 pt-1">
-              <Label htmlFor="invoice-month">Fatura</Label>
+              <div className="flex items-center gap-1">
+                <Label htmlFor="invoice-month">Fatura</Label>
+                <Dica rotulo="Sobre a escolha da fatura">
+                  A data da compra não muda — só a fatura em que ela entra.
+                </Dica>
+              </div>
               <select
                 id="invoice-month"
                 aria-label="Fatura"
@@ -927,9 +934,6 @@ export function CamposDeLancamento({
                   )
                 )}
               </select>
-              <p className="text-xs text-muted-foreground">
-                A data da compra não muda — só a fatura em que ela entra.
-              </p>
             </div>
           )}
 

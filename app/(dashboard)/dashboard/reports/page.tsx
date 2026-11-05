@@ -79,6 +79,7 @@ import type {
 } from "@/types/financial";
 import { legendaDoCartao } from "@/lib/criterio-do-cartao";
 
+import { Dica } from "@/components/ui/dica";
 const moeda = (valor: number) =>
   new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(
     valor
@@ -395,11 +396,14 @@ export default function ReportsPage() {
                 <Card>
                   <CardHeader className="flex-row items-start justify-between space-y-0">
                     <div>
-                      <CardTitle>Entradas e saídas por mês</CardTitle>
-                      <CardDescription>
-                        Transferências entre suas contas não entram: mover
-                        dinheiro não é receita nem gasto
-                      </CardDescription>
+                      <CardTitle className="flex items-center gap-1.5">
+                        Entradas e saídas por mês
+                        <Dica rotulo="O que entra neste gráfico">
+                          Transferências entre suas contas não entram: mover
+                          dinheiro não é receita nem gasto.
+                          {legendaDoFluxo && <> {legendaDoFluxo}</>}
+                        </Dica>
+                      </CardTitle>
                       {/* ------------------------------------------------------
                           A LEGENDA DO CRITERIO DO CARTAO (HMO-266)
                           ------------------------------------------------------
@@ -415,11 +419,6 @@ export default function ReportsPage() {
                           desta tela mudar algum dia, a legenda muda com ele em
                           vez de passar a mentir calada. As duas legendas moram
                           em lib/criterio-do-cartao.ts. */}
-                      {legendaDoFluxo && (
-                        <p className="text-xs text-muted-foreground mt-2 max-w-prose">
-                          {legendaDoFluxo}
-                        </p>
-                      )}
                     </div>
                     <Button
                       size="sm"

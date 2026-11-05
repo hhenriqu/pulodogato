@@ -87,6 +87,14 @@ const texto = (html) =>
     .replace(/\s+/g, " ")
     .trim();
 
+/**
+ * So o que se ve. A legenda do «Previsto» virou Dica ao lado do rotulo, e a
+ * copia dela para leitor de tela (`sr-only`) fica entre o rotulo e o numero no
+ * HTML. Para medir POSICAO (rotulo seguido do numero), a copia escondida sai.
+ */
+const visivel = (html) =>
+  texto(html.replace(/<span[^>]*class="sr-only"[^>]*>[\s\S]*?<\/span>/g, " "));
+
 // ---------------------------------------------------------------------------
 // 1. Os tres numeros, cada um no SEU cartao
 // ---------------------------------------------------------------------------
@@ -100,7 +108,7 @@ test("os tres cartoes da issue aparecem, com estes rotulos", () => {
 });
 
 test("cada numero sai no cartao certo -- e nao no do lado", () => {
-  const t = texto(render());
+  const t = visivel(render());
 
   // O par rotulo+numero, na ordem em que o HTML os emite. E a unica forma de
   // afirmar POSICAO: os tres numeros aparecem no HTML de qualquer jeito, e
@@ -202,7 +210,10 @@ test("o vencido aparece como nota, com o valor e a contagem", () => {
   assert.ok(t.includes("R$ 400,00 em 2 linhas que já venceram"), t);
   // E ele NAO soma com o previsto: o cartao continua mostrando o previsto
   // inteiro, do qual o vencido e um recorte. R$ 559,90 seria a soma errada.
-  assert.ok(t.includes("Previsto R$ 159,90"));
+  const visto = visivel(
+    render({ vencido: { total: 400, quantidade: 2 }, resumo: RESUMO })
+  );
+  assert.ok(visto.includes("Previsto R$ 159,90"));
   assert.ok(!t.includes("R$ 559,90"));
 });
 

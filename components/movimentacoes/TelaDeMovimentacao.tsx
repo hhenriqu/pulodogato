@@ -80,6 +80,7 @@ import {
   type TipoDaTela,
 } from "@/lib/telas-de-movimentacao";
 
+import { Dica } from "@/components/ui/dica";
 /**
  * O icone, a cor e as palavras de cada tela. Em token, nunca em hex
  * (check-color-tokens).
@@ -195,13 +196,18 @@ export function TelaDeMovimentacao({ tipo }: { tipo: TipoDaTela }) {
             (previsto + realizado) e o cartao de Financas Pessoais (so
             realizado) -- se leem como um bug.
           */}
-          <p className="text-muted-foreground">
-            O que {tela.titulo.toLowerCase()} somam em{" "}
-            <span className="font-medium text-foreground">
-              {rotuloDoPeriodo(periodo)}
+          <p className="flex flex-wrap items-center gap-x-1.5 text-muted-foreground">
+            <span>
+              O que {tela.titulo.toLowerCase()} somam em{" "}
+              <span className="font-medium text-foreground">
+                {rotuloDoPeriodo(periodo)}
+              </span>
+              .
             </span>
-            . <strong>Total</strong> é previsto + realizado: o que o período
-            compromete, tenha o dinheiro andado ou não.
+            <Dica rotulo="O que é o Total">
+              <strong>Total</strong> é previsto + realizado: o que o período
+              compromete, tenha o dinheiro andado ou não.
+            </Dica>
           </p>
         </div>
 
@@ -277,126 +283,129 @@ export function TelaDeMovimentacao({ tipo }: { tipo: TipoDaTela }) {
               Um valor que falta sem rotulo e indistinguivel de um bug.
             */}
             {tipo === "expense" && (
-              <div className="space-y-1 text-xs text-muted-foreground">
-                {/*
-                  O GASTO NO CARTAO, DITO ONDE ELE FALTA (HMO-260).
-                  "Realizado no periodo nunca deve considerar despesas no cartao.
-                  Pois ja considera a fatura do cartao pro periodo, entao gastos
-                  do cartao devem aparecer apenas no financas pessoais que lista o
-                  que voce lancou, e dentro do cartao de credito."
+              <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                <span>O que fica fora destes números</span>
+                <Dica rotulo="O que fica fora destes números" interativa>
+                  {/*
+                    O GASTO NO CARTAO, DITO ONDE ELE FALTA (HMO-260).
+                    "Realizado no periodo nunca deve considerar despesas no cartao.
+                    Pois ja considera a fatura do cartao pro periodo, entao gastos
+                    do cartao devem aparecer apenas no financas pessoais que lista o
+                    que voce lancou, e dentro do cartao de credito."
 
-                  A compra sai do Realizado porque ela esta DENTRO da fatura, que
-                  o Previsto acima ja soma inteira. Esta frase existe porque sem
-                  ela a conta nao fecha aos olhos de quem gasta no cartao: a lista
-                  de Financas Pessoais do mesmo mes mostra as compras uma a uma, e
-                  o Realizado daqui nao -- e o caminho dessa estranheza termina em
-                  alguem lancando a compra outra vez no debito para "consertar".
+                    A compra sai do Realizado porque ela esta DENTRO da fatura, que
+                    o Previsto acima ja soma inteira. Esta frase existe porque sem
+                    ela a conta nao fecha aos olhos de quem gasta no cartao: a lista
+                    de Financas Pessoais do mesmo mes mostra as compras uma a uma, e
+                    o Realizado daqui nao -- e o caminho dessa estranheza termina em
+                    alguem lancando a compra outra vez no debito para "consertar".
 
-                  A SEGUNDA ORACAO NAO E ENFEITE. "Esta no Previsto acima" so e
-                  verdade enquanto a fatura NAO foi paga: a baixa marca a previsao
-                  como `paid` (que sai do previsto pela armadilha 2) e grava uma
-                  TRANSFERENCIA de duas pernas (`pernasDoPagamentoDeFatura`), que
-                  nao e despesa em tela nenhuma. No mes em que a pessoa paga a
-                  fatura, esta tela mostra R$ 0,00 de cartao -- medido. Sem dizer
-                  para onde o valor foi, a frase apontaria para um Previsto vazio,
-                  que e pior que nao ter frase.
-                */}
-                <p>
-                  Compra no cartão não entra no Realizado: ela está dentro da{" "}
-                  <strong>fatura</strong>. Enquanto a fatura está aberta, o
-                  Previsto acima já a soma inteira; depois de paga, ela aparece em{" "}
-                  <Link
-                    href="/dashboard/transferencias"
-                    className="underline hover:text-foreground"
-                  >
-                    Transferências
-                  </Link>
-                  , porque o dinheiro foi da sua conta para o cartão. Para ver as
-                  compras uma a uma, abra{" "}
-                  <Link
-                    href="/dashboard/cartoes"
-                    className="underline hover:text-foreground"
-                  >
-                    Cartões
-                  </Link>{" "}
-                  ou{" "}
-                  <Link
-                    href="/dashboard/personal-finance"
-                    className="underline hover:text-foreground"
-                  >
-                    Finanças Pessoais
-                  </Link>
-                  .
-                </p>
-                {/*
-                  A FRASE DIZ "JA PAGOU", E A PALAVRA E O QUE A TORNA VERDADE
-                  (HMO-364).
+                    A SEGUNDA ORACAO NAO E ENFEITE. "Esta no Previsto acima" so e
+                    verdade enquanto a fatura NAO foi paga: a baixa marca a previsao
+                    como `paid` (que sai do previsto pela armadilha 2) e grava uma
+                    TRANSFERENCIA de duas pernas (`pernasDoPagamentoDeFatura`), que
+                    nao e despesa em tela nenhuma. No mes em que a pessoa paga a
+                    fatura, esta tela mostra R$ 0,00 de cartao -- medido. Sem dizer
+                    para onde o valor foi, a frase apontaria para um Previsto vazio,
+                    que e pior que nao ter frase.
+                  */}
+                  <span className="block">
+                    Compra no cartão não entra no Realizado: ela está dentro da{" "}
+                    <strong>fatura</strong>. Enquanto a fatura está aberta, o
+                    Previsto acima já a soma inteira; depois de paga, ela aparece em{" "}
+                    <Link
+                      href="/dashboard/transferencias"
+                      className="underline hover:text-foreground"
+                    >
+                      Transferências
+                    </Link>
+                    , porque o dinheiro foi da sua conta para o cartão. Para ver as
+                    compras uma a uma, abra{" "}
+                    <Link
+                      href="/dashboard/cartoes"
+                      className="underline hover:text-foreground"
+                    >
+                      Cartões
+                    </Link>{" "}
+                    ou{" "}
+                    <Link
+                      href="/dashboard/personal-finance"
+                      className="underline hover:text-foreground"
+                    >
+                      Finanças Pessoais
+                    </Link>
+                    .
+                  </span>
+                  {/*
+                    A FRASE DIZ "JA PAGOU", E A PALAVRA E O QUE A TORNA VERDADE
+                    (HMO-364).
 
-                  Ela fala do REALIZADO: a minha parte de uma despesa de grupo
-                  que outra pessoa ja pagou (`group_share_entries`, 033) nao
-                  entra nestes totais. O lado PREVISTO e o contrario desde a
-                  fase F1b -- a conta de grupo que vence no periodo entra aqui
-                  pela regra do pagador, inteira quando sou eu que pago e pela
-                  minha parte quando e outro membro.
+                    Ela fala do REALIZADO: a minha parte de uma despesa de grupo
+                    que outra pessoa ja pagou (`group_share_entries`, 033) nao
+                    entra nestes totais. O lado PREVISTO e o contrario desde a
+                    fase F1b -- a conta de grupo que vence no periodo entra aqui
+                    pela regra do pagador, inteira quando sou eu que pago e pela
+                    minha parte quando e outro membro.
 
-                  Sem "ja pagou" a frase cobriria os dois lados e passaria a
-                  mentir sobre um deles, que e o defeito que ela existe para nao
-                  ter: uma legenda errada e pior que nenhuma, porque ela e lida
-                  como a explicacao oficial do numero.
-                */}
-                <p>
-                  Sua parte das despesas de grupo que outra pessoa{" "}
-                  <strong>já pagou</strong> não entra nestes totais — ela
-                  aparece em{" "}
-                  <Link
-                    href="/dashboard/personal-finance"
-                    className="underline hover:text-foreground"
-                  >
-                    Finanças Pessoais
-                  </Link>
-                  , onde a lista junta as duas origens. O que ainda{" "}
-                  <strong>vence</strong> no período entra: inteiro quando é você
-                  que paga a conta do grupo, e a parte dos outros volta como
-                  reembolso previsto em{" "}
-                  <Link
-                    href="/dashboard/receitas"
-                    className="underline hover:text-foreground"
-                  >
-                    Receitas
-                  </Link>
-                  .
-                </p>
-                {/*
-                  A VOLTA PARA O NUMERO DE ONDE A PESSOA VEIO (HMO-413).
+                    Sem "ja pagou" a frase cobriria os dois lados e passaria a
+                    mentir sobre um deles, que e o defeito que ela existe para nao
+                    ter: uma legenda errada e pior que nenhuma, porque ela e lida
+                    como a explicacao oficial do numero.
+                  */}
+                  <span className="mt-2 block">
+                    Sua parte das despesas de grupo que outra pessoa{" "}
+                    <strong>já pagou</strong> não entra nestes totais — ela
+                    aparece em{" "}
+                    <Link
+                      href="/dashboard/personal-finance"
+                      className="underline hover:text-foreground"
+                    >
+                      Finanças Pessoais
+                    </Link>
+                    , onde a lista junta as duas origens. O que ainda{" "}
+                    <strong>vence</strong> no período entra: inteiro quando é você
+                    que paga a conta do grupo, e a parte dos outros volta como
+                    reembolso previsto em{" "}
+                    <Link
+                      href="/dashboard/receitas"
+                      className="underline hover:text-foreground"
+                    >
+                      Receitas
+                    </Link>
+                    .
+                  </span>
+                  {/*
+                    A VOLTA PARA O NUMERO DE ONDE A PESSOA VEIO (HMO-413).
 
-                  A frase de cima e completa sobre ESTA tela e muda de assunto
-                  na hora de dizer onde a parte aparece: ela aponta para
-                  Financas Pessoais. Isso bastava enquanto o painel mostrava um
-                  TERCEIRO numero (950,00, a convencao recusada em 08/10). Depois
-                  da HMO-418 o «Realizado» do painel passou a ser exatamente o
-                  outro lado deste -- 1.010,00 contra 990,00 na fixture de maio,
-                  com a diferenca inteira numa perna so --, e desde a HMO-408 o
-                  tile de lado e um LINK para ca. Quem chega aqui chega CLICANDO
-                  num numero maior, e nada ligava um ao outro.
+                    A frase de cima e completa sobre ESTA tela e muda de assunto
+                    na hora de dizer onde a parte aparece: ela aponta para
+                    Financas Pessoais. Isso bastava enquanto o painel mostrava um
+                    TERCEIRO numero (950,00, a convencao recusada em 08/10). Depois
+                    da HMO-418 o «Realizado» do painel passou a ser exatamente o
+                    outro lado deste -- 1.010,00 contra 990,00 na fixture de maio,
+                    com a diferenca inteira numa perna so --, e desde a HMO-408 o
+                    tile de lado e um LINK para ca. Quem chega aqui chega CLICANDO
+                    num numero maior, e nada ligava um ao outro.
 
-                  O ENDERECO SAI DE `rotaDoPainel`, com a janela: o painel le
-                  `?de=&ate=` e cai no mes corrente sem eles. Um link nu levaria
-                  quem olha maio para o painel de outubro, e a frase passaria a
-                  apresentar como par dois numeros que nao se comparam.
+                    O ENDERECO SAI DE `rotaDoPainel`, com a janela: o painel le
+                    `?de=&ate=` e cai no mes corrente sem eles. Um link nu levaria
+                    quem olha maio para o painel de outubro, e a frase passaria a
+                    apresentar como par dois numeros que nao se comparam.
 
-                  O texto e o par de `LEGENDA_DO_CUSTO_REALIZADO`, que fica no
-                  painel: as duas moram no mesmo arquivo porque sao uma
-                  explicacao dita dos dois lados.
-                */}
-                <p>
-                  {LEGENDA_DO_CAIXA_REALIZADO}{" "}
-                  <Link
-                    href={rotaDoPainel(periodo) as Route}
-                    className="underline hover:text-foreground"
-                  >
-                    Abrir o painel
-                  </Link>
-                </p>
+                    O texto e o par de `LEGENDA_DO_CUSTO_REALIZADO`, que fica no
+                    painel: as duas moram no mesmo arquivo porque sao uma
+                    explicacao dita dos dois lados.
+                  */}
+                  <span className="mt-2 block">
+                    {LEGENDA_DO_CAIXA_REALIZADO}{" "}
+                    <Link
+                      href={rotaDoPainel(periodo) as Route}
+                      className="underline hover:text-foreground"
+                    >
+                      Abrir o painel
+                    </Link>
+                  </span>
+                </Dica>
               </div>
             )}
           </>

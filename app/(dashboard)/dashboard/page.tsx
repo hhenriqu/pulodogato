@@ -137,6 +137,7 @@ import { useModoPapel } from "@/components/ModoPapelProvider";
 import { ConversaDePapel } from "@/components/papel-de-pao/ConversaDePapel";
 import { PagamentosParaLancar } from "@/components/pagamentos/PagamentosParaLancar";
 
+import { Dica } from "@/components/ui/dica";
 const moeda = (valor: number) =>
   new Intl.NumberFormat("pt-BR", {
     style: "currency",
@@ -811,9 +812,6 @@ function PainelCompleto() {
             DOIS lados -- se leria como parte da mesma conta. `net` continua
             vindo inteiro de /api/reports/cash-flow, e por isso e o REALIZADO:
             o esperado do periodo se le subtraindo os dois totais acima. */}
-        <p className="text-xs text-muted-foreground">
-          Saldo realizado do período: {moeda(fluxo?.net ?? 0)}
-        </p>
 
         {/* ----------------------------------------------------------------
             A LEGENDA DO CRITERIO DO CARTAO (HMO-266)
@@ -828,9 +826,6 @@ function PainelCompleto() {
             ela guarda so `d.summary`. O painel e sempre pessoal, e a rota conta
             todo relatorio pessoal pela fatura. O texto em si mora em
             lib/criterio-do-cartao.ts, junto do par dele. */}
-        <p className="text-xs text-muted-foreground max-w-prose">
-          {LEGENDA_DO_CARTAO.fatura}
-        </p>
 
         {/* ----------------------------------------------------------------
             A LEGENDA DO CRITERIO DE GRUPO DO «REALIZADO» (HMO-413)
@@ -874,8 +869,16 @@ function PainelCompleto() {
             exatamente o que aconteceu na primeira volta desta mudanca. O verbo
             tambem diz melhor o que o clique faz: daqui se vai COMPARAR o
             1.010,00 com o 990,00. */}
-        <p className="text-xs text-muted-foreground max-w-prose">
-          {LEGENDA_DO_CUSTO_REALIZADO}{" "}
+        {/* As tres coisas numa linha so: o saldo, a dica com as duas legendas
+            do «Realizado» (o criterio do cartao e o da despesa de grupo) e o
+            link para comparar. O texto das legendas continua no HTML (a dica o
+            guarda em sr-only) e o link continua visivel, fora do balao. */}
+        <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground">
+          <span>Saldo realizado do período: {moeda(fluxo?.net ?? 0)}</span>
+          <Dica rotulo="Como o realizado é contado">
+            {LEGENDA_DO_CARTAO.fatura}{" "}
+            {LEGENDA_DO_CUSTO_REALIZADO}{" "}
+          </Dica>
           <Link
             href={rotaDaTelaDoLado("despesa", periodo) as Route}
             className="underline hover:text-foreground"
@@ -1032,8 +1035,10 @@ function PainelCompleto() {
                 grupo em aberto pela minha parte, e a aba Despesas a conta
                 inteira quando sou eu que pago. O link leva a janela da tela
                 (HMO-415). */}
-          <p className="text-xs text-muted-foreground">
-            {LEGENDA_DO_LIQUIDO}{" "}
+          <p className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
+            <Dica rotulo="O que este número responde">
+              {LEGENDA_DO_LIQUIDO}{" "}
+            </Dica>
             <Link
               href={rotaDaTelaDoLado("despesa", periodo) as Route}
               className="underline hover:text-foreground"

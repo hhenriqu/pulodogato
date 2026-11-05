@@ -488,7 +488,13 @@ export function FormularioDeTransferencia() {
 
               {campos.diaDeVencimento && (
                 <div className="space-y-2">
-                  <Label htmlFor="diaDeVencimento">Dia do mês *</Label>
+                  <div className="flex items-center gap-1">
+                    <Label htmlFor="diaDeVencimento">Dia do mês *</Label>
+                    <Dica rotulo="Sobre os dias 29, 30 e 31">
+                      Em mês curto, cai no último dia: 31 vira 28 ou 29 em
+                      fevereiro.
+                    </Dica>
+                  </div>
                   <Input
                     id="diaDeVencimento"
                     type="number"
@@ -500,10 +506,6 @@ export function FormularioDeTransferencia() {
                     }
                     placeholder="5"
                   />
-                  <p className="text-xs text-muted-foreground">
-                    Em mês curto, cai no último dia: 31 vira 28 ou 29 em
-                    fevereiro.
-                  </p>
                 </div>
               )}
 

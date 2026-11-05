@@ -18,6 +18,12 @@
  * abrir nada, e as suites que renderizam o componente com
  * `renderToStaticMarkup` continuam achando a frase que elas protegem. O balao
  * visivel e uma copia, marcada `aria-hidden` para nao ser lida duas vezes.
+ *
+ * `interativa`: para texto com link dentro. O balao passa a aceitar clique (o
+ * mouse pode ir do icone ate ele sem fechar, e o toque fixa o balao aberto), e
+ * a copia escondida fica `inert` para os links dela nao entrarem na ordem do
+ * Tab sem aparecer. Nao use dentro de Dialog do Radix: ele trata o clique no
+ * balao (que mora no <body>) como clique fora e fecha o dialogo.
  */
 import { Info } from "lucide-react";
 import {
@@ -41,13 +47,22 @@ interface DicaProps {
   /** Nome acessivel do botao. Ex.: "Como o saldo e calculado". */
   rotulo?: string;
   className?: string;
+  /** O conteudo tem link: o balao aceita clique. Ver o cabecalho. */
+  interativa?: boolean;
 }
 
-export function Dica({ children, rotulo = "Mais informações", className }: DicaProps) {
+export function Dica({
+  children,
+  rotulo = "Mais informações",
+  className,
+  interativa = false,
+}: DicaProps) {
   const id = useId();
   const idDoTexto = `${id}-texto`;
   const botao = useRef<HTMLButtonElement>(null);
   const balao = useRef<HTMLDivElement>(null);
+  const copia = useRef<HTMLSpanElement>(null);
+  const fechamento = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [aberta, setAberta] = useState(false);
   const [presa, setPresa] = useState(false);
   const [posicao, setPosicao] = useState<{ top: number; left: number; largura: number } | null>(
@@ -56,6 +71,28 @@ export function Dica({ children, rotulo = "Mais informações", className }: Dic
   const [montado, setMontado] = useState(false);
 
   useEffect(() => setMontado(true), []);
+
+  useEffect(() => {
+    if (interativa) copia.current?.setAttribute("inert", "");
+  }, [interativa]);
+
+  const cancelarFechamento = useCallback(() => {
+    if (fechamento.current) clearTimeout(fechamento.current);
+    fechamento.current = null;
+  }, []);
+
+  // Com link no balao, o mouse precisa de tempo para atravessar do icone ate
+  // ele; sem link, fecha na hora.
+  const fecharDepois = useCallback(() => {
+    cancelarFechamento();
+    if (!interativa) {
+      setAberta(false);
+      return;
+    }
+    fechamento.current = setTimeout(() => setAberta(false), 200);
+  }, [interativa, cancelarFechamento]);
+
+  useEffect(() => cancelarFechamento, [cancelarFechamento]);
 
   const fechar = useCallback(() => {
     setAberta(false);
@@ -125,10 +162,12 @@ export function Dica({ children, rotulo = "Mais informações", className }: Dic
           className,
         )}
         onPointerEnter={(e) => {
-          if (e.pointerType === "mouse") setAberta(true);
+          if (e.pointerType !== "mouse") return;
+          cancelarFechamento();
+          setAberta(true);
         }}
         onPointerLeave={(e) => {
-          if (e.pointerType === "mouse" && !presa) setAberta(false);
+          if (e.pointerType === "mouse" && !presa) fecharDepois();
         }}
         onFocus={() => setAberta(true)}
         onBlur={() => {
@@ -148,7 +187,7 @@ export function Dica({ children, rotulo = "Mais informações", className }: Dic
       >
         <Info className="h-3.5 w-3.5" aria-hidden />
       </button>
-      <span id={idDoTexto} className="sr-only">
+      <span ref={copia} id={idDoTexto} className="sr-only">
         {children}
       </span>
       {montado &&
@@ -156,13 +195,17 @@ export function Dica({ children, rotulo = "Mais informações", className }: Dic
         createPortal(
           <div
             ref={balao}
-            aria-hidden
+            aria-hidden={!interativa}
+            onPointerEnter={cancelarFechamento}
+            onPointerLeave={(e) => {
+              if (e.pointerType === "mouse" && !presa) fecharDepois();
+            }}
             style={{
               position: "fixed",
-              // O balao so mostra texto: sem isto, dentro de um Dialog do
+              // O balao so de texto nao recebe clique: dentro de um Dialog do
               // Radix (que corta o clique fora do conteudo dele) um toque no
               // balao viraria um toque "fora" e fecharia o dialogo.
-              pointerEvents: "none",
+              pointerEvents: interativa ? "auto" : "none",
               top: posicao?.top ?? -9999,
               left: posicao?.left ?? -9999,
               width: posicao?.largura ?? LARGURA_MAXIMA,
