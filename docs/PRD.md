@@ -37,6 +37,7 @@
 | 2.16 | 06/11/2026 | RN004.8 nova: o cartão mostra o limite, o valor em aberto (a dívida inteira, parcelas futuras incluídas) e o disponível, e a fatura do mês leva o selo Aberta, Fechada ou Futura, como no Minhas Finanças | Helio |
 | 2.17 | 06/11/2026 | RN004.9 nova: pagamento parcial da fatura com o restante levado para a fatura seguinte e encargos opcionais, como no Minhas Finanças | Helio |
 | 2.18 | 06/11/2026 | RN016.1.2 nova: o mês de cada conta (saldo inicial, receitas, despesas, transferências, saldo e previsto) na tela Contas, como no Minhas Finanças | Helio |
+| 2.19 | 06/11/2026 | RN004.10 e RN004.11 novas: mover a fatura para o próximo vencimento e parcelar a fatura, como no Minhas Finanças | Helio |
 
 > **O que a versão 2.0 corrigiu.** Até aqui esta PRD descrevia um app de carteira
 > de investimentos: o problema era "investidores pessoa física", as personas eram
@@ -347,6 +348,13 @@ a tela não pode contorná-las. As marcadas **(tela)** vivem em TypeScript testa
   linhas do restante ficam fora dos totais de receita e despesa. **Encargos**
   (juros, multa, IOF) informados no pagamento são despesa na fatura seguinte.
   Estornar o pagamento desfaz o restante e o encargo junto.
+- RN004.10 **Mover para o próximo vencimento**: todas as compras da fatura de
+  um mês passam para a fatura seguinte; o saldo devido do cartão não muda. A
+  fatura fechada e pendente sai de Contas a Pagar. Fatura paga não se move.
+- RN004.11 **Parcelar fatura**: a fatura de um mês fecha em zero e o total
+  entra em 2 a 24 faturas seguintes, em centavos que somam o total; essas
+  linhas ficam fora dos totais. Juros informados são despesa, divididos entre
+  as parcelas. Fatura paga não se parcela, e o parcelamento pode ser desfeito.
 
 ### RN005 — Parcelamento ✅
 

@@ -924,3 +924,89 @@ test("pagarAFatura sem parcial manda o corpo de sempre", async () => {
     payment_account_id: CORRENTE,
   });
 });
+
+// =================================================================
+// MOVER E PARCELAR A FATURA (lib/mover-e-parcelar-fatura.ts)
+// =================================================================
+
+const {
+  chaveParcelamento,
+  dividirEmCentavos,
+  faturaParcelada,
+  planoDoParcelamento,
+  somarMeses,
+} = await import("../.tmp-pagamento-da-fatura/mover-e-parcelar-fatura.js");
+
+test("somarMeses atravessa o ano e recusa mes ilegivel", () => {
+  assert.equal(somarMeses("2026-11", 1), "2026-12-01");
+  assert.equal(somarMeses("2026-11-01", 2), "2027-01-01");
+  assert.equal(somarMeses("2026-11", 14), "2028-01-01");
+  assert.equal(somarMeses("2026-13", 1), null);
+});
+
+test("dividirEmCentavos soma exatamente o total, sobra nas primeiras", () => {
+  assert.deepEqual(dividirEmCentavos(10000, 3), [3334, 3333, 3333]);
+  assert.deepEqual(dividirEmCentavos(9, 3), [3, 3, 3]);
+});
+
+test("parcelar R$ 100 em 3x: credito na fatura, parcelas nas 3 seguintes", () => {
+  const plano = planoDoParcelamento({
+    total: 100,
+    parcelas: 3,
+    mes: "2026-11",
+    cartaoId: CARTAO,
+    hoje: "2026-11-06",
+  });
+  assert.equal(plano.ok, true);
+  assert.deepEqual(plano.parcelas, [33.34, 33.33, 33.33]);
+  const [credito, ...parcelas] = plano.linhas;
+  assert.equal(credito.amount, 100);
+  assert.equal(credito.invoice_month_override, "2026-11-01");
+  assert.equal(credito.include_in_total, false);
+  assert.ok(faturaParcelada([credito]));
+  assert.deepEqual(
+    parcelas.map((l) => l.invoice_month_override),
+    ["2026-12-01", "2027-01-01", "2027-02-01"]
+  );
+  assert.equal(parcelas.reduce((s, l) => s + Math.round(l.amount * 100), 0), -10000);
+  for (const l of plano.linhas) {
+    assert.equal(l.notes, chaveParcelamento("2026-11", CARTAO));
+    assert.equal(l.account_id, CARTAO);
+  }
+  assert.match(parcelas[0].description, /\(1\/3\)$/);
+});
+
+test("parcelar com juros: uma despesa de juros por parcela, nos totais", () => {
+  const plano = planoDoParcelamento({
+    total: 300,
+    parcelas: 3,
+    juros: 30,
+    mes: "2026-11",
+    cartaoId: CARTAO,
+    hoje: "2026-11-06",
+  });
+  const juros = plano.linhas.filter((l) => l.papel === "juros");
+  assert.equal(juros.length, 3);
+  for (const l of juros) {
+    assert.equal(l.amount, -10);
+    assert.equal(l.include_in_total, true);
+  }
+});
+
+test("parcelar recusa parcelas fora de 2..24, fatura zerada e juros negativos", () => {
+  const base = { total: 100, mes: "2026-11", cartaoId: CARTAO, hoje: "2026-11-06" };
+  for (const parcelas of [1, 25, 2.5, Number.NaN]) {
+    assert.equal(planoDoParcelamento({ ...base, parcelas }).ok, false);
+  }
+  assert.equal(planoDoParcelamento({ ...base, parcelas: 3, total: 0 }).ok, false);
+  assert.equal(planoDoParcelamento({ ...base, parcelas: 3, total: -50 }).ok, false);
+  assert.equal(planoDoParcelamento({ ...base, parcelas: 3, juros: -1 }).ok, false);
+});
+
+test("faturaParcelada so reconhece o credito do parcelamento", () => {
+  assert.equal(
+    faturaParcelada([{ description: "Fatura de nov/2026 parcelada em 3x", transaction_type: "expense" }]),
+    false
+  );
+  assert.equal(faturaParcelada([{ description: "Mercado", transaction_type: "income" }]), false);
+});
