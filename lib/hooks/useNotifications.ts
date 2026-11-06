@@ -1,11 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/utils/supabase/client";
 import { User } from "@supabase/supabase-js";
-import {
-  contarNaoLidos,
-  lidosValidos,
-  type AvisoDoSino,
-} from "@/lib/avisos-do-sino";
+// So TIPO de avisos-do-sino: ele puxa `web-push`, que nao roda no navegador.
+import type { AvisoDoSino } from "@/lib/avisos-do-sino";
+import { contarNaoLidos, lidosValidos } from "@/lib/lidos-do-sino";
 
 export interface Notification {
   id: string;

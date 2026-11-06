@@ -292,16 +292,7 @@ export function ordenarAvisos(avisos: AvisoDoSino[]): AvisoDoSino[] {
   );
 }
 
-/**
- * Os ids lidos que ainda valem: os que estao na lista de agora. O resto e
- * jogado fora, para o que fica guardado no navegador nao crescer sem limite.
- */
-export function lidosValidos(lidos: Iterable<string>, ids: Iterable<string>): string[] {
-  const atuais = new Set(ids);
-  return Array.from(new Set(lidos)).filter((id) => atuais.has(id));
-}
-
-export function contarNaoLidos(ids: Iterable<string>, lidos: Iterable<string>): number {
-  const marcados = new Set(lidos);
-  return Array.from(new Set(ids)).filter((id) => !marcados.has(id)).length;
-}
+// O "lido" mora em lib/lidos-do-sino.ts: o sino (cliente) importa de la, e
+// este arquivo puxa lib/services/notifications.ts, que importa `web-push` --
+// trazer isto para o bundle do navegador quebra o build (net, tls).
+export { contarNaoLidos, lidosValidos } from "@/lib/lidos-do-sino";

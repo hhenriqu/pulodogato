@@ -12,5 +12,5 @@
     "baseUrl": "..",
     "paths": { "@/*": ["./*"] }
   },
-  "include": ["../lib/avisos-do-sino.ts"]
+  "include": ["../lib/avisos-do-sino.ts", "../lib/lidos-do-sino.ts"]
 }
