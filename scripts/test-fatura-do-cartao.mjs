@@ -321,6 +321,19 @@ test("o ciclo sai com os dois dias", () => {
   );
 });
 
+test("o ciclo diz quando o vencimento anda para o dia util (082)", () => {
+  assert.equal(
+    rotuloDoCiclo({ closing_day: 14, due_day: 20, vencimento_em_dia_util: true }),
+    "Fecha dia 14 · vence dia 20 (dia útil)"
+  );
+  // Desligado, ou lido sem o campo (antes da colagem): o rotulo de antes, sem
+  // prometer uma regra que o banco pode nao aplicar.
+  assert.equal(
+    rotuloDoCiclo({ closing_day: 14, due_day: 20, vencimento_em_dia_util: false }),
+    "Fecha dia 14 · vence dia 20"
+  );
+});
+
 test("falta um dos dias e o ciclo nao existe (a tarja toma o lugar)", () => {
   // Sem os dois dias o card_invoice_month() trata toda compra como do proprio
   // mes: a compra do dia 28 aparece no mes errado. "Fecha dia undefined" em vez

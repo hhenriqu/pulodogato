@@ -391,6 +391,8 @@ export interface ValoresDaConta {
   credit_limit: string;
   closing_day: string;
   due_day: string;
+  /** Cartao: a fatura vence no proximo dia util? (migration 082) */
+  vencimento_em_dia_util: boolean;
   currency: string;
   /** A conta entra nos totais consolidados? (HMO-431, migration 058) */
   include_in_total: boolean;
@@ -417,6 +419,9 @@ export function valoresIniciais(
     credit_limit: "",
     closing_day: "",
     due_day: "",
+    // Cartao novo nasce com o vencimento em dia util, igual ao `DEFAULT true`
+    // da 082 e ao cadastro de cartao do Minhas Financas.
+    vencimento_em_dia_util: true,
     currency: moedaOficial,
     // Conta nova nasce SOMANDO, igual ao `DEFAULT true` da coluna. Nascer
     // desligada faria o cadastro criar uma conta que nao aparece em total
@@ -436,6 +441,10 @@ export function valoresDaConta(conta: FinancialAccount): ValoresDaConta {
     credit_limit: conta.credit_limit != null ? String(conta.credit_limit) : "",
     closing_day: conta.closing_day != null ? String(conta.closing_day) : "",
     due_day: conta.due_day != null ? String(conta.due_day) : "",
+    // `!== false` pelo mesmo motivo do `include_in_total` abaixo: o cartao lido
+    // antes da 082 nao tem o campo, e abrir a edicao dele com o interruptor
+    // DESLIGADO faria salvar o nome desligar o dia util sem ninguem tocar nele.
+    vencimento_em_dia_util: conta.vencimento_em_dia_util !== false,
     // A moeda da PROPRIA conta, nunca a oficial: reabrir uma conta em dolar tem
     // que mostrar dolar. Cair na oficial aqui faria a edicao de qualquer campo
     // (trocar o nome, corrigir o dia de vencimento) gravar a moeda principal em
@@ -506,6 +515,11 @@ export function corpoDaConta(
     credit_limit: temFatura ? valores.credit_limit || null : null,
     closing_day: temFatura ? valores.closing_day || null : null,
     due_day: temFatura ? valores.due_day || null : null,
+    // So vai no escopo de cartao. Fora dele a coluna nao tem efeito, e mandar
+    // o valor do formulario gravaria um `false` digitado antes de trocar o tipo.
+    ...(temFatura
+      ? { vencimento_em_dia_util: valores.vencimento_em_dia_util }
+      : {}),
     // Sempre mandada, inclusive com o seletor escondido. Note que ela NAO segue
     // a regra dos tres `null` acima: limite e os dois dias sao de cartao, a
     // moeda e de toda conta. Mandar so quando o campo esta visivel faria a conta

@@ -92,6 +92,12 @@ export async function PATCH(
     if (body.include_in_total !== undefined)
       patch.include_in_total = body.include_in_total === true;
 
+    // Cartao (migration 082): vencimento no proximo dia util. Aqui o lado
+    // seguro e o contrario do de cima: so o booleano `false` desliga, porque
+    // ligado e o padrao do banco e o que a fatura de verdade faz.
+    if (body.vencimento_em_dia_util !== undefined)
+      patch.vencimento_em_dia_util = body.vencimento_em_dia_util !== false;
+
     // A moeda da conta (022). Recusa em vez de corrigir: o CHECK do banco
     // devolveria 23514, que a tela mostra como "Não foi possível atualizar a
     // conta" sem dizer o motivo.

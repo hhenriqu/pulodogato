@@ -6272,6 +6272,22 @@ jobs:
       - name: A parte pura do pagamento entre pessoas
         run: npm run test:pagamento-entre-pessoas
 
+      # =====================================================================
+      # 082 -- a fatura vence em dia util
+      # =====================================================================
+      # Opcao do cartao, ligada por padrao: o vencimento que cai em fim de
+      # semana ou feriado bancario anda para o proximo dia util. As datas do
+      # teste foram conferidas no app Minhas Financas. A suite roda num BEGIN
+      # com ROLLBACK.
+      - name: 082_vencimento_da_fatura_em_dia_util
+        run: $PSQL -f database/migrations/082_vencimento_da_fatura_em_dia_util.sql
+
+      - name: 082 e idempotente
+        run: $PSQL -f database/migrations/082_vencimento_da_fatura_em_dia_util.sql
+
+      - name: A fatura vence no proximo dia util quando o cartao pede
+        run: $PSQL -f database/tests/082_vencimento_da_fatura_em_dia_util_test.sql
+
       - name: schema-columns.json em dia com as migrations
         run: node scripts/gen-schema-columns.mjs --check
 

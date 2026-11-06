@@ -654,7 +654,12 @@ export function estadoDaTela(
 export function rotuloDoCiclo(conta: {
   closing_day?: number | null;
   due_day?: number | null;
+  vencimento_em_dia_util?: boolean | null;
 }): string | null {
   if (!conta.closing_day || !conta.due_day) return null;
-  return `Fecha dia ${conta.closing_day} · vence dia ${conta.due_day}`;
+  const base = `Fecha dia ${conta.closing_day} · vence dia ${conta.due_day}`;
+  // 082: so quando o cadastro DIZ que e dia util. Conta lida sem o campo
+  // (antes da colagem, cache offline) fica com o rotulo de antes, em vez de
+  // prometer uma regra que o banco talvez ainda nao aplique.
+  return conta.vencimento_em_dia_util === true ? `${base} (dia útil)` : base;
 }

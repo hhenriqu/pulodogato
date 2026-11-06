@@ -51,7 +51,7 @@ async function cartoesDaPessoa(
 ): Promise<CartaoDaCobranca[] | null> {
   const { data, error } = await supabase
     .from("financial_accounts")
-    .select("id, name, closing_day, due_day")
+    .select("id, name, closing_day, due_day, vencimento_em_dia_util")
     .eq("user_id", userId)
     .eq("account_type", "credit_card");
   if (error) {
@@ -240,6 +240,9 @@ export async function vencimentosDasFaturas(
         p_invoice_month: par.invoice_month,
         p_closing_day: cartao.closing_day ?? null,
         p_due_day: cartao.due_day,
+        // A funcao de quatro argumentos da 082: a mesma data que a view
+        // `card_invoice_lines` publica para este cartao.
+        p_em_dia_util: cartao.vencimento_em_dia_util !== false,
       });
       if (error || typeof data !== "string") {
         console.error(

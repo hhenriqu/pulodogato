@@ -507,6 +507,14 @@ export async function GET() {
     // divida de onde se subtrai inclui a compra de grupo que outra pessoa
     // lancou no meu cartao, e filtrar por `user_id` deixaria a parte diferida
     // dela de fora -- o mesmo recorte dos dois lados, ou a subtracao nao fecha.
+    //
+    // A 082 abre uma excecao de poucos dias: com o vencimento no dia util, a
+    // fatura que vence no ultimo dia do mes seguinte pode cair no dia 1 a 3 do
+    // outro (31/01 domingo -> 01/02). Por isso a leitura comeca UM mes antes; o
+    // que decide se a fatura e futura continua sendo a data de cobranca
+    // (`faturasFuturasPorCartao`), nunca o mes.
+    const inicioDaFaturaAnterior = mesAnterior(inicioDoMes);
+
     const idsDosCartoes = (contas ?? [])
       .filter((c) => c.account_type === "credit_card")
       .map((c) => c.id);
@@ -516,7 +524,7 @@ export async function GET() {
           .from("card_invoice_lines")
           .select("account_id, invoice_month, invoice_due_date, invoice_amount")
           .in("account_id", idsDosCartoes)
-          .gte("invoice_month", inicioDoMes)
+          .gte("invoice_month", inicioDaFaturaAnterior)
       : { data: [], error: null };
 
     // Falhar aqui NAO derruba o card, pelo mesmo critério das metas -- mas o
@@ -650,4 +658,12 @@ export async function GET() {
     console.error("Erro na API de quanto posso gastar:", error);
     return NextResponse.json({ error: "Erro interno" }, { status: 500 });
   }
+}
+
+/** 'AAAA-MM-01' do mes anterior a 'AAAA-MM-01'. */
+function mesAnterior(inicio: string): string {
+  const ano = Number(inicio.slice(0, 4));
+  const mes = Number(inicio.slice(5, 7));
+  const [a, m] = mes === 1 ? [ano - 1, 12] : [ano, mes - 1];
+  return `${a}-${String(m).padStart(2, "0")}-01`;
 }

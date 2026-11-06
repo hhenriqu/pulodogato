@@ -85,6 +85,8 @@ export interface CartaoDaCobranca {
   name?: string | null;
   closing_day?: number | null;
   due_day?: number | null;
+  /** 082: vencimento no proximo dia util. Ausente vale `true`. */
+  vencimento_em_dia_util?: boolean | null;
 }
 
 /**

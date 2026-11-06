@@ -255,7 +255,8 @@
     "last_four_digits",
     "name",
     "updated_at",
-    "user_id"
+    "user_id",
+    "vencimento_em_dia_util"
   ],
   "financial_goals": [
     "account_id",

@@ -33,6 +33,7 @@
 | 2.12 | 02/11/2026 | RN024 nova: a visão da casa. O mês da família somado (sem contar duas vezes o que um membro deve ao outro), a conta conjunta e o dependente sem login. Cada membro escolhe mostrar o próprio mês | Helio |
 | 2.13 | 02/11/2026 | RN025 nova: o participante sem conta no app (só o nome) divide as despesas do grupo, aparece no saldo e no acerto; quem tem conta lança a despesa que outra pessoa pagou, que fica só no grupo. Nesta versão, nenhum dos dois entra em grupo com dia de fechamento | Helio |
 | 2.14 | 04/11/2026 | RN020.12 nova: o pagamento para uma pessoa da família aparece para quem recebe, que confirma a conta em que o dinheiro entrou | Helio |
+| 2.15 | 06/11/2026 | RN004.7 nova: a fatura vence no próximo dia útil quando o dia do vencimento cai em fim de semana ou feriado bancário. Opção do cartão, ligada por padrão, como no Minhas Finanças | Helio |
 
 > **O que a versão 2.0 corrigiu.** Até aqui esta PRD descrevia um app de carteira
 > de investimentos: o problema era "investidores pessoa física", as personas eram
@@ -322,6 +323,14 @@ a tela não pode contorná-las. As marcadas **(tela)** vivem em TypeScript testa
   um mês (excluir "só esta") ou encerrar fica na tela do cartão, com a
   pergunta do alcance; a compra já lançada se edita na fatura, como qualquer
   compra.
+- RN004.7 **Vencimento em dia útil** (migration 082): quando o dia do
+  vencimento cai em sábado, domingo ou feriado bancário nacional (os fixos,
+  segunda e terça de Carnaval, Sexta-feira Santa e Corpus Christi), a fatura
+  vence no próximo dia útil. Só o vencimento anda: o fechamento e a fatura em
+  que a compra cai não mudam. Se o vencimento andar para o mês seguinte, a
+  fatura conta nesse mês (RN017.4). É uma opção do cadastro do cartão, ligada
+  por padrão; desligada, a fatura vence sempre no dia escolhido. Feriado
+  estadual e municipal não contam.
 
 ### RN005 — Parcelamento ✅
 
