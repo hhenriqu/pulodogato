@@ -85,6 +85,19 @@ export const SECOES_DO_PAINEL: SecaoDoPainel[] = [
     descricao:
       "O que o período prometia — entradas, despesas e resultado — ao lado do que de fato aconteceu",
   },
+  // As duas que vieram do Resumo do Minhas Financas (06/11/2026), lado a
+  // lado logo depois do Previsto x Realizado: para onde foi o dinheiro e o
+  // que saiu por ultimo.
+  {
+    id: "despesas-por-categoria",
+    titulo: "Despesas por categoria",
+    descricao: "Uma rosca com as maiores categorias de gasto do período",
+  },
+  {
+    id: "ultimas-despesas",
+    titulo: "Últimas despesas",
+    descricao: "As cinco despesas pagas mais recentes do período",
+  },
   {
     id: "posso-gastar",
     titulo: "Quanto ainda posso gastar",
@@ -260,7 +273,12 @@ export function secoesVisiveis(layout: ItemDeLayout[]): string[] {
  * as duas sao cartoes baixos -- cada uma sozinha numa linha inteira deixaria
  * um vazio largo do lado.
  */
-export const SECOES_DE_MEIA_LARGURA = new Set(["a-vencer", "metas"]);
+export const SECOES_DE_MEIA_LARGURA = new Set([
+  "a-vencer",
+  "metas",
+  "despesas-por-categoria",
+  "ultimas-despesas",
+]);
 
 /**
  * Agrupa a ordem visivel em linhas, juntando meias-larguras VIZINHAS.
