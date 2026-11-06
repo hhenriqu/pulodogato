@@ -55,6 +55,7 @@ import {
   hojeNoFusoDoCartao,
   limiteDoCartao,
   situacaoDaFatura,
+  situacaoDaFaturaDoCartao,
 } from "../.tmp-fatura-do-cartao/lib/limite-do-cartao.js";
 
 // ---------------------------------------------------------------------------
@@ -1579,6 +1580,7 @@ test("selo da fatura: aberta, fechada, futura", () => {
   // Sem fechamento: a fatura do proprio mes.
   assert.equal(situacaoDaFatura("2026-11", "2026-11-30", null), "aberta");
   assert.equal(situacaoDaFatura(null, "2026-11-06", 4), null);
+  assert.equal(situacaoDaFaturaDoCartao("2026-11", "2026-11-06", { closing_day: 4 }), "fechada");
   assert.equal(situacaoDaFatura("2026-13", "2026-11-06", 4), null);
 });
 

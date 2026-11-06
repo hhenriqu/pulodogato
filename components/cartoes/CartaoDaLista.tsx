@@ -74,7 +74,7 @@ import {
   ROTULO_DA_SITUACAO,
   hojeNoFusoDoCartao,
   limiteDoCartao,
-  situacaoDaFatura,
+  situacaoDaFaturaDoCartao,
 } from "@/lib/limite-do-cartao";
 import { NumeroIndisponivel } from "@/components/SemRede";
 
@@ -118,10 +118,10 @@ export function CartaoDaLista({
   // e o saldo do cadastro e o de hoje: vale em qualquer mes da tela, e por
   // isso nao passa pelo `rotuloDoMes`. Sem rede, passa pelo `estado`.
   const limite = podeMostrarNumero(estado) ? limiteDoCartao(conta) : null;
-  const situacao = situacaoDaFatura(
+  const situacao = situacaoDaFaturaDoCartao(
     mesDaFatura,
     hojeNoFusoDoCartao(),
-    conta.closing_day
+    conta
   );
 
   // As TRES condicoes, e cada uma barra um jeito diferente de mentir:

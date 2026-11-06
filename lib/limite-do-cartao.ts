@@ -127,6 +127,19 @@ export function situacaoDaFatura(
   return alvo < aberta ? "fechada" : "futura";
 }
 
+/**
+ * O selo de um cartao do cadastro. A tela passa o cartao inteiro e nao le o
+ * dia de fechamento: a regra do mes da fatura fica aqui e na 006
+ * (scripts/check-fatura-escolhida.mjs).
+ */
+export function situacaoDaFaturaDoCartao(
+  mes: string | null | undefined,
+  hoje: string,
+  cartao: { closing_day?: number | null }
+): SituacaoDaFatura | null {
+  return situacaoDaFatura(mes, hoje, cartao.closing_day);
+}
+
 /** O texto do selo. */
 export const ROTULO_DA_SITUACAO: Record<SituacaoDaFatura, string> = {
   aberta: "Aberta",
