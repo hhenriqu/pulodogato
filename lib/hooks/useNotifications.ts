@@ -1,10 +1,13 @@
-import { useCallback, useState, useEffect } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/utils/supabase/client";
 import { User } from "@supabase/supabase-js";
+// So TIPO de avisos-do-sino: ele puxa `web-push`, que nao roda no navegador.
+import type { AvisoDoSino } from "@/lib/avisos-do-sino";
+import { contarNaoLidos, lidosValidos } from "@/lib/lidos-do-sino";
 
 export interface Notification {
   id: string;
-  type: "group_invitation" | "connection_request" | "general";
+  type: "group_invitation" | "aviso";
   title: string;
   message: string;
   read: boolean;
@@ -13,6 +16,34 @@ export interface Notification {
   // afirmar a forma (`data as GroupInvitationNotification`). Com `any` o acesso
   // passava direto, sem afirmacao nenhuma e sem conferencia.
   data?: unknown;
+  /** O aviso inteiro, quando `type === "aviso"` (lib/avisos-do-sino.ts). */
+  aviso?: AvisoDoSino;
+}
+
+// O "lido" fica no navegador, por usuario. Os avisos do sino sao CALCULADOS
+// (vencimento, fechamento, pedido pendente) e nao linhas de uma tabela, entao
+// nao ha `read_at` para gravar. Antes o lido morava so no estado do componente,
+// e o polling de 30s trazia a lista de volta com o numero vermelho aceso de
+// novo. O id do aviso muda quando o evento muda (lib/avisos-do-sino.ts), entao
+// o lido de outubro nao apaga o fechamento de novembro.
+const chaveDosLidos = (userId: string) => `pdg:sino:lidos:${userId}`;
+
+function lerLidos(userId: string): string[] {
+  try {
+    const cru = window.localStorage.getItem(chaveDosLidos(userId));
+    const lista = cru ? JSON.parse(cru) : [];
+    return Array.isArray(lista) ? lista.filter((x) => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function gravarLidos(userId: string, ids: string[]) {
+  try {
+    window.localStorage.setItem(chaveDosLidos(userId), JSON.stringify(ids));
+  } catch {
+    // Navegacao privada ou armazenamento cheio: o lido vale ate recarregar.
+  }
 }
 
 // O que `list_my_group_invitations()` devolve (migration 030). Nao ha
@@ -36,7 +67,6 @@ export interface GroupInvitationNotification {
 export const useNotifications = (user: User | null) => {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(true);
-  const [unreadCount, setUnreadCount] = useState(0);
 
   // O id, e nao o objeto. O efeito abaixo dependia de `user`, que vem de
   // `getUser()` e e um objeto NOVO a cada leitura: toda vez que o componente
@@ -47,13 +77,13 @@ export const useNotifications = (user: User | null) => {
   const fetchNotifications = useCallback(async () => {
     if (!userId) {
       setNotifications([]);
-      setUnreadCount(0);
       setLoading(false);
       return;
     }
 
     try {
-      setLoading(true);
+      // Sem `setLoading(true)` aqui: o polling de 30s trocava a lista aberta
+      // pelo spinner a cada volta. O `loading` e so o da primeira leitura.
 
       // Convites de grupo pendentes.
       //
@@ -101,19 +131,42 @@ export const useNotifications = (user: User | null) => {
         data: invite,
       }));
 
-      // TODO: Buscar outros tipos de notificações aqui
-      // - Solicitações de conexão pendentes
-      // - Notificações gerais
-      // - Lembretes de transações
+      // O resto do sino: vencimentos, fechamentos e o que espera aprovacao.
+      // Falhar aqui nao apaga os convites -- eles ja estao na mao.
+      let avisos: AvisoDoSino[] = [];
+      try {
+        const resposta = await fetch("/api/notifications/sino", {
+          cache: "no-store",
+        });
+        if (resposta.ok) {
+          const corpo = (await resposta.json()) as { avisos?: AvisoDoSino[] };
+          avisos = Array.isArray(corpo.avisos) ? corpo.avisos : [];
+        } else {
+          console.error("Error fetching bell alerts:", resposta.status);
+        }
+      } catch (erro) {
+        console.error("Error fetching bell alerts:", erro);
+      }
 
-      const allNotifications = [
-        ...inviteNotifications,
-        // ...connectionRequests,
-        // ...generalNotifications,
-      ];
+      const avisoNotifications: Notification[] = avisos.map((aviso) => ({
+        id: aviso.id,
+        type: "aviso" as const,
+        title: aviso.titulo,
+        message: aviso.mensagem,
+        read: false,
+        created_at: aviso.data,
+        aviso,
+      }));
 
-      setNotifications(allNotifications);
-      setUnreadCount(allNotifications.filter((n) => !n.read).length);
+      // Convite primeiro: ele expira e pede resposta. Depois os avisos, na
+      // ordem de urgencia que a rota ja devolve.
+      const todas = [...inviteNotifications, ...avisoNotifications];
+      const ids = todas.map((n) => n.id);
+      const lidos = lidosValidos(lerLidos(userId), ids);
+      gravarLidos(userId, lidos);
+      const marcados = new Set(lidos);
+
+      setNotifications(todas.map((n) => ({ ...n, read: marcados.has(n.id) })));
     } catch (error) {
       console.error("Error fetching notifications:", error);
     } finally {
@@ -121,16 +174,51 @@ export const useNotifications = (user: User | null) => {
     }
   }, [userId]);
 
-  const markAsRead = async (notificationId: string) => {
-    setNotifications((prev) =>
-      prev.map((n) => (n.id === notificationId ? { ...n, read: true } : n))
-    );
-    setUnreadCount((prev) => Math.max(0, prev - 1));
-  };
+  const marcarLidos = useCallback(
+    (ids: string[]) => {
+      if (!userId) return;
+      const lidos = Array.from(new Set([...lerLidos(userId), ...ids]));
+      gravarLidos(userId, lidos);
+      const marcados = new Set(lidos);
+      setNotifications((prev) =>
+        prev.map((n) => ({ ...n, read: marcados.has(n.id) }))
+      );
+    },
+    [userId]
+  );
 
-  const markAllAsRead = () => {
-    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
-    setUnreadCount(0);
+  const markAsRead = (notificationId: string) => marcarLidos([notificationId]);
+
+  const markAllAsRead = () => marcarLidos(notifications.map((n) => n.id));
+
+  /**
+   * Aprova ou recusa a parte de uma despesa que alguem dividiu comigo, pela
+   * mesma rota da tela de financas pessoais (PATCH /api/personal-finance/splits).
+   */
+  const responderDivisao = async (
+    notification: Notification,
+    action: "approve" | "reject"
+  ): Promise<{ success: boolean; error?: string }> => {
+    const acao = notification.aviso?.acao;
+    if (acao?.tipo !== "divisao") {
+      return { success: false, error: "Este aviso não tem divisão" };
+    }
+    try {
+      const response = await fetch("/api/personal-finance/splits", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ splitId: acao.split_id, action }),
+      });
+      if (!response.ok) {
+        const corpo = await response.json().catch(() => ({}));
+        return { success: false, error: corpo.error };
+      }
+      setNotifications((prev) => prev.filter((n) => n.id !== notification.id));
+      return { success: true };
+    } catch (error) {
+      console.error("Error responding to split:", error);
+      return { success: false, error: "Erro interno" };
+    }
   };
 
   // Aceitar e recusar diferem em UM booleano, e eram duas funcoes copiadas.
@@ -162,7 +250,6 @@ export const useNotifications = (user: User | null) => {
       setNotifications((prev) =>
         prev.filter((n) => n.id !== `group_invite_${invitation.invitation_id}`)
       );
-      setUnreadCount((prev) => Math.max(0, prev - 1));
       return { success: true };
     } catch (error) {
       console.error("Error responding to invitation:", error);
@@ -185,6 +272,17 @@ export const useNotifications = (user: User | null) => {
     return () => clearInterval(interval);
   }, [fetchNotifications]);
 
+  // Derivado, e nao um segundo estado: os dois andavam separados e o contador
+  // saia do compasso da lista a cada aceitar/recusar/marcar.
+  const unreadCount = useMemo(
+    () =>
+      contarNaoLidos(
+        notifications.map((n) => n.id),
+        notifications.filter((n) => n.read).map((n) => n.id)
+      ),
+    [notifications]
+  );
+
   return {
     notifications,
     loading,
@@ -194,5 +292,6 @@ export const useNotifications = (user: User | null) => {
     markAllAsRead,
     acceptGroupInvitation,
     rejectGroupInvitation,
+    responderDivisao,
   };
 };

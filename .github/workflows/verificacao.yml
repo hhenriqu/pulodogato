@@ -5491,6 +5491,9 @@ jobs:
       - name: O canal de e-mail nunca fica desligado em silencio
         run: npm run test:aviso-por-email
 
+      - name: O sino avisa vencimento, fechamento e aprovacao, e o lido nao silencia o proximo evento
+        run: npm run test:avisos-do-sino
+
       # nota: verificacao-notas.md -> "Mutantes do canal de e-mail"
       - name: Mutantes do canal de e-mail
         run: npm run mutantes:aviso-por-email
