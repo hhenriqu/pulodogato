@@ -1,6 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
+import type { Route } from "next";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -12,7 +15,19 @@ import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
-import { Bell, Users, Check, X, Clock, CheckCheck } from "lucide-react";
+import {
+  AlertCircle,
+  Bell,
+  CalendarClock,
+  Check,
+  CheckCheck,
+  Clock,
+  CreditCard,
+  UserCheck,
+  Users,
+  X,
+} from "lucide-react";
+import type { FamiliaDoAviso } from "@/lib/avisos-do-sino";
 import {
   useNotifications,
   GroupInvitationNotification,
@@ -26,6 +41,39 @@ interface NotificationsProps {
   user: User | null;
 }
 
+// O icone e a cor de cada familia de aviso. Antes o bloco do icone so tinha o
+// caso `group_invitation`, e qualquer outro tipo saia sem icone nenhum.
+const ICONE_DA_FAMILIA: Record<
+  FamiliaDoAviso,
+  { Icone: React.ElementType; fundo: string; cor: string }
+> = {
+  vencida: { Icone: AlertCircle, fundo: "bg-destructive/10", cor: "text-destructive" },
+  vencimento: { Icone: CalendarClock, fundo: "bg-warning/10", cor: "text-warning" },
+  cartao: { Icone: CreditCard, fundo: "bg-info/10", cor: "text-info" },
+  grupo: { Icone: Users, fundo: "bg-info/10", cor: "text-info" },
+  aprovacao: { Icone: UserCheck, fundo: "bg-primary/10", cor: "text-primary" },
+};
+
+/**
+ * "em 3d" para uma data FUTURA. O `formatTimeAgo` abaixo so sabe o passado:
+ * com o prazo do convite (futuro) a diferenca saia negativa e o cartao dizia
+ * "Expira em agora" ate o ultimo minuto.
+ */
+function tempoAte(dataIso: string): string {
+  const ms = new Date(dataIso).getTime() - Date.now();
+  if (!(ms > 0)) return "instantes";
+  const horas = Math.floor(ms / 3_600_000);
+  if (horas < 1) return `${Math.max(1, Math.floor(ms / 60_000))}m`;
+  if (horas < 24) return `${horas}h`;
+  return `${Math.floor(horas / 24)}d`;
+}
+
+/** A data do aviso como o usuario fala: "hoje", "05/11". */
+function dataDoAviso(iso: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}/.test(iso)) return "";
+  return `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
+}
+
 export function NotificationBell({ user }: NotificationsProps) {
   const {
     notifications,
@@ -36,9 +84,33 @@ export function NotificationBell({ user }: NotificationsProps) {
     markAllAsRead,
     acceptGroupInvitation,
     rejectGroupInvitation,
+    responderDivisao,
   } = useNotifications(user);
 
   const [isOpen, setIsOpen] = useState(false);
+  const router = useRouter();
+
+  const handleResponderDivisao = async (
+    notification: Notification,
+    action: "approve" | "reject"
+  ) => {
+    const result = await responderDivisao(notification, action);
+    if (result.success) {
+      toast.success(action === "approve" ? "Divisão aprovada" : "Divisão recusada");
+      refetch();
+    } else {
+      toast.error(result.error || "Erro ao responder à divisão");
+    }
+  };
+
+  const abrirAviso = (notification: Notification) => {
+    if (!notification.read) markAsRead(notification.id);
+    const href = notification.aviso?.href;
+    if (href) {
+      setIsOpen(false);
+      router.push(href as Route);
+    }
+  };
 
   const handleAcceptInvite = async (notification: Notification) => {
     const invitation = notification.data as GroupInvitationNotification;
@@ -83,7 +155,16 @@ export function NotificationBell({ user }: NotificationsProps) {
   return (
     <DropdownMenu open={isOpen} onOpenChange={setIsOpen}>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="sm" className="relative">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="relative"
+          aria-label={
+            unreadCount > 0
+              ? `Notificações: ${unreadCount} não lida${unreadCount === 1 ? "" : "s"}`
+              : "Notificações"
+          }
+        >
           <Bell className="h-5 w-5" />
           {unreadCount > 0 && (
             <Badge
@@ -96,7 +177,7 @@ export function NotificationBell({ user }: NotificationsProps) {
         </Button>
       </DropdownMenuTrigger>
 
-      <DropdownMenuContent align="end" className="w-96 p-0">
+      <DropdownMenuContent align="end" className="w-[min(24rem,calc(100vw-2rem))] p-0">
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b">
           <DropdownMenuLabel className="p-0">Notificações</DropdownMenuLabel>
@@ -145,11 +226,9 @@ export function NotificationBell({ user }: NotificationsProps) {
                   <div
                     key={notification.id}
                     className={`p-4 hover:bg-muted/50 transition-colors ${
-                      !notification.read ? "bg-info/5" : ""
-                    }`}
-                    onClick={() =>
-                      !notification.read && markAsRead(notification.id)
-                    }
+                      notification.aviso?.href ? "cursor-pointer" : ""
+                    } ${!notification.read ? "bg-info/5" : ""}`}
+                    onClick={() => abrirAviso(notification)}
                   >
                     <div className="flex gap-3">
                       {/* Icon */}
@@ -159,6 +238,19 @@ export function NotificationBell({ user }: NotificationsProps) {
                             <Users className="h-4 w-4 text-info" />
                           </div>
                         )}
+                        {notification.aviso &&
+                          (() => {
+                            const { Icone, fundo, cor } =
+                              ICONE_DA_FAMILIA[notification.aviso.familia] ??
+                              ICONE_DA_FAMILIA.vencimento;
+                            return (
+                              <div
+                                className={`h-8 w-8 rounded-full ${fundo} flex items-center justify-center`}
+                              >
+                                <Icone className={`h-4 w-4 ${cor}`} />
+                              </div>
+                            );
+                          })()}
                       </div>
 
                       {/* Content */}
@@ -169,7 +261,9 @@ export function NotificationBell({ user }: NotificationsProps) {
                           </h4>
                           <div className="flex items-center gap-1 ml-2">
                             <span className="text-xs text-muted-foreground">
-                              {formatTimeAgo(notification.created_at)}
+                              {notification.aviso
+                                ? dataDoAviso(notification.aviso.data)
+                                : formatTimeAgo(notification.created_at)}
                             </span>
                             {!notification.read && (
                               <div className="h-2 w-2 rounded-full bg-primary"></div>
@@ -180,6 +274,35 @@ export function NotificationBell({ user }: NotificationsProps) {
                         <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
                           {notification.message}
                         </p>
+
+                        {/* Divisao que alguem lancou para eu aprovar */}
+                        {notification.aviso?.acao?.tipo === "divisao" && (
+                          <div className="flex items-center gap-2 mt-3">
+                            <Button
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleResponderDivisao(notification, "approve");
+                              }}
+                              className="h-7 text-xs"
+                            >
+                              <Check className="h-3 w-3 mr-1" />
+                              Aprovar
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleResponderDivisao(notification, "reject");
+                              }}
+                              className="h-7 text-xs"
+                            >
+                              <X className="h-3 w-3 mr-1" />
+                              Recusar
+                            </Button>
+                          </div>
+                        )}
 
                         {/* Actions for Group Invitations */}
                         {notification.type === "group_invitation" && (
@@ -234,9 +357,7 @@ export function NotificationBell({ user }: NotificationsProps) {
                         {convite?.expires_at && (
                           <div className="flex items-center gap-1 mt-2 text-xs text-muted-foreground">
                             <Clock className="h-3 w-3" />
-                            <span>
-                              Expira em {formatTimeAgo(convite.expires_at)}
-                            </span>
+                            <span>Expira em {tempoAte(convite.expires_at)}</span>
                           </div>
                         )}
                       </div>
@@ -248,22 +369,24 @@ export function NotificationBell({ user }: NotificationsProps) {
           )}
         </div>
 
-        {/* Footer */}
-        {notifications.length > 0 && (
-          <>
-            <Separator />
-            <div className="p-2">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={refetch}
-                className="w-full text-xs"
-              >
-                Atualizar notificações
-              </Button>
-            </div>
-          </>
-        )}
+        {/* Footer. A tela de avisos (configuracao da janela, push, e-mail)
+            nao tinha nenhum caminho a partir do sino. */}
+        <Separator />
+        <div className="flex items-center gap-1 p-2">
+          <Button asChild variant="ghost" size="sm" className="flex-1 text-xs">
+            <Link href="/dashboard/notifications" onClick={() => setIsOpen(false)}>
+              Configurar avisos
+            </Link>
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={refetch}
+            className="flex-1 text-xs"
+          >
+            Atualizar
+          </Button>
+        </div>
       </DropdownMenuContent>
     </DropdownMenu>
   );

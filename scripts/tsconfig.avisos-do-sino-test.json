@@ -1,0 +1,16 @@
+{
+  "//": "Build so do teste do sino (lib/avisos-do-sino.ts). esModuleInterop pelo mesmo motivo do aviso-por-email: notifications.ts faz (await import(\"web-push\")).default.",
+  "compilerOptions": {
+    "outDir": "../.tmp-avisos-do-sino",
+    "rootDir": "../lib",
+    "module": "es2020",
+    "target": "es2020",
+    "moduleResolution": "node",
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": ["../lib/avisos-do-sino.ts"]
+}

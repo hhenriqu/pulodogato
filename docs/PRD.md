@@ -234,6 +234,14 @@ lançamentos feitos sem rede; página `/offline` alcançável.
 Push (VAPID), avisos de vencimento, alertas de recorrência e resumo mensal, via
 Vercel Cron.
 
+O sino do cabeçalho mostra, numa lista só e por ordem de urgência: contas
+vencidas e a vencer (a mesma frase do push), a fatura do cartão que fecha nos
+próximos 3 dias, o grupo com dia de fechamento que fecha nos próximos 3 dias, e
+o que espera resposta do usuário (despesa que alguém dividiu com ele, pagamento
+que alguém lançou para ele, pedido de entrada no grupo que ele administra),
+além dos convites de grupo. O "lido" vale por evento: o fechamento de novembro
+volta a acender o sino mesmo que o de outubro tenha sido lido.
+
 ### Conta e assinatura ✅
 
 Perfil, conexões entre usuários, planos com limites de uso, painel de
