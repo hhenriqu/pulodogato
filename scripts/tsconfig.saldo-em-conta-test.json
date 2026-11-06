@@ -15,6 +15,7 @@
     }
   },
   "include": [
-    "../lib/saldo-em-conta.ts"
+    "../lib/saldo-em-conta.ts",
+    "../lib/saldo-por-conta.ts"
   ]
 }

@@ -36,6 +36,7 @@
 | 2.15 | 06/11/2026 | RN004.7 nova: a fatura vence no próximo dia útil quando o dia do vencimento cai em fim de semana ou feriado bancário. Opção do cartão, ligada por padrão, como no Minhas Finanças | Helio |
 | 2.16 | 06/11/2026 | RN004.8 nova: o cartão mostra o limite, o valor em aberto (a dívida inteira, parcelas futuras incluídas) e o disponível, e a fatura do mês leva o selo Aberta, Fechada ou Futura, como no Minhas Finanças | Helio |
 | 2.17 | 06/11/2026 | RN004.9 nova: pagamento parcial da fatura com o restante levado para a fatura seguinte e encargos opcionais, como no Minhas Finanças | Helio |
+| 2.18 | 06/11/2026 | RN016.1.2 nova: o mês de cada conta (saldo inicial, receitas, despesas, transferências, saldo e previsto) na tela Contas, como no Minhas Finanças | Helio |
 
 > **O que a versão 2.0 corrigiu.** Até aqui esta PRD descrevia um app de carteira
 > de investimentos: o problema era "investidores pessoa física", as personas eram
@@ -476,6 +477,14 @@ nas contas que o fechamento gerou.
   saldo no fim de um mês é o saldo do começo do mês seguinte. Lançamento com
   data futura não conta. A lista de contas do painel continua mostrando o
   cartão com a dívida dele (`lib/saldo-em-conta.ts`).
+- RN016.1.2 **Mês das contas**: na tela Contas, cada conta de dinheiro mostra,
+  para o mês escolhido, Saldo inicial, Receitas, Despesas, Transf. créd.,
+  Transf. déb., Saldo e Previsto, como no Minhas Finanças. Receitas e despesas
+  somam o realizado e as previsões pendentes do mês. Saldo é o realizado até
+  hoje (ou até o fim do mês, se ele já passou). Previsto é o saldo inicial
+  mais receitas e transferências recebidas, menos despesas e transferências
+  enviadas. Transferência só é transferência entre duas contas de dinheiro: o
+  pagamento de fatura sai da conta como despesa (`lib/saldo-por-conta.ts`).
 - RN016.2 **Resultado do mês** = Total de Receitas − Total de Despesas do mês,
   com a composição da RN017.
 - RN016.3 Cada movimentação entra no mês da sua data: a data do lançamento

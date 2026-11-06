@@ -126,3 +126,187 @@ test("o rotulo diz se o numero e do fim do periodo ou de hoje", () => {
   assert.equal(futuro.mostrarMovimento, false);
   assert.match(futuro.titulo, /hoje/);
 });
+
+// =============================================================================
+// O MES DE CADA CONTA (lib/saldo-por-conta.ts) -- comparacao com o Minhas
+// Financas. Os numeros sao os da tela Contas de la, em 06/11/2026.
+// =============================================================================
+
+const { mesDasContas, limitesDoMes } = await import(
+  "../.tmp-saldo-em-conta/lib/saldo-por-conta.js"
+);
+
+const CORRENTE = "c1";
+const POUPANCA = "c2";
+const CARTAO = "k1";
+
+// Saldo de hoje = 178,17 - 100 (despesa paga) - 200 (fatura parcial).
+const contasDoMF = [
+  { id: CORRENTE, account_type: "checking", current_balance: -121.83 },
+  { id: CARTAO, account_type: "credit_card", current_balance: -700 },
+];
+
+const lancamentosDoMF = [
+  { id: "t1", account_id: CORRENTE, amount: -100, transaction_date: "2026-11-06" },
+  // A perna de saida do pagamento da fatura; a de entrada esta no cartao e
+  // aponta para ela.
+  { id: "t2", account_id: CORRENTE, amount: -200, transaction_date: "2026-11-06" },
+];
+const paresDoMF = [
+  { id: "t3", account_id: CARTAO, counterpart_transaction_id: "t2" },
+];
+const previstasDoMF = [
+  { id: "p1", account_id: CORRENTE, amount: 50, due_date: "2026-11-20", classe: "expense" },
+  { id: "p2", account_id: CORRENTE, amount: 1000, due_date: "2026-11-26", classe: "income" },
+  { id: "p3", account_id: CORRENTE, amount: 200, due_date: "2026-11-06", classe: "expense" },
+  // Fora do mes: nao entra.
+  { id: "p4", account_id: CORRENTE, amount: 999, due_date: "2026-12-01", classe: "expense" },
+];
+
+test("mes da conta: os numeros da tela Contas do Minhas Financas", () => {
+  const r = mesDasContas({
+    contas: contasDoMF,
+    lancamentos: lancamentosDoMF,
+    pares: paresDoMF,
+    previstas: previstasDoMF,
+    mes: "2026-11",
+    hoje: "2026-11-06",
+  });
+  assert.equal(r.de, "2026-11-01");
+  assert.equal(r.ate, "2026-11-30");
+  // O cartao nao e conta de dinheiro: fica fora da lista.
+  assert.deepEqual(r.contas.map((c) => c.conta_id), [CORRENTE]);
+  const c = r.contas[0];
+  assert.equal(c.saldo_inicial, 178.17);
+  assert.equal(c.receitas, 1000);
+  // Paga (100) + pendente (50) + fixa (200) + pagamento da fatura (200).
+  assert.equal(c.despesas, 550);
+  assert.equal(c.transf_credito, 0);
+  assert.equal(c.transf_debito, 0);
+  assert.equal(c.saldo, -121.83);
+  assert.equal(c.previsto, 628.17);
+  assert.deepEqual(r.total, {
+    saldo_inicial: 178.17,
+    receitas: 1000,
+    despesas: 550,
+    transf_credito: 0,
+    transf_debito: 0,
+    saldo: -121.83,
+    previsto: 628.17,
+  });
+});
+
+test("mes da conta: transferencia entre contas de dinheiro vai para as colunas de transferencia", () => {
+  const r = mesDasContas({
+    contas: [
+      { id: CORRENTE, account_type: "checking", current_balance: 700 },
+      { id: POUPANCA, account_type: "savings", current_balance: 300 },
+    ],
+    lancamentos: [
+      { id: "s", account_id: CORRENTE, amount: -300, transaction_date: "2026-11-03" },
+      { id: "e", account_id: POUPANCA, amount: 300, transaction_date: "2026-11-03", counterpart_transaction_id: "s" },
+    ],
+    previstas: [
+      { id: "p", account_id: CORRENTE, destination_account_id: POUPANCA, amount: 100, due_date: "2026-11-20", classe: "transfer" },
+    ],
+    mes: "2026-11",
+    hoje: "2026-11-06",
+  });
+  const [corrente, poupanca] = r.contas;
+  assert.equal(corrente.transf_debito, 400);
+  assert.equal(corrente.despesas, 0);
+  assert.equal(poupanca.transf_credito, 400);
+  assert.equal(poupanca.receitas, 0);
+  assert.equal(corrente.saldo_inicial, 1000);
+  assert.equal(poupanca.saldo_inicial, 0);
+  assert.equal(corrente.previsto, 600);
+  assert.equal(poupanca.previsto, 400);
+  // No total as duas pontas se anulam no previsto.
+  assert.equal(r.total.previsto, 1000);
+});
+
+test("mes da conta: transferencia prevista para o cartao e despesa", () => {
+  const r = mesDasContas({
+    contas: [
+      { id: CORRENTE, account_type: "checking", current_balance: 500 },
+      { id: CARTAO, account_type: "credit_card", current_balance: -500 },
+    ],
+    lancamentos: [],
+    previstas: [
+      { id: "p", account_id: CORRENTE, destination_account_id: CARTAO, amount: 500, due_date: "2026-11-23", classe: "transfer" },
+    ],
+    mes: "2026-11",
+    hoje: "2026-11-06",
+  });
+  assert.equal(r.contas[0].despesas, 500);
+  assert.equal(r.contas[0].transf_debito, 0);
+  assert.equal(r.contas[0].previsto, 0);
+});
+
+test("mes da conta: mes passado fecha no fim dele, e o seguinte comeca ali", () => {
+  const contas = [{ id: CORRENTE, account_type: "checking", current_balance: 1000 }];
+  const lancamentos = [
+    { id: "a", account_id: CORRENTE, amount: 200, transaction_date: "2026-10-10" },
+    { id: "b", account_id: CORRENTE, amount: -50, transaction_date: "2026-11-02" },
+  ];
+  const outubro = mesDasContas({ contas, lancamentos, mes: "2026-10", hoje: "2026-11-06" });
+  const novembro = mesDasContas({ contas, lancamentos, mes: "2026-11", hoje: "2026-11-06" });
+  assert.equal(outubro.contas[0].saldo_inicial, 850);
+  assert.equal(outubro.contas[0].receitas, 200);
+  assert.equal(outubro.contas[0].saldo, 1050);
+  assert.equal(novembro.contas[0].saldo_inicial, outubro.contas[0].saldo);
+  assert.equal(novembro.contas[0].saldo, 1000);
+});
+
+test("mes da conta: mes futuro tem saldo igual ao inicial e o previsto anda", () => {
+  const r = mesDasContas({
+    contas: [{ id: CORRENTE, account_type: "checking", current_balance: 1000 }],
+    lancamentos: [
+      // Lancamento de data futura, ja gravado: conta no mes dele.
+      { id: "f", account_id: CORRENTE, amount: -100, transaction_date: "2026-12-10" },
+    ],
+    previstas: [
+      { id: "p", account_id: CORRENTE, amount: 400, due_date: "2026-12-05", classe: "income" },
+    ],
+    mes: "2026-12",
+    hoje: "2026-11-06",
+  });
+  const c = r.contas[0];
+  assert.equal(c.saldo_inicial, 1100);
+  assert.equal(c.saldo, 1100);
+  assert.equal(c.despesas, 100);
+  assert.equal(c.receitas, 400);
+  assert.equal(c.previsto, 1400);
+});
+
+test("mes da conta: conta fora dos totais aparece na lista mas nao no total", () => {
+  const r = mesDasContas({
+    contas: [
+      { id: CORRENTE, account_type: "checking", current_balance: 100 },
+      { id: POUPANCA, account_type: "savings", current_balance: 900, include_in_total: false },
+    ],
+    lancamentos: [],
+    mes: "2026-11",
+    hoje: "2026-11-06",
+  });
+  assert.equal(r.contas.length, 2);
+  assert.equal(r.total.saldo, 100);
+});
+
+test("mes da conta: mes ilegivel e null, e os limites do mes", () => {
+  assert.equal(mesDasContas({ contas: [], lancamentos: [], mes: "2026-13", hoje: "2026-11-06" }), null);
+  assert.deepEqual(limitesDoMes("2027-02"), { de: "2027-02-01", ate: "2027-02-28" });
+  assert.deepEqual(limitesDoMes("2028-02"), { de: "2028-02-01", ate: "2028-02-29" });
+  assert.equal(limitesDoMes("nov"), null);
+});
+
+test("mes da conta: saldo zerado nao sai como -0", () => {
+  const r = mesDasContas({
+    contas: [{ id: CORRENTE, account_type: "checking", current_balance: 0 }],
+    lancamentos: [],
+    mes: "2026-11",
+    hoje: "2026-11-06",
+  });
+  assert.ok(!Object.is(r.contas[0].saldo, -0));
+  assert.ok(!Object.is(r.total.previsto, -0));
+});

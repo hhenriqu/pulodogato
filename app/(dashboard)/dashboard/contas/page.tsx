@@ -59,6 +59,7 @@ import {
 } from "@/lib/contas";
 import { CamposDaConta } from "@/components/contas/CamposDaConta";
 import { ContasArquivadas } from "@/components/contas/ContasArquivadas";
+import { MesDasContas } from "@/components/contas/MesDasContas";
 import { AjusteDeSaldoDaConta } from "@/components/contas/AjusteDeSaldoDaConta";
 import { CarteiraDaContaDeInvestimento } from "@/components/contas/CarteiraDaContaDeInvestimento";
 import { iconeDoTipo } from "@/components/contas/icone-da-conta";
@@ -705,6 +706,12 @@ function TelaDeContas() {
                 );
               })}
             </div>
+          )}
+
+          {/* O mes de cada conta, como no Minhas Financas. So com rede: a
+              rota le lancamentos e agenda, que o aparelho nao guarda. */}
+          {online && estado === "fresco" && contasDaTela.length > 0 && (
+            <MesDasContas contas={contasDaTela} />
           )}
 
           <ContasArquivadas contas={arquivadasDaTela} aoReativar={reativar} />
