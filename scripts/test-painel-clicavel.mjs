@@ -115,10 +115,7 @@
 //   `lucide-react`       -- os icones, por Proxy: lista escrita a mao aqui
 //     viraria divida a cada icone novo na pagina. Icone sem esboco e
 //     `React.createElement(undefined)`, que derruba o render INTEIRO;
-//   `ModoPapelProvider`  -- `{papel:false, mounted:true}`: o portao dos dois
-//     paineis le `localStorage`, que `file://` nega. O ramo medido e o do
-//     painel completo;
-//   `PainelDePapel`, `SeletorDePeriodo`, `PrevistoXRealizado`, `MapaDeCalor`,
+//   `SeletorDePeriodo`, `PrevistoXRealizado`, `MapaDeCalor`,
 //   `NumeroIndisponivel`, `ui/progress` -- nenhuma assercao daqui os le, e o
 //     seletor arrasta o Radix e a mascara de digitacao;
 //   `cn`, `cva`, `Slot`  -- a fiacao de classe dos componentes de ui.
@@ -549,30 +546,12 @@ MODULOS["@/components/dashboard/MapaDeCalor"] = {
 MODULOS["@/components/SemRede"] = {
   NumeroIndisponivel: esboco("NUMERO-INDISPONIVEL"),
 };
-// O OUTRO RAMO DO PORTAO. Era o PainelDePapel ate a HMO-468; hoje e a conversa,
-// e a HMO-470 apagou o painel. O esboco existe pelo mesmo motivo de antes: o
-// ramo nao e o medido aqui (o useModoPapel abaixo devolve papel: false), mas o
-// import existe no fonte da pagina e a sonda EXIGE que todo modulo importado
-// tenha parte real ou esboco declarado.
-//
-// Sem esta entrada a suite inteira estoura com "a sonda nao montou o modulo",
-// que e o que aconteceu na main entre o merge da F4 (PR #367) e esta PR: 24
-// casos vermelhos de uma vez, nenhum deles sobre o que a suite mede.
-MODULOS["@/components/papel-de-pao/ConversaDePapel"] = {
-  ConversaDePapel: esboco("CONVERSA-DE-PAPEL"),
-};
 // O aviso de pagamento a lancar (081) busca a propria rota e nao desenha nada
 // quando nao ha pendencia -- e o caso aqui. Nulo, e nao esboco: um esboco
 // apareceria na tela e mudaria a lista que "nenhum esboco novo" confere.
 MODULOS["@/components/pagamentos/PagamentosParaLancar"] = {
   PagamentosParaLancar: () => null,
 };
-// O portao dos dois paineis le o \`localStorage\`, que \`file://\` nega. O ramo
-// medido e o do painel completo, e \`mounted:false\` mostraria so o giro.
-MODULOS["@/components/ModoPapelProvider"] = {
-  useModoPapel: () => ({ papel: false, mounted: true }),
-};
-
 // --- o codigo de producao ----------------------------------------------------
 
 ${producao}

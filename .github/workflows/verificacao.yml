@@ -745,39 +745,7 @@ jobs:
           fi
           git checkout -- app/globals.css
 
-          # 3) A MESMA regressao, mas na paleta do modo papel de pao (HMO-283).
-          #
-          # Este caso existe separado do (2) de proposito. A guarda le QUATRO
-          # blocos de globals.css, e ".papel" e ".dark" sao substring de
-          # ".dark.papel": um erro de leitura faria dois nomes apontarem para a
-          # mesma paleta, e as duas de papel ficariam SEM cobranca nenhuma
-          # enquanto o passo acima continuava verde. Os casos (2) e (3) juntos
-          # sao o que distingue "a guarda sabe falhar" de "a guarda sabe falhar
-          # nas quatro paletas".
-          #
-          # A ancora e o --muted-foreground de `.dark.papel` (creme sobre marrom
-          # profundo): levado a 35% de luminosidade ele cai para ~2.9:1. Se o
-          # valor mudar em globals.css e o sed parar de casar, o `grep` abaixo
-          # reprova -- um sed que nao casa SAI ZERO e passaria por "a guarda
-          # pegou", que e o modo de falha classico deste tipo de bloco.
-          sed -i 's/--muted-foreground: 38 32% 70%/--muted-foreground: 38 32% 35%/' app/globals.css
-          if ! grep -q -- '--muted-foreground: 38 32% 35%' app/globals.css; then
-            echo "::error::O mutante da paleta de papel nao foi aplicado -- a ancora mudou em globals.css. Este bloco estava medindo nada."
-            exit 1
-          fi
-          saida="$(node scripts/check-color-tokens.mjs 2>&1)" && {
-            echo "::error::A verificacao passou verde com a paleta de papel escuro em 2.9:1."
-            exit 1
-          }
-          # E tem que reprovar DIZENDO qual paleta -- uma mensagem que culpa o
-          # tema escuro normal manda consertar o bloco errado.
-          if ! printf '%s' "$saida" | grep -q 'papel escuro'; then
-            echo "::error::A verificacao reprovou, mas sem nomear a paleta de papel escuro:"
-            printf '%s\n' "$saida"
-            exit 1
-          fi
-
-          echo "A verificacao fica vermelha nas tres formas de regressao, e nomeia a paleta certa."
+          echo "A verificacao fica vermelha nas duas formas de regressao."
 
       # nota: verificacao-notas.md -> "'A arvore voltou ao lugar depois de "A verificacao sabe falhar (color-tokens)"'"
 
@@ -793,22 +761,6 @@ jobs:
             diff "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" || true
             exit 1
           fi
-      # nota: verificacao-notas.md -> "A preferencia do papel de pao cai no padrao, e o script do <head> funciona"
-      - name: A preferencia do papel de pao cai no padrao, e o script do <head> funciona
-        run: npm run test:modo-papel
-
-      # nota: verificacao-notas.md -> "O papelzinho e o espelho dele em Configuracoes trocam a pele do app"
-      - name: O papelzinho e o espelho dele em Configuracoes trocam a pele do app
-        run: npm run test:papel-na-tela
-
-      # nota: verificacao-notas.md -> "O menu do papel de pao tem 3 itens, e o menu normal tem 29"
-      - name: O menu do papel de pao tem 3 itens, e o menu normal tem 29
-        run: npm run test:menu-papel
-
-      # nota: verificacao-notas.md -> "Os mutantes do menu do papel de pao"
-      - name: Os mutantes do menu do papel de pao
-        run: node scripts/mutantes-menu-papel.mjs
-
       # nota: verificacao-notas.md -> "O menu tem 8 entradas de primeiro nivel, e nenhuma das 29 telas ficou fora"
       - name: O menu tem 8 entradas de primeiro nivel, e nenhuma das 29 telas ficou fora
         run: npm run test:menu-agrupado
@@ -6010,29 +5962,6 @@ jobs:
 
       - name: Os mutantes da conta prevista do cartao (a suite sabe reprovar?)
         run: npm run mutantes:previsao-do-cartao
-
-      # nota: verificacao-notas.md -> "Os tres numeros da conversa do Papel de Pao (ganhei, gastei, saldo)"
-      - name: Os tres numeros da conversa do Papel de Pao (ganhei, gastei, saldo)
-        run: npm run test:saldo-da-conversa
-
-      # nota: verificacao-notas.md -> "Os mutantes dos tres numeros da conversa (a suite acima sabe reprovar?)"
-      - name: Os mutantes dos tres numeros da conversa (a suite acima sabe reprovar?)
-        run: npm run mutantes:saldo-da-conversa
-      # nota: verificacao-notas.md -> "O motor da conversa do papel de pao (5 estados, o relogio por parametro)"
-      - name: O motor da conversa do papel de pao (5 estados, o relogio por parametro)
-        run: npm run test:conversa-do-papel
-
-      # nota: verificacao-notas.md -> "Os mutantes do motor da conversa (a suite acima sabe reprovar?)"
-      - name: Os mutantes do motor da conversa (a suite acima sabe reprovar?)
-        run: node scripts/mutantes-conversa-do-papel.mjs
-
-      # nota: verificacao-notas.md -> "A rota da conversa do Papel de Pao (sinal, conta, categoria, mes)"
-      - name: A rota da conversa do Papel de Pao (sinal, conta, categoria, mes)
-        run: npm run test:rota-da-conversa
-
-      # nota: verificacao-notas.md -> "Os mutantes da rota da conversa (a suite acima sabe reprovar?)"
-      - name: Os mutantes da rota da conversa (a suite acima sabe reprovar?)
-        run: npm run mutantes:rota-da-conversa
 
       # nota: verificacao-notas.md -> "O lancamento fora dos totais nas duas rotas (PATCH estrito, POST condicional)"
       - name: O lancamento fora dos totais nas duas rotas (PATCH estrito, POST condicional)

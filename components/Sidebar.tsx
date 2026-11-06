@@ -13,8 +13,7 @@ import {
 } from "@/components/MobileMenuChrome";
 // O array dos itens e o filtro por plano moraram aqui dentro ate a HMO-284; o
 // cabecalho daquele arquivo explica por que sairam. O item renderizado abaixo e
-// o MESMO objeto dessa lista -- nem o modo papel nem o submenu tem lista
-// propria.
+// o MESMO objeto dessa lista -- o submenu nao tem lista propria.
 import {
   EntradaDoMenu,
   GrupoDeMenu,
@@ -25,10 +24,7 @@ import {
   itemAtivoDoMenu,
   menuAgrupado,
   navigation,
-  podeVerItem,
 } from "@/components/navegacao-do-menu";
-import { filtrarMenuDoPapel } from "@/lib/menu-do-papel";
-import { useModoPapel } from "@/components/ModoPapelProvider";
 import { propsSemPuxao } from "@/lib/puxar-para-atualizar";
 import { cn } from "@/lib/utils";
 import { User as UserType } from "@supabase/supabase-js";
@@ -62,7 +58,6 @@ export default function Sidebar({
   const busca = useSearchParams().toString();
   const { hasFeature, subscription, isPremium, planConfig } =
     useSubscription(user);
-  const { papel } = useModoPapel();
   // QUAIS GRUPOS O USUARIO ABRIU OU FECHOU A MAO, por nome. O que NAO esta
   // aqui nao e "fechado": e "ainda nao mexi", e ai quem decide e a tela atual
   // (ver `grupoAberto`). Comecar com tudo fechado e um objeto vazio e nao uma
@@ -106,34 +101,13 @@ export default function Sidebar({
     return !!(item.isPremium && !isPremium);
   };
 
-  // O MENU TEM DUAS FORMAS (HMO-423), e quem escolhe e o modo papel de pao.
-  //
-  // DESLIGADO: as 8 entradas de primeiro nivel de `menuAgrupado` -- duas telas
-  // soltas e seis grupos que abrem submenu, com as 29 telas dentro.
-  //
-  // LIGADO: a lista PLANA das 3 telas do modo (eram 8 ate a HMO-466). Submenu
-  // num menu de 3 itens seria clique a mais para esconder nada, e o modo promete
-  // o contrario. E a lista do modo nao e uma segunda lista: ela sai do mesmo
-  // `navigation`, que por sua vez sai do mesmo `menuAgrupado` (ver o cabecalho
-  // daquele arquivo).
-  //
-  // OS DOIS CAMINHOS PASSAM PELO FILTRO DE PLANO, e e o mesmo `podeVerItem` nos
-  // dois -- `filtrarMenuAgrupado` o aplica item por item dentro de cada grupo e
-  // descarta o grupo que ficou vazio. A ordem entre os dois filtros nao muda o
-  // resultado -- os dois so removem -- e esta assim porque le melhor:
-  // "do que o plano permite, o que o modo mantem".
-  //
-  // `papel` e falso enquanto `mounted` for falso, porque e o padrao do
-  // provider. Isso e de proposito: o HTML do servidor nao conhece o
-  // localStorage, e pintar o menu curto num chute quebraria a hidratacao. Quem
-  // usa o modo ve o menu completo por um quadro -- diferente da PELE, que o
-  // script inline do `<head>` ja aplicou antes da primeira pintura.
-  const entradasDoMenu: readonly EntradaDoMenu[] = papel
-    ? filtrarMenuDoPapel(
-        navigation.filter((item) => podeVerItem(item, subscription?.plan)),
-        papel
-      )
-    : filtrarMenuAgrupado(menuAgrupado, subscription?.plan);
+  // As 8 entradas de primeiro nivel de `menuAgrupado` -- duas telas soltas e
+  // seis grupos que abrem submenu, com as 29 telas dentro -- passadas pelo
+  // filtro de plano (`filtrarMenuAgrupado` aplica `podeVerItem` item por item e
+  // descarta o grupo que ficou vazio).
+  const planoDoUsuario = subscription?.plan;
+  const entradasDoMenu: readonly EntradaDoMenu[] =
+    filtrarMenuAgrupado(menuAgrupado, planoDoUsuario);
 
   // O ITEM ATIVO E UM SO, e ele e o MAIS ESPECIFICO -- `itemAtivoDoMenu` tem a
   // regra e o porque. Calculado UMA vez para o menu inteiro: a decisao depende

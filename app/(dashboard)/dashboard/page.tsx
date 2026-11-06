@@ -127,15 +127,6 @@ import {
   LEGENDA_DO_CUSTO_REALIZADO,
   LEGENDA_DO_LIQUIDO,
 } from "@/lib/legenda-do-bruto-e-do-liquido";
-// Os dois lados do portao do modo papel de pao (HMO-286). O `useModoPapel` ja
-// esta montado em `app/layout.tsx` pelo `ModoPapelProvider` da HMO-283.
-import { useModoPapel } from "@/components/ModoPapelProvider";
-// A CONVERSA ENTROU NO LUGAR DO PAINEL (HMO-468, F4 do plano da HMO-462), e o
-// painel JA FOI APAGADO (HMO-470, F6): `PainelDePapel`, a rota
-// `/api/papel-de-pao/painel` e `lib/papel-de-pao.ts` nao existem mais. O que NAO
-// mudou: o modo, a pele `.papel`, o `ModoPapelProvider`, o `PapelToggle` e o
-// script de pre-pintura. A conversa substituiu o PAINEL, nao o MODO.
-import { ConversaDePapel } from "@/components/papel-de-pao/ConversaDePapel";
 import { PagamentosParaLancar } from "@/components/pagamentos/PagamentosParaLancar";
 
 import { Dica } from "@/components/ui/dica";
@@ -224,34 +215,9 @@ interface Meta {
   status: string;
 }
 
-// -----------------------------------------------------------------------------
-// O PORTAO DOS DOIS PAINEIS (HMO-286, 3/3 do plano da HMO-279)
-// -----------------------------------------------------------------------------
-// Com o modo papel de pao ligado, esta rota mostra DOIS numeros em vez do painel
-// inteiro. Isso e um portao de dez linhas, e nao um `if` dentro do
-// `PainelCompleto` abaixo, por um motivo mecanico: os hooks daquele componente
-// rodam ANTES de qualquer `if` de renderizacao, entao "esconder os cartoes"
-// faria o modo simples disparar as mesmas OITO requisicoes para mostrar dois
-// numeros -- no aparelho de quem escolheu o modo justamente por querer menos.
-// O corpo de hoje nao foi reescrito: so renomeado de `Painel` para
-// `PainelCompleto`.
-//
-// `mounted` NAO E HIGIENE. A preferencia mora no `localStorage`, que o servidor
-// nao le: sem esperar o primeiro efeito do cliente, o HTML do servidor
-// escolheria um dos dois paineis no chute e a hidratacao quebraria. E o mesmo
-// cuidado que o papelzinho e o ThemeToggle ja tomam, e aqui o custo de errar e
-// maior -- a tela INTEIRA trocaria, nao um icone.
-//
 // `useSearchParams` obriga a um limite de Suspense: sem ele o `next build`
-// para com "useSearchParams() should be wrapped in a suspense boundary". O
-// limite fica DENTRO do ramo do painel completo -- o painel de papel nao le a
-// URL, e o componente de verdade daquele ramo e o `PainelCompleto` abaixo.
+// para com "useSearchParams() should be wrapped in a suspense boundary".
 export default function DashboardPage() {
-  const { papel, mounted } = useModoPapel();
-
-  if (!mounted) return <Girando />;
-  if (papel) return <ConversaDePapel />;
-
   return (
     <Suspense fallback={<Girando />}>
       <PainelCompleto />
@@ -268,9 +234,7 @@ function Girando() {
 }
 
 /**
- * O painel de sempre -- os blocos todos, as oito requisicoes, o seletor de
- * periodo. Antes da HMO-286 isto se chamava `Painel`; nenhuma linha do corpo
- * mudou, so o nome, que agora diz de que ele e o oposto.
+ * O painel -- os blocos todos, as oito requisicoes, o seletor de periodo.
  *
  * NAO LEVA `export`, e isso nao e escolha de estilo: arquivo de pagina do App
  * Router so pode exportar `default` e as chaves que o Next conhece
@@ -282,7 +246,7 @@ function Girando() {
  *     export field.
  *
  * e esse erro NAO aparece no `npm run type-check` -- a validacao mora nos tipos
- * que o `next build` gera em `.next/types`. O portao acima e o unico chamador e
+ * que o `next build` gera em `.next/types`. A pagina acima e o unico chamador e
  * vive neste mesmo modulo, entao exportar nao serviria para nada.
  */
 function PainelCompleto() {

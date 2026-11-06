@@ -17,7 +17,7 @@
     "import de React nos componentes, ou seja mudar producao por causa do teste.",
     "",
     "O include tem DOIS arquivos porque o resto vem pelos imports:",
-    "PainelPraQuemPagar arrasta components/papel-de-pao/LinhaDeDetalhe.tsx (a",
+    "PainelPraQuemPagar arrasta components/movimentacoes/LinhaDeDetalhe.tsx (a",
     "MESMA linha que o painel do dashboard usa -- e o ponto da F2),",
     "components/ui/button.tsx, components/ui/card.tsx,",
     "components/fatura/EloDaFatura.tsx, lib/fatura-do-cartao.ts e lib/utils.ts.",

@@ -148,7 +148,6 @@ O que a viagem ou o churrasco precisam e **não tem**:
 | **Calculadoras** | página de 745 linhas | ativo | Neutro. Não lê o banco. |
 | **Contracheque** | `payroll` | ativo | Serve ao pessoal (gera a receita líquida); é nicho. |
 | **Planos e assinatura** | `plans`, `subscription/*`, `user_subscriptions`, `user_usage_limits` | gates parciais | Só `Trading` e `Admin` filtram o menu; o resto é cadeado visual. |
-| **Modo papel de pão** | `modo-papel.ts`, `menu-do-papel.ts`, `ConversaDePapel`, `api/papel-de-pao/conversa` | metade entregue | O cabeçalho da rota cita `painel/route.ts` e `lib/papel-de-pao.ts`, que **não existem**. É uma tela simplificada ("Gastei X / Ganhei X") que pode virar a porta de entrada do pessoal, ou sair. |
 
 ---
 
@@ -192,8 +191,7 @@ O que a viagem ou o churrasco precisam e **não tem**:
 5. **Escrita fora da API.** O formulário de lançamento, Finanças Pessoais,
    Perfil, Conexões e a chave Pix gravam direto no Supabase do navegador. Ao
    mesmo tempo existem rotas para as mesmas coisas que ninguém chama (seção 5).
-   O `POST /api/personal-finance/transactions` não grava `account_id`, e a rota
-   da conversa do papel de pão foi criada à parte por causa disso.
+   O `POST /api/personal-finance/transactions` não grava `account_id`.
 
 6. **Lista e recortes de movimentação.** `personal-finance` (lista com editar e
    excluir) convive com `receitas`, `despesas` e `transferencias` (os três

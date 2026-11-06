@@ -3,13 +3,12 @@
 // -----------------------------------------------------------------------------
 // UMA LINHA DA LISTA QUE O CHEVRON ABRE
 // -----------------------------------------------------------------------------
-// EXTRAIDO de PainelDePapel.tsx na HMO-365 (F2 da HMO-360), sem mudanca de
-// comportamento: o corpo abaixo e o mesmo que nasceu na HMO-300, e as 48
-// assercoes de `test:papel-na-tela` continuam sendo a medicao dele.
+// Nasceu no painel do modo papel de pao (HMO-300) e foi extraido na HMO-365.
+// O modo saiu do app; esta linha ficou porque o painel "pra quem pagar" da aba
+// Despesas a usa.
 //
-// POR QUE O ARQUIVO PROPRIO, e isso nao e organizacao: a F2 precisa do MESMO
-// renderizador de linha num segundo lugar -- o painel "pra quem pagar" da aba
-// Despesas. A issue e explicita sobre isso ("o chevron: reusar, nao reescrever"),
+// POR QUE O ARQUIVO PROPRIO, e isso nao e organizacao: o MESMO renderizador de
+// linha serve a mais de um lugar. A issue e explicita sobre isso ("o chevron: reusar, nao reescrever"),
 // e o motivo nao e economia de linhas. Sao as regras ESCRITAS nesta linha que
 // nao podem divergir entre os dois paineis:
 //
@@ -117,7 +116,7 @@ export function LinhaDeDetalhe({
           />
         )}
       </span>
-      <span className="font-papel shrink-0" data-valor-do-detalhe={linha.valor}>
+      <span className="shrink-0" data-valor-do-detalhe={linha.valor}>
         {formatCurrency(linha.valor)}
       </span>
     </li>

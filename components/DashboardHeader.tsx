@@ -3,7 +3,6 @@
 import { User } from "@supabase/supabase-js";
 import { NotificationBell } from "@/components/ui/notifications";
 import { MobileMenuToggle } from "@/components/MobileMenuChrome";
-import { PapelToggle } from "@/components/PapelToggle";
 import { ThemeToggle } from "@/components/ThemeToggle";
 
 interface DashboardHeaderProps {
@@ -44,7 +43,6 @@ export function DashboardHeader({
           <h1 className="text-lg font-bold text-foreground">PulodoGato</h1>
 
           <div className="flex items-center gap-1">
-            <PapelToggle />
             <ThemeToggle />
             <NotificationBell user={user} />
           </div>
@@ -60,7 +58,6 @@ export function DashboardHeader({
       <div className="hidden lg:block lg:pl-64 fixed top-0 left-0 right-0 z-30 pt-safe px-safe">
         <div className="bg-card border-b shadow-sm">
           <div className="flex items-center justify-end gap-1 px-6 h-16">
-            <PapelToggle />
             <ThemeToggle />
             <NotificationBell user={user} />
           </div>

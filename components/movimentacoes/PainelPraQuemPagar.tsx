@@ -52,7 +52,7 @@ import { ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { formatCurrency } from "@/lib/utils";
-import { LinhaDeDetalhe } from "@/components/papel-de-pao/LinhaDeDetalhe";
+import { LinhaDeDetalhe } from "@/components/movimentacoes/LinhaDeDetalhe";
 import { CopiarPix, type PixParaCopiar } from "@/components/movimentacoes/CopiarPix";
 import type { DestinoDoPagamento } from "@/lib/pra-quem-pagar";
 

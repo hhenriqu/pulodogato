@@ -8,8 +8,7 @@
  *      branco na tela de quem usa o app a noite.
  *   2. Os pares de token continuam legiveis em CADA PALETA? E facil trocar um
  *      valor em globals.css e deixar texto com contraste de 2:1 sem perceber.
- *      Sao quatro paletas desde a HMO-283 -- claro, escuro, e as duas do modo
- *      papel de pao (`.papel` e `.dark.papel`).
+ *      Sao duas paletas -- claro (`:root`) e escuro (`.dark`).
  *
  * Roda no pre-commit e no CI. Se precisar mesmo de uma cor fixa, adicione o
  * caso em ALLOWED com o motivo -- a excecao fica registrada em vez de virar
@@ -206,8 +205,6 @@ function readTokens() {
   return {
     light: block(":root"),
     dark: block(".dark"),
-    papel: block(".papel"),
-    papelEscuro: block(".dark.papel"),
   };
 }
 
@@ -246,17 +243,11 @@ const NON_TEXT_PAIRS = [
 ];
 
 function checkContrast() {
-  const { light, dark, papel, papelEscuro } = readTokens();
+  const { light, dark } = readTokens();
   const failures = [];
-  // As QUATRO paletas, e nao duas. O modo papel de pao (HMO-283) tem uma pele
-  // clara e uma escura proprias -- se so as duas de cima fossem medidas, a
-  // paleta que a issue acrescentou seria exatamente a unica sem rede, e um
-  // marrom sobre bege com 2,5:1 entraria sem nada reclamar.
   for (const [themeName, tokens] of [
     ["claro", light],
     ["escuro", dark],
-    ["papel claro", papel],
-    ["papel escuro", papelEscuro],
   ]) {
     const check = (fg, bg, min) => {
       if (!tokens[fg] || !tokens[bg]) {
@@ -302,6 +293,5 @@ if (contrastFailures.length) {
 if (offenders.length || contrastFailures.length) process.exit(1);
 
 console.log(
-  "✓ cores: todas nos tokens, contraste AA nas quatro paletas " +
-    "(claro, escuro, papel claro, papel escuro)"
+  "✓ cores: todas nos tokens, contraste AA nas duas paletas (claro, escuro)"
 );
