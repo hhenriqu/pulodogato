@@ -65,7 +65,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -84,6 +86,7 @@ import {
   pagarAFatura,
   type LinhaParaPagar,
 } from "@/lib/pagamento-da-fatura";
+import { valorDigitado } from "@/lib/pagamento-parcial-da-fatura";
 
 /** O que o seletor precisa de uma conta de `GET /api/financial-accounts`. */
 interface ContaDoSeletor {
@@ -104,6 +107,12 @@ export interface DialogoDePagamentoDaFaturaProps {
   linha: LinhaDoPagamentoDaFatura | null;
   /** O valor, JA formatado pela tela ("R$ 1.234,56"). */
   valorFormatado: string;
+  /**
+   * O total da fatura em reais, para saber se o valor digitado e parcial.
+   * Sem ele o dialogo nao oferece "levar o restante" -- a rota decide o
+   * restante de qualquer forma, isto so mostra a opcao.
+   */
+  valor?: number | null;
   /** O vencimento, JA formatado pela tela ("10/11/26"). */
   vencimentoFormatado: string;
   /**
@@ -123,6 +132,7 @@ export interface DialogoDePagamentoDaFaturaProps {
 export function DialogoDePagamentoDaFatura({
   linha,
   valorFormatado,
+  valor = null,
   vencimentoFormatado,
   hoje,
   aoFechar,
@@ -135,6 +145,10 @@ export function DialogoDePagamentoDaFatura({
   const [contas, setContas] = useState<ContaDoSeletor[] | null>(null);
   const [contaPagadora, setContaPagadora] = useState("");
   const [pagando, setPagando] = useState(false);
+  // PAGAMENTO PARCIAL (comparacao com o Minhas Financas): vazio = o total.
+  const [valorTexto, setValorTexto] = useState("");
+  const [levarRestante, setLevarRestante] = useState(true);
+  const [encargoTexto, setEncargoTexto] = useState("");
 
   // A CHAVE ESTAVEL DA LINHA, e nao o objeto: `linha` e uma prop e qualquer
   // render do pai dispararia a busca de novo. A fatura ABERTA nao tem `id`,
@@ -151,6 +165,9 @@ export function DialogoDePagamentoDaFatura({
     let vivo = true;
     setContas(null);
     setContaPagadora("");
+    setValorTexto("");
+    setLevarRestante(true);
+    setEncargoTexto("");
 
     void (async () => {
       try {
@@ -178,8 +195,17 @@ export function DialogoDePagamentoDaFatura({
     };
   }, [chaveDaLinha]);
 
+  const valorPago = valorDigitado(valorTexto);
+  const valorInvalido =
+    valorTexto.trim() !== "" && (valorPago === null || valorPago <= 0);
+  const encargo = valorDigitado(encargoTexto);
+  const encargoInvalido = encargoTexto.trim() !== "" && encargo === null;
+  const ehParcial =
+    valor != null && valorPago != null && valorPago > 0 && valorPago < valor;
+  const restante = ehParcial ? Math.round((valor - valorPago) * 100) / 100 : 0;
+
   const confirmar = useCallback(async () => {
-    if (!linha || !contaPagadora) return;
+    if (!linha || !contaPagadora || valorInvalido || encargoInvalido) return;
 
     setPagando(true);
     try {
@@ -190,6 +216,9 @@ export function DialogoDePagamentoDaFatura({
         // em que dia -- e no dia 1o, em que MES -- a fatura paga aparece.
         pagoEm: hoje(),
         rede: (url, init) => fetch(url, init),
+        valorPago,
+        levarRestante: ehParcial && levarRestante,
+        encargo,
       });
 
       if (!resultado.ok) {
@@ -210,7 +239,19 @@ export function DialogoDePagamentoDaFatura({
     } finally {
       setPagando(false);
     }
-  }, [linha, contaPagadora, hoje, aoFechar, aoPagar]);
+  }, [
+    linha,
+    contaPagadora,
+    hoje,
+    aoFechar,
+    aoPagar,
+    valorPago,
+    valorInvalido,
+    encargo,
+    encargoInvalido,
+    ehParcial,
+    levarRestante,
+  ]);
 
   const decisao = linha ? decisaoDePagamentoDaFatura(linha) : null;
   // `faturaParaFechar` e nao `!linha.gravada`: o aviso do valor congelado vale
@@ -271,6 +312,65 @@ export function DialogoDePagamentoDaFatura({
                   </Select>
                 </div>
 
+                <div>
+                  <Label htmlFor="valor-do-pagamento">
+                    Quanto você pagou?
+                  </Label>
+                  <Input
+                    id="valor-do-pagamento"
+                    inputMode="decimal"
+                    placeholder={`${valorFormatado} (o total)`}
+                    value={valorTexto}
+                    onChange={(e) => setValorTexto(e.target.value)}
+                  />
+                  {valorInvalido && (
+                    <p className="mt-1 text-xs text-destructive">
+                      Digite um valor maior que zero, como 200 ou 200,50.
+                    </p>
+                  )}
+                </div>
+
+                {ehParcial && (
+                  <div className="flex items-start justify-between gap-3 rounded-lg border border-border p-3">
+                    <div>
+                      <Label htmlFor="levar-restante">
+                        Valor restante na próxima fatura
+                      </Label>
+                      <p className="text-xs text-muted-foreground">
+                        {levarRestante
+                          ? `Os ${restante.toLocaleString("pt-BR", {
+                              style: "currency",
+                              currency: "BRL",
+                            })} que faltaram entram na fatura seguinte, e esta fecha no valor pago.`
+                          : "O que faltou continua devido no cartão, sem entrar em nenhuma fatura."}
+                      </p>
+                    </div>
+                    <Switch
+                      id="levar-restante"
+                      checked={levarRestante}
+                      onCheckedChange={setLevarRestante}
+                    />
+                  </div>
+                )}
+
+                <div>
+                  <Label htmlFor="encargo-do-pagamento">
+                    Encargos (juros, multa, IOF)
+                  </Label>
+                  <Input
+                    id="encargo-do-pagamento"
+                    inputMode="decimal"
+                    placeholder="Opcional — entra na próxima fatura"
+                    value={encargoTexto}
+                    onChange={(e) => setEncargoTexto(e.target.value)}
+                  />
+                  {encargoInvalido && (
+                    <p className="mt-1 text-xs text-destructive">
+                      Digite o encargo como 12 ou 12,34.
+                    </p>
+                  )}
+                </div>
+
                 <p className="text-xs text-muted-foreground">
                   {FRASE_DO_PATRIMONIO_NO_DIALOGO}
                 </p>
@@ -286,7 +386,9 @@ export function DialogoDePagamentoDaFatura({
 
                 <Button
                   className="w-full"
-                  disabled={!contaPagadora || pagando}
+                  disabled={
+                    !contaPagadora || pagando || valorInvalido || encargoInvalido
+                  }
                   onClick={() => void confirmar()}
                 >
                   {pagando && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}

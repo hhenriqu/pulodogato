@@ -58,6 +58,15 @@ import {
   patchDoEstornoDaParcela,
 } from "@/lib/emprestimo-do-mybank";
 import { baixaDaTransferenciaPrevista } from "@/lib/services/baixa-da-transferencia-prevista";
+import { categoriaReservada } from "@/lib/services/categoria-reservada";
+import {
+  CATEGORIAS_DO_PAGAMENTO_PARCIAL,
+  categoriaDoPapel,
+  chaveEncargo,
+  chaveRestante,
+  planoDoPagamentoParcial,
+  type TipoDeCategoriaDoParcial,
+} from "@/lib/pagamento-parcial-da-fatura";
 import {
   ehContaDoFechamento,
   MENSAGEM_DA_CONTA_DO_FECHAMENTO,
@@ -161,6 +170,13 @@ export async function POST(
         valorPago,
         paid_date,
         scheduledId: params.id,
+        mes: fatura.mes,
+        // So `true` liga: pagar a menos sem pedir nada e o comportamento de
+        // antes, e um "true" em texto vindo de outro cliente nao deve mover
+        // divida de mes por acidente.
+        levarRestante: body.levar_restante === true,
+        encargo:
+          body.encargo != null && body.encargo !== "" ? Number(body.encargo) : null,
       });
     }
 
@@ -338,6 +354,12 @@ async function pagarFatura(params: {
   valorPago: number | null;
   paid_date: string;
   scheduledId: string;
+  /** O mes da fatura, da chave canonica. */
+  mes: string;
+  /** Pagou a menos: o restante vai para a fatura seguinte? */
+  levarRestante: boolean;
+  /** Juros, multa, IOF: despesa na fatura seguinte. */
+  encargo: number | null;
 }): Promise<NextResponse> {
   const {
     supabase,
@@ -348,7 +370,25 @@ async function pagarFatura(params: {
     valorPago,
     paid_date,
     scheduledId,
+    mes,
+    levarRestante,
+    encargo,
   } = params;
+
+  // O PLANO DO PAGAMENTO PARCIAL, ANTES DE QUALQUER ESCRITA. Encargo invalido
+  // e 400 com o mundo intacto, e nao uma transferencia feita e um erro depois.
+  const plano = planoDoPagamentoParcial({
+    totalDaFatura: Number(conta.amount),
+    valorPago: valorPago ?? Number(conta.amount),
+    levarRestante,
+    encargo,
+    mes,
+    cartaoId,
+    pagoEm: paid_date,
+  });
+  if (!plano.ok) {
+    return NextResponse.json({ error: plano.erro }, { status: 400 });
+  }
 
   const contaPagadoraId =
     typeof params.contaPagadoraId === "string" && params.contaPagadoraId
@@ -382,6 +422,27 @@ async function pagarFatura(params: {
       { error: mensagemContaPagadora(problema), needs_payment_account: true },
       { status: 400 }
     );
+  }
+
+  // As categorias reservadas das linhas extras, tambem antes das escritas.
+  const categoriasDasLinhas: Partial<Record<TipoDeCategoriaDoParcial, string>> =
+    {};
+  for (const linha of plano.linhas) {
+    const tipoDaCategoria = categoriaDoPapel(linha.papel);
+    if (categoriasDasLinhas[tipoDaCategoria]) continue;
+    const categoria = await categoriaReservada(
+      supabase,
+      userId,
+      serviceId,
+      CATEGORIAS_DO_PAGAMENTO_PARCIAL[tipoDaCategoria]
+    );
+    if (!categoria) {
+      return NextResponse.json(
+        { error: "Não foi possível preparar o pagamento parcial" },
+        { status: 500 }
+      );
+    }
+    categoriasDasLinhas[tipoDaCategoria] = categoria.id;
   }
 
   const { saida, entrada } = pernasDoPagamentoDeFatura({
@@ -440,6 +501,46 @@ async function pagarFatura(params: {
     );
   }
 
+  // O RESTANTE E O ENCARGO, depois das pernas e antes da baixa: se falharem,
+  // as pernas saem e a fatura continua pendente -- "nao deu baixa", que a
+  // pessoa ve e refaz.
+  const idsDasLinhas: string[] = [];
+  if (plano.linhas.length > 0) {
+    const { data: extras, error: erroExtras } = await supabase
+      .from("financial_transactions")
+      .insert(
+        plano.linhas.map(({ papel, ...linha }) => ({
+          ...linha,
+          user_id: userId,
+          service_id: serviceId,
+          category_id: categoriasDasLinhas[categoriaDoPapel(papel)],
+          group_id: null,
+        }))
+      )
+      .select("id");
+
+    if (erroExtras || !extras || extras.length !== plano.linhas.length) {
+      const parciais = (extras ?? []).map((l: { id: string }) => l.id);
+      if (parciais.length > 0) {
+        await supabase.from("financial_transactions").delete().in("id", parciais);
+      }
+      await supabase.from("financial_transactions").delete().eq("id", txEntrada.id);
+      await supabase.from("financial_transactions").delete().eq("id", txSaida.id);
+      console.error(
+        "Pagamento desfeito: não foi possível levar o restante da fatura",
+        erroExtras
+      );
+      return NextResponse.json(
+        {
+          error:
+            "Não foi possível levar o restante para a próxima fatura. Nada foi lançado — tente novamente.",
+        },
+        { status: 500 }
+      );
+    }
+    idsDasLinhas.push(...extras.map((l: { id: string }) => l.id));
+  }
+
   const { data: baixada, error: erroBaixa } = await supabase
     .from("scheduled_transactions")
     .update({ status: "paid", paid_date, transaction_id: txSaida.id })
@@ -449,6 +550,9 @@ async function pagarFatura(params: {
     .single();
 
   if (erroBaixa || !baixada) {
+    if (idsDasLinhas.length > 0) {
+      await supabase.from("financial_transactions").delete().in("id", idsDasLinhas);
+    }
     // A entrada primeiro: ela aponta para a saida, e o FK e ON DELETE SET
     // NULL. Apagar a saida antes deixaria a entrada sem elo nenhum -- uma
     // perna de transferencia solta no saldo do cartao, sem nada que diga de
@@ -473,6 +577,10 @@ async function pagarFatura(params: {
     // A tela mostra isso: pagar a fatura nao muda o patrimonio, e quem ve o
     // numero parado depois de pagar R$ 1.000 precisa saber que esta certo.
     is_transfer: true,
+    // Quanto foi para a fatura seguinte (0 quando nada foi).
+    restante_levado: plano.linhas.some((l) => l.papel === "restante")
+      ? plano.restante
+      : 0,
   });
 }
 
@@ -827,6 +935,43 @@ export async function DELETE(
             {
               error:
                 "Não foi possível devolver a parcela do MyBank para pendente. Nada foi estornado — tente novamente.",
+            },
+            { status: 500 }
+          );
+        }
+      }
+    }
+
+    // ---------------------------------------------------------------
+    // O RESTANTE E O ENCARGO DO PAGAMENTO PARCIAL SAEM PRIMEIRO
+    // ---------------------------------------------------------------
+    // Eles nao mexem no saldo do cartao (o restante se anula; o encargo e
+    // divida que so existe porque a fatura foi paga a menos). Falhar aqui deixa
+    // o resto intacto -- fatura paga, pernas no lugar -- e a pessoa reclica.
+    // Fatura paga antes desta mudanca nao tem linha nenhuma, e o DELETE apaga
+    // zero linhas.
+    const faturaEstornada = faturaDaChave(conta.notes);
+    if (faturaEstornada) {
+      const chaves = [
+        chaveRestante(faturaEstornada.mes, faturaEstornada.accountId),
+        chaveEncargo(faturaEstornada.mes, faturaEstornada.accountId),
+      ].filter((chave): chave is string => chave !== null);
+      if (chaves.length > 0) {
+        const { error: erroDasExtras } = await supabase
+          .from("financial_transactions")
+          .delete()
+          .eq("user_id", user.id)
+          .eq("account_id", faturaEstornada.accountId)
+          .in("notes", chaves);
+        if (erroDasExtras) {
+          console.error(
+            "Estorno recusado: o restante da fatura não pôde ser removido",
+            erroDasExtras
+          );
+          return NextResponse.json(
+            {
+              error:
+                "Não foi possível remover o restante levado para a próxima fatura. Nada foi estornado — tente novamente.",
             },
             { status: 500 }
           );

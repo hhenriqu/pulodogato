@@ -33,6 +33,13 @@
 | 2.12 | 02/11/2026 | RN024 nova: a visão da casa. O mês da família somado (sem contar duas vezes o que um membro deve ao outro), a conta conjunta e o dependente sem login. Cada membro escolhe mostrar o próprio mês | Helio |
 | 2.13 | 02/11/2026 | RN025 nova: o participante sem conta no app (só o nome) divide as despesas do grupo, aparece no saldo e no acerto; quem tem conta lança a despesa que outra pessoa pagou, que fica só no grupo. Nesta versão, nenhum dos dois entra em grupo com dia de fechamento | Helio |
 | 2.14 | 04/11/2026 | RN020.12 nova: o pagamento para uma pessoa da família aparece para quem recebe, que confirma a conta em que o dinheiro entrou | Helio |
+| 2.15 | 06/11/2026 | RN004.7 nova: a fatura vence no próximo dia útil quando o dia do vencimento cai em fim de semana ou feriado bancário. Opção do cartão, ligada por padrão, como no Minhas Finanças | Helio |
+| 2.16 | 06/11/2026 | RN004.8 nova: o cartão mostra o limite, o valor em aberto (a dívida inteira, parcelas futuras incluídas) e o disponível, e a fatura do mês leva o selo Aberta, Fechada ou Futura, como no Minhas Finanças | Helio |
+| 2.17 | 06/11/2026 | RN004.9 nova: pagamento parcial da fatura com o restante levado para a fatura seguinte e encargos opcionais, como no Minhas Finanças | Helio |
+| 2.18 | 06/11/2026 | RN016.1.2 nova: o mês de cada conta (saldo inicial, receitas, despesas, transferências, saldo e previsto) na tela Contas, como no Minhas Finanças | Helio |
+| 2.19 | 06/11/2026 | RN004.10 e RN004.11 novas: mover a fatura para o próximo vencimento e parcelar a fatura, como no Minhas Finanças | Helio |
+| 2.20 | 06/11/2026 | RN016.6.1 nova: tags no lançamento e "ignorar nos orçamentos", como no Minhas Finanças (migration 083) | Helio |
+| 2.21 | 06/11/2026 | RN016.6.2 nova: relatório de lançamentos com data de referência (lançamento, vencimento, efetivação) e situação, como no Minhas Finanças | Helio |
 
 > **O que a versão 2.0 corrigiu.** Até aqui esta PRD descrevia um app de carteira
 > de investimentos: o problema era "investidores pessoa física", as personas eram
@@ -322,6 +329,34 @@ a tela não pode contorná-las. As marcadas **(tela)** vivem em TypeScript testa
   um mês (excluir "só esta") ou encerrar fica na tela do cartão, com a
   pergunta do alcance; a compra já lançada se edita na fatura, como qualquer
   compra.
+- RN004.7 **Vencimento em dia útil** (migration 082): quando o dia do
+  vencimento cai em sábado, domingo ou feriado bancário nacional (os fixos,
+  segunda e terça de Carnaval, Sexta-feira Santa e Corpus Christi), a fatura
+  vence no próximo dia útil. Só o vencimento anda: o fechamento e a fatura em
+  que a compra cai não mudam. Se o vencimento andar para o mês seguinte, a
+  fatura conta nesse mês (RN017.4). É uma opção do cadastro do cartão, ligada
+  por padrão; desligada, a fatura vence sempre no dia escolhido. Feriado
+  estadual e municipal não contam.
+- RN004.8 **Limite e situação da fatura**: em cada cartão, **Em aberto** é a
+  dívida inteira do cartão hoje (compras, inclusive as parcelas futuras,
+  menos estornos e pagamentos) e **Disponível** é o limite menos ela, com uma
+  barra de uso. A fatura do mês na tela é **Aberta** enquanto uma compra feita
+  hoje ainda cairia nela, **Fechada** depois do fechamento e **Futura** antes
+  de começar a receber compras.
+- RN004.9 **Pagamento parcial da fatura**: ao pagar a fatura, a pessoa pode
+  informar um valor menor que o total. Marcando **Valor restante na próxima
+  fatura**, o que faltou sai desta fatura (que fecha no valor pago) e entra na
+  fatura seguinte; o saldo devido do cartão só muda pelo valor pago, e as duas
+  linhas do restante ficam fora dos totais de receita e despesa. **Encargos**
+  (juros, multa, IOF) informados no pagamento são despesa na fatura seguinte.
+  Estornar o pagamento desfaz o restante e o encargo junto.
+- RN004.10 **Mover para o próximo vencimento**: todas as compras da fatura de
+  um mês passam para a fatura seguinte; o saldo devido do cartão não muda. A
+  fatura fechada e pendente sai de Contas a Pagar. Fatura paga não se move.
+- RN004.11 **Parcelar fatura**: a fatura de um mês fecha em zero e o total
+  entra em 2 a 24 faturas seguintes, em centavos que somam o total; essas
+  linhas ficam fora dos totais. Juros informados são despesa, divididos entre
+  as parcelas. Fatura paga não se parcela, e o parcelamento pode ser desfeito.
 
 ### RN005 — Parcelamento ✅
 
@@ -452,6 +487,14 @@ nas contas que o fechamento gerou.
   saldo no fim de um mês é o saldo do começo do mês seguinte. Lançamento com
   data futura não conta. A lista de contas do painel continua mostrando o
   cartão com a dívida dele (`lib/saldo-em-conta.ts`).
+- RN016.1.2 **Mês das contas**: na tela Contas, cada conta de dinheiro mostra,
+  para o mês escolhido, Saldo inicial, Receitas, Despesas, Transf. créd.,
+  Transf. déb., Saldo e Previsto, como no Minhas Finanças. Receitas e despesas
+  somam o realizado e as previsões pendentes do mês. Saldo é o realizado até
+  hoje (ou até o fim do mês, se ele já passou). Previsto é o saldo inicial
+  mais receitas e transferências recebidas, menos despesas e transferências
+  enviadas. Transferência só é transferência entre duas contas de dinheiro: o
+  pagamento de fatura sai da conta como despesa (`lib/saldo-por-conta.ts`).
 - RN016.2 **Resultado do mês** = Total de Receitas − Total de Despesas do mês,
   com a composição da RN017.
 - RN016.3 Cada movimentação entra no mês da sua data: a data do lançamento
@@ -466,6 +509,17 @@ nas contas que o fechamento gerou.
   investimento e o principal do MyBank não entram em nenhum dos dois totais
   (RN003.3, RN021.2).
 - RN016.6 Conta marcada fora dos totais (058) aparece na lista e não soma.
+- RN016.6.1 **Tags e ignorar nos orçamentos** (083), como no Minhas Finanças:
+  o lançamento leva etiquetas (minúsculas, sem `#`, no máximo 20) que aparecem
+  na lista como `#tag`. Marcado **Ignorar nos orçamentos**, ele não consome o
+  teto da categoria, mas continua nos relatórios e no saldo.
+- RN016.6.2 **Relatório de lançamentos com data de referência**, como no
+  Minhas Finanças: em Relatórios, o período pode ser lido pela data de
+  **Lançamento** (`launch_date`), de **Vencimento** (`expected_date`) ou de
+  **Efetivação** (`transaction_date`); sem a data da 027, vale a da transação.
+  A situação escolhe Efetivadas, Pendentes (previsões da agenda) ou Todas; a
+  pendente não tem efetivação. Filtra por tipo e tag. Transferência não entra,
+  e a linha fora dos totais aparece e não soma (`lib/relatorio-de-lancamentos.ts`).
 - RN016.7 O **Quanto ainda posso gastar** é a sobra do período da tela:
   **Receitas − Despesas − o que falta aportar nas metas**, dividida pelos dias
   que faltam até o fim do período, contando hoje. Receitas e Despesas são os

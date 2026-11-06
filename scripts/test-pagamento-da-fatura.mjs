@@ -733,3 +733,312 @@ test("conta sem `account_type` legivel nao e descartada", () => {
   // API ainda recusa o cartao de verdade.
   assert.equal(contasQuePodemPagar([{ id: "a", name: "?" }]).length, 1);
 });
+
+// =================================================================
+// PAGAMENTO PARCIAL, COM O RESTANTE NA PROXIMA FATURA (como no Minhas Financas)
+// =================================================================
+// Os numeros sao os do teste feito no Minhas Financas em 06/11/2026: fatura de
+// novembro de R$ 500, pagamento de R$ 200, restante de R$ 300 em dezembro.
+
+const {
+  CATEGORIAS_DO_PAGAMENTO_PARCIAL,
+  categoriaDoPapel,
+  chaveEncargo,
+  chaveRestante,
+  mesSeguinteDaFatura,
+  planoDoPagamentoParcial,
+  valorDigitado,
+} = await import("../.tmp-pagamento-da-fatura/pagamento-parcial-da-fatura.js");
+
+const PARCIAL = {
+  totalDaFatura: 500,
+  valorPago: 200,
+  levarRestante: true,
+  mes: "2026-11-01",
+  cartaoId: CARTAO,
+  pagoEm: "2026-11-23",
+};
+
+test("parcial: R$ 200 de R$ 500 leva R$ 300 para a fatura seguinte", () => {
+  const plano = planoDoPagamentoParcial(PARCIAL);
+  assert.equal(plano.ok, true);
+  assert.equal(plano.restante, 300);
+  assert.equal(plano.linhas.length, 2);
+
+  const [credito, restante] = plano.linhas;
+  // Credito na fatura PAGA: ela fecha em R$ 200 (500 - 300).
+  assert.equal(credito.papel, "credito-do-restante");
+  assert.equal(credito.amount, 300);
+  assert.equal(credito.transaction_type, "income");
+  assert.equal(credito.invoice_month_override, "2026-11-01");
+  // Divida na fatura SEGUINTE.
+  assert.equal(restante.papel, "restante");
+  assert.equal(restante.amount, -300);
+  assert.equal(restante.transaction_type, "expense");
+  assert.equal(restante.invoice_month_override, "2026-12-01");
+  // As duas se anulam no saldo do cartao: o "Em aberto" so muda pela
+  // transferencia do pagamento (900 -> 700 no Minhas Financas).
+  assert.equal(credito.amount + restante.amount, 0);
+  // E nenhuma conta nos totais: nao e receita nem despesa.
+  assert.equal(credito.include_in_total, false);
+  assert.equal(restante.include_in_total, false);
+  // A chave liga as duas a fatura paga, para o estorno.
+  assert.equal(credito.notes, chaveRestante("2026-11-01", CARTAO));
+  assert.equal(restante.notes, credito.notes);
+  for (const linha of plano.linhas) {
+    assert.equal(linha.account_id, CARTAO);
+    assert.equal(linha.transaction_date, "2026-11-23");
+  }
+});
+
+test("parcial sem pedir para levar o restante: nenhuma linha (o de antes)", () => {
+  const plano = planoDoPagamentoParcial({ ...PARCIAL, levarRestante: false });
+  assert.equal(plano.ok, true);
+  assert.equal(plano.restante, 300);
+  assert.deepEqual(plano.linhas, []);
+});
+
+test("pagou o total, ou mais: nada a levar", () => {
+  for (const valorPago of [500, 600]) {
+    const plano = planoDoPagamentoParcial({ ...PARCIAL, valorPago });
+    assert.equal(plano.ok, true);
+    assert.equal(plano.restante, 0);
+    assert.deepEqual(plano.linhas, []);
+  }
+});
+
+test("o restante e conta em centavos, sem resto de ponto flutuante", () => {
+  const plano = planoDoPagamentoParcial({
+    ...PARCIAL,
+    totalDaFatura: 0.3,
+    valorPago: 0.1,
+  });
+  assert.equal(plano.restante, 0.2);
+  assert.equal(plano.linhas[1].amount, -0.2);
+});
+
+test("encargo e despesa de verdade na fatura seguinte, e conta nos totais", () => {
+  const plano = planoDoPagamentoParcial({ ...PARCIAL, encargo: 12.34 });
+  assert.equal(plano.linhas.length, 3);
+  const encargo = plano.linhas[2];
+  assert.equal(encargo.papel, "encargo");
+  assert.equal(encargo.amount, -12.34);
+  assert.equal(encargo.transaction_type, "expense");
+  assert.equal(encargo.invoice_month_override, "2026-12-01");
+  assert.equal(encargo.include_in_total, true);
+  assert.equal(encargo.notes, chaveEncargo("2026-11-01", CARTAO));
+  assert.notEqual(encargo.notes, chaveRestante("2026-11-01", CARTAO));
+});
+
+test("encargo sem restante tambem vale (pagou tudo com juros)", () => {
+  const plano = planoDoPagamentoParcial({
+    ...PARCIAL,
+    valorPago: 500,
+    encargo: 5,
+  });
+  assert.deepEqual(
+    plano.linhas.map((l) => l.papel),
+    ["encargo"]
+  );
+});
+
+test("encargo negativo ou ilegivel e recusado antes de qualquer escrita", () => {
+  for (const encargo of [-1, Number.NaN, Infinity]) {
+    const plano = planoDoPagamentoParcial({ ...PARCIAL, encargo });
+    assert.equal(plano.ok, false);
+  }
+});
+
+test("fatura de dezembro leva o restante para janeiro do ano seguinte", () => {
+  const plano = planoDoPagamentoParcial({ ...PARCIAL, mes: "2026-12-01" });
+  assert.equal(plano.linhas[1].invoice_month_override, "2027-01-01");
+  assert.equal(mesSeguinteDaFatura("2026-12"), "2027-01-01");
+  assert.equal(mesSeguinteDaFatura("2026-13"), null);
+});
+
+test("mes ou data ilegivel: recusa, nunca grava num mes inventado", () => {
+  assert.equal(planoDoPagamentoParcial({ ...PARCIAL, mes: "nov" }).ok, false);
+  assert.equal(planoDoPagamentoParcial({ ...PARCIAL, pagoEm: "23/11" }).ok, false);
+  assert.equal(planoDoPagamentoParcial({ ...PARCIAL, cartaoId: "" }).ok, false);
+});
+
+test("o restante nao usa a categoria do ajuste de saldo", () => {
+  // A tela do cartao reconhece o ajuste pela categoria: dividir a categoria
+  // faria o restante ser lido como ajuste.
+  assert.notEqual(CATEGORIAS_DO_PAGAMENTO_PARCIAL.restante.nome, "Ajuste de fatura");
+  assert.equal(categoriaDoPapel("credito-do-restante"), "restante");
+  assert.equal(categoriaDoPapel("restante"), "restante");
+  assert.equal(categoriaDoPapel("encargo"), "encargo");
+});
+
+test("valor digitado: formatos brasileiros e recusas", () => {
+  assert.equal(valorDigitado("200"), 200);
+  assert.equal(valorDigitado("200,50"), 200.5);
+  assert.equal(valorDigitado("1.234,56"), 1234.56);
+  assert.equal(valorDigitado("R$ 1.234,56"), 1234.56);
+  assert.equal(valorDigitado("200.5"), 200.5);
+  assert.equal(valorDigitado(""), null);
+  assert.equal(valorDigitado("  "), null);
+  assert.equal(valorDigitado("abc"), null);
+  assert.equal(valorDigitado("-5"), null);
+  assert.equal(valorDigitado("1,234"), null);
+});
+
+test("pagarAFatura manda o valor, o restante e o encargo para o /pay", async () => {
+  const { rede, chamadas } = redeFalsa([
+    { status: 200, body: { message: "Fatura paga com Itaú", is_transfer: true } },
+  ]);
+  const r = await pagarAFatura({
+    linha: faturaFechada(),
+    contaPagadoraId: CORRENTE,
+    pagoEm: HOJE,
+    rede,
+    valorPago: 200,
+    levarRestante: true,
+    encargo: 12.34,
+  });
+  assert.equal(r.ok, true);
+  assert.deepEqual(chamadas[0].corpo, {
+    paid_date: HOJE,
+    payment_account_id: CORRENTE,
+    amount: 200,
+    levar_restante: true,
+    encargo: 12.34,
+  });
+});
+
+test("pagarAFatura sem parcial manda o corpo de sempre", async () => {
+  const { rede, chamadas } = redeFalsa([
+    { status: 200, body: { message: "Fatura paga com Itaú", is_transfer: true } },
+  ]);
+  await pagarAFatura({
+    linha: faturaFechada(),
+    contaPagadoraId: CORRENTE,
+    pagoEm: HOJE,
+    rede,
+    levarRestante: false,
+    encargo: 0,
+  });
+  assert.deepEqual(chamadas[0].corpo, {
+    paid_date: HOJE,
+    payment_account_id: CORRENTE,
+  });
+});
+
+// =================================================================
+// MOVER E PARCELAR A FATURA (lib/mover-e-parcelar-fatura.ts)
+// =================================================================
+
+const {
+  chaveParcelamento,
+  dividirEmCentavos,
+  faturaParcelada,
+  planoDoParcelamento,
+  somarMeses,
+} = await import("../.tmp-pagamento-da-fatura/mover-e-parcelar-fatura.js");
+
+test("somarMeses atravessa o ano e recusa mes ilegivel", () => {
+  assert.equal(somarMeses("2026-11", 1), "2026-12-01");
+  assert.equal(somarMeses("2026-11-01", 2), "2027-01-01");
+  assert.equal(somarMeses("2026-11", 14), "2028-01-01");
+  assert.equal(somarMeses("2026-13", 1), null);
+});
+
+test("dividirEmCentavos soma exatamente o total, sobra nas primeiras", () => {
+  assert.deepEqual(dividirEmCentavos(10000, 3), [3334, 3333, 3333]);
+  assert.deepEqual(dividirEmCentavos(9, 3), [3, 3, 3]);
+});
+
+test("parcelar R$ 100 em 3x: credito na fatura, parcelas nas 3 seguintes", () => {
+  const plano = planoDoParcelamento({
+    total: 100,
+    parcelas: 3,
+    mes: "2026-11",
+    cartaoId: CARTAO,
+    hoje: "2026-11-06",
+  });
+  assert.equal(plano.ok, true);
+  assert.deepEqual(plano.parcelas, [33.34, 33.33, 33.33]);
+  const [credito, ...parcelas] = plano.linhas;
+  assert.equal(credito.amount, 100);
+  assert.equal(credito.invoice_month_override, "2026-11-01");
+  assert.equal(credito.include_in_total, false);
+  assert.ok(faturaParcelada([credito]));
+  assert.deepEqual(
+    parcelas.map((l) => l.invoice_month_override),
+    ["2026-12-01", "2027-01-01", "2027-02-01"]
+  );
+  assert.equal(parcelas.reduce((s, l) => s + Math.round(l.amount * 100), 0), -10000);
+  for (const l of plano.linhas) {
+    assert.equal(l.notes, chaveParcelamento("2026-11", CARTAO));
+    assert.equal(l.account_id, CARTAO);
+  }
+  assert.match(parcelas[0].description, /\(1\/3\)$/);
+});
+
+test("parcelar com juros: uma despesa de juros por parcela, nos totais", () => {
+  const plano = planoDoParcelamento({
+    total: 300,
+    parcelas: 3,
+    juros: 30,
+    mes: "2026-11",
+    cartaoId: CARTAO,
+    hoje: "2026-11-06",
+  });
+  const juros = plano.linhas.filter((l) => l.papel === "juros");
+  assert.equal(juros.length, 3);
+  for (const l of juros) {
+    assert.equal(l.amount, -10);
+    assert.equal(l.include_in_total, true);
+  }
+});
+
+test("parcelar recusa parcelas fora de 2..24, fatura zerada e juros negativos", () => {
+  const base = { total: 100, mes: "2026-11", cartaoId: CARTAO, hoje: "2026-11-06" };
+  for (const parcelas of [1, 25, 2.5, Number.NaN]) {
+    assert.equal(planoDoParcelamento({ ...base, parcelas }).ok, false);
+  }
+  assert.equal(planoDoParcelamento({ ...base, parcelas: 3, total: 0 }).ok, false);
+  assert.equal(planoDoParcelamento({ ...base, parcelas: 3, total: -50 }).ok, false);
+  assert.equal(planoDoParcelamento({ ...base, parcelas: 3, juros: -1 }).ok, false);
+});
+
+test("faturaParcelada so reconhece o credito do parcelamento", () => {
+  assert.equal(
+    faturaParcelada([{ description: "Fatura de nov/2026 parcelada em 3x", transaction_type: "expense" }]),
+    false
+  );
+  assert.equal(faturaParcelada([{ description: "Mercado", transaction_type: "income" }]), false);
+});
+
+// =================================================================
+// AS TAGS DO LANCAMENTO (lib/tags.ts, 083). Na mesma suite porque e a que ja
+// compila as regras novas da comparacao com o Minhas Financas.
+// =================================================================
+
+const { tagsDoTexto, textoDasTags, MAXIMO_DE_TAGS } = await import(
+  "../.tmp-pagamento-da-fatura/tags.js"
+);
+
+test("tags: minusculas, sem #, sem repetir, separadas por espaco ou virgula", () => {
+  assert.deepEqual(tagsDoTexto("Viagem, #Natal natal ;  #férias"), [
+    "viagem",
+    "natal",
+    "férias",
+  ]);
+  assert.deepEqual(tagsDoTexto(""), []);
+  assert.deepEqual(tagsDoTexto(null), []);
+  assert.deepEqual(tagsDoTexto("## !!"), []);
+});
+
+test("tags: no maximo 20, e 30 caracteres cada (o CHECK da 083)", () => {
+  const muitas = Array.from({ length: 30 }, (_, i) => `t${i}`).join(" ");
+  assert.equal(tagsDoTexto(muitas).length, MAXIMO_DE_TAGS);
+  assert.equal(tagsDoTexto("a".repeat(50))[0].length, 30);
+});
+
+test("tags: o texto do campo volta com #", () => {
+  assert.equal(textoDasTags(["viagem", "natal"]), "#viagem #natal");
+  assert.equal(textoDasTags(undefined), "");
+  assert.deepEqual(tagsDoTexto(textoDasTags(["viagem", "natal"])), ["viagem", "natal"]);
+});

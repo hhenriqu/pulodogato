@@ -69,6 +69,8 @@ import {
   PainelSemRede,
 } from "@/components/SemRede";
 import { FaturaDoCartao } from "@/components/cartoes/FaturaDoCartao";
+import { AcoesDaFatura } from "@/components/cartoes/AcoesDaFatura";
+import { faturaParcelada } from "@/lib/mover-e-parcelar-fatura";
 import { AjusteDeSaldo } from "@/components/cartoes/AjusteDeSaldo";
 import { DialogoDeAlcance } from "@/components/series/DialogoDeAlcance";
 import { frasePreservadas, type Alcance } from "@/lib/alcance-na-tela";
@@ -802,6 +804,18 @@ function GastosDoCartao() {
           // furariam o cache em TODA releitura (apagar parcela, ajustar), sem
           // ninguem ter pedido.
           aoTentarDeNovo={() => recarregar(true)}
+        />
+      )}
+
+      {/* Mover e parcelar a fatura do mes, como no Minhas Financas. So com a
+          leitura fresca e no cartao ativo: as duas acoes escrevem. */}
+      {estado === "fresco" && conta.is_active && (
+        <AcoesDaFatura
+          contaId={conta.id}
+          mes={mes}
+          rotuloDoMes={rotuloDaFatura(mes) ?? mes}
+          parcelada={faturaParcelada(fatura?.lines ?? [])}
+          aoMudar={() => recarregar()}
         />
       )}
 

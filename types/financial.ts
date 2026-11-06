@@ -98,6 +98,12 @@ export interface FinancialAccount {
   /** Cartao (migration 006): dia do vencimento da fatura. */
   due_day?: number;
   /**
+   * Cartao (migration 082): quando o dia do vencimento cai em fim de semana ou
+   * feriado bancario, a fatura vence no proximo dia util. Ausente (conta lida
+   * antes da 082, cache offline) vale `true`, o DEFAULT da coluna.
+   */
+  vencimento_em_dia_util?: boolean;
+  /**
    * Moeda desta conta (ISO 4217, migration 022). E o padrao que os lancamentos
    * dela herdam -- o lancamento pode sobrepor, e quem resolve a precedencia e
    * `moedaSugerida` em lib/moeda.ts.

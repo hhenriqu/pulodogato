@@ -42,6 +42,7 @@
 
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
+import { categoriaReservada } from "@/lib/services/categoria-reservada";
 import {
   DESCRICAO_DA_CATEGORIA_DE_AJUSTE,
   NOME_DA_CATEGORIA_DE_AJUSTE,
@@ -113,61 +114,17 @@ async function categoriaDoAjuste(
   userId: string,
   serviceId: string
 ): Promise<{ id: string } | { erro: string }> {
-  const { data: existente, error: erroBusca } = await supabase
-    .from("transaction_categories")
-    .select("id")
-    .eq("service_id", serviceId)
-    .eq("user_id", userId)
-    .eq("name", NOME_DA_CATEGORIA_DE_AJUSTE)
-    .maybeSingle();
-
-  if (erroBusca) {
-    console.error("Erro ao buscar a categoria do ajuste:", erroBusca);
-    return { erro: "Não foi possível preparar o ajuste" };
-  }
-  if (existente) return { id: existente.id };
-
-  const { data: criada, error: erroCriacao } = await supabase
-    .from("transaction_categories")
-    .insert({
-      service_id: serviceId,
-      // Do servidor, NUNCA do corpo do pedido. A policy da 036 recusaria um
-      // `user_id` alheio, mas aceitar o campo deixaria a rota parecendo que ele
-      // e escolhivel.
-      user_id: userId,
-      name: NOME_DA_CATEGORIA_DE_AJUSTE,
-      description: DESCRICAO_DA_CATEGORIA_DE_AJUSTE,
-      icon: "scale",
-      color_hex: "#6B7280",
-      // `is_expense` e NOT NULL e so e consultado como ULTIMO recurso: as telas
-      // classificam por `transaction_type`, e o ajuste sempre grava o tipo (ver
-      // `lancamentoDoAjuste`). TRUE e o caso dominante -- o ajuste existe porque
-      // faltou gasto na fatura -- e serve de fallback honesto se alguem um dia
-      // ler a categoria em vez do tipo.
-      is_expense: true,
-      is_active: false,
-    })
-    .select("id")
-    .single();
-
-  if (erroCriacao) {
-    // 23505: outro pedido do mesmo usuario criou a linha entre o SELECT e o
-    // INSERT. A categoria existe, e e isso que se queria.
-    if (erroCriacao.code === "23505") {
-      const { data: recem } = await supabase
-        .from("transaction_categories")
-        .select("id")
-        .eq("service_id", serviceId)
-        .eq("user_id", userId)
-        .eq("name", NOME_DA_CATEGORIA_DE_AJUSTE)
-        .maybeSingle();
-      if (recem) return { id: recem.id };
-    }
-    console.error("Erro ao criar a categoria do ajuste:", erroCriacao);
-    return { erro: "Não foi possível preparar o ajuste" };
-  }
-
-  return { id: criada.id };
+  // `is_expense` TRUE e o caso dominante -- o ajuste existe porque faltou gasto
+  // na fatura -- e so e consultado como ULTIMO recurso: as telas classificam
+  // por `transaction_type`, e o ajuste sempre grava o tipo.
+  const categoria = await categoriaReservada(supabase, userId, serviceId, {
+    nome: NOME_DA_CATEGORIA_DE_AJUSTE,
+    descricao: DESCRICAO_DA_CATEGORIA_DE_AJUSTE,
+    icone: "scale",
+    cor: "#6B7280",
+    ehDespesa: true,
+  });
+  return categoria ?? { erro: "Não foi possível preparar o ajuste" };
 }
 
 /**

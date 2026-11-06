@@ -24,6 +24,7 @@
 //   - Despesa e gravada NEGATIVA (`valorGravado`).
 // ---------------------------------------------------------------------------
 
+import { tagsDoTexto, textoDasTags } from "@/lib/tags";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { User } from "@supabase/supabase-js";
@@ -826,6 +827,10 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
       // `false` e abriria TODA linha antiga com a checkbox marcada, prometendo
       // tirar dos totais o que ja soma.
       somaNosTotais: linha.include_in_total !== false,
+      // As duas da 083. Linha sem a chave (cache offline, banco sem a 083)
+      // abre sem tag e contando no orcamento -- o default da coluna.
+      tags: textoDasTags(linha.tags),
+      ignorarNosOrcamentos: linha.ignorar_em_orcamentos === true,
       notas: linha.notes ?? "",
       // Editar nunca cai em "fixa": o que esta gravado e um lancamento, nao uma
       // regra. A regra se edita em Contas Previstas. Aqui so distinguimos se o
@@ -1683,6 +1688,15 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
       include_in_total: somaNosTotaisEstaNaTela(tipo, valores, editando)
         ? valores.somaNosTotais
         : true,
+      // 083: as tags e o "ignorar em orcamentos", pelo MESMO portao e pelo
+      // mesmo motivo do `include_in_total` acima -- literais sempre presentes,
+      // para a edicao conseguir desfazer.
+      tags: somaNosTotaisEstaNaTela(tipo, valores, editando)
+        ? tagsDoTexto(valores.tags)
+        : [],
+      ignorar_em_orcamentos: somaNosTotaisEstaNaTela(tipo, valores, editando)
+        ? valores.ignorarNosOrcamentos
+        : false,
     };
 
     let transacao: { id: string };

@@ -845,3 +845,61 @@ test("o campo vai no corpo das DUAS telas, como booleano", () => {
     assert.equal(typeof corpo.include_in_total, "boolean");
   }
 });
+
+// ---------------------------------------------------------------------------
+// VENCIMENTO EM DIA UTIL (migration 082)
+// ---------------------------------------------------------------------------
+
+test("cartao novo nasce com o vencimento em dia util", () => {
+  // O `DEFAULT true` da 082 e o cadastro de cartao do Minhas Financas.
+  assert.equal(valoresIniciais("cartao").vencimento_em_dia_util, true);
+});
+
+test("cartao antigo, sem o campo gravado, abre LIGADO", () => {
+  // `=== true` aqui faria salvar o nome desligar o dia util calado.
+  const antigo = valoresDaConta({
+    id: "x",
+    name: "Cartao de antes da 082",
+    account_type: "credit_card",
+    current_balance: 0,
+    is_active: true,
+    color_hex: "#000",
+    icon: "credit-card",
+    closing_day: 14,
+    due_day: 20,
+  });
+  assert.equal(antigo.vencimento_em_dia_util, true);
+});
+
+test("cartao desligado reabre desligado", () => {
+  const desligado = valoresDaConta({
+    id: "x",
+    name: "C6 Leticia",
+    account_type: "credit_card",
+    current_balance: 0,
+    is_active: true,
+    color_hex: "#000",
+    icon: "credit-card",
+    closing_day: 14,
+    due_day: 20,
+    vencimento_em_dia_util: false,
+  });
+  assert.equal(desligado.vencimento_em_dia_util, false);
+});
+
+test("o dia util vai no corpo do cartao, como booleano, e nao no da conta", () => {
+  const cartao = corpoDaConta(
+    { ...valoresIniciais("cartao"), name: "C6", vencimento_em_dia_util: false },
+    "cartao"
+  );
+  assert.equal(cartao.vencimento_em_dia_util, false);
+  assert.equal(typeof cartao.vencimento_em_dia_util, "boolean");
+
+  // Fora do cartao a coluna nao tem efeito; mandar o valor do formulario
+  // gravaria um `false` digitado com o tipo em "Cartao" antes de trocar.
+  const conta = corpoDaConta(
+    { ...valoresIniciais("conta"), name: "Corrente", vencimento_em_dia_util: false },
+    "conta"
+  );
+  assert.equal("vencimento_em_dia_util" in conta, false);
+});

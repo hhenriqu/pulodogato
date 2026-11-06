@@ -255,7 +255,8 @@
     "last_four_digits",
     "name",
     "updated_at",
-    "user_id"
+    "user_id",
+    "vencimento_em_dia_util"
   ],
   "financial_goals": [
     "account_id",
@@ -295,6 +296,7 @@
     "expected_date",
     "group_id",
     "id",
+    "ignorar_em_orcamentos",
     "include_in_total",
     "installment_number",
     "installment_parent_id",
@@ -305,6 +307,7 @@
     "notes",
     "service_id",
     "subcategory_id",
+    "tags",
     "transaction_date",
     "transaction_type",
     "updated_at",

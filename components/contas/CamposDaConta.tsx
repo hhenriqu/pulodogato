@@ -226,6 +226,31 @@ export function CamposDaConta({
             </div>
           </div>
 
+          {/* VENCIMENTO EM DIA UTIL (migration 082). O mesmo interruptor do
+              cadastro de cartao do Minhas Financas, ligado por padrao: quando
+              o dia cai em sabado, domingo ou feriado bancario, a fatura vence
+              no proximo dia util. Fica junto do dia do vencimento porque e uma
+              regra sobre ele. */}
+          <div className="flex items-start justify-between gap-4 rounded-lg border p-3">
+            <div className="space-y-1">
+              <Label htmlFor="cartao-vencimento-dia-util">
+                Vencimento em dia útil
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                {valores.vencimento_em_dia_util
+                  ? "Se o dia do vencimento cair em fim de semana ou feriado, a fatura vence no próximo dia útil."
+                  : "A fatura vence sempre no dia escolhido, mesmo em fim de semana ou feriado."}
+              </p>
+            </div>
+            <Switch
+              id="cartao-vencimento-dia-util"
+              checked={valores.vencimento_em_dia_util}
+              onCheckedChange={(marcado) =>
+                mudar({ vencimento_em_dia_util: marcado })
+              }
+            />
+          </div>
+
         </>
       )}
 

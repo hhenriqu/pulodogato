@@ -507,6 +507,7 @@ export default function CartoesPage() {
                   fatura={faturaDoCartao(faturas, conta.id)}
                   estado={estado}
                   rotuloDoMes={rotuloDoMes}
+                  mesDaFatura={mes}
                   aoEditar={abrirEdicao}
                   aoArquivar={arquivar}
                 />

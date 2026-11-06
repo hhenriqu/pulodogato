@@ -129,6 +129,8 @@ export async function POST(request: NextRequest) {
       // Cartao de credito (migration 006): fechamento e vencimento da fatura.
       closing_day,
       due_day,
+      // Cartao (migration 082): vencimento no proximo dia util.
+      vencimento_em_dia_util,
       // Moeda da conta (migration 022). E o padrao que os lancamentos dela
       // herdam -- ver lib/moeda.ts.
       currency,
@@ -217,6 +219,11 @@ export async function POST(request: NextRequest) {
         // `DEFAULT true` da 058. E o que mantem compativel todo cliente que
         // nao conhece o campo.
         ...(include_in_total === false ? { include_in_total: false } : {}),
+        // Mesma regra: so o booleano `false` desliga. Ausente cai no
+        // `DEFAULT true` da 082, e um cliente antigo nao muda nada.
+        ...(vencimento_em_dia_util === false
+          ? { vencimento_em_dia_util: false }
+          : {}),
       })
       .select()
       .single();

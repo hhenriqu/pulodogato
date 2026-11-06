@@ -341,7 +341,7 @@ export async function GET(request: NextRequest) {
       .select(
         `
         id, user_id, description, amount, exchange_rate, currency, transaction_date,
-        transaction_type, counterpart_transaction_id, notes, include_in_total,
+        transaction_type, counterpart_transaction_id, notes, include_in_total, tags,
         category:transaction_categories(name, is_expense),
         account:financial_accounts(id, name, account_type)
       `
