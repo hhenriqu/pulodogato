@@ -116,6 +116,7 @@
 //     viraria divida a cada icone novo na pagina. Icone sem esboco e
 //     `React.createElement(undefined)`, que derruba o render INTEIRO;
 //   `SeletorDePeriodo`, `PrevistoXRealizado`, `MapaDeCalor`,
+//   `DespesasPorCategoria`, `UltimasDespesas`,
 //   `NumeroIndisponivel`, `ui/progress` -- nenhuma assercao daqui os le, e o
 //     seletor arrasta o Radix e a mascara de digitacao;
 //   `cn`, `cva`, `Slot`  -- a fiacao de classe dos componentes de ui.
@@ -542,6 +543,15 @@ MODULOS["@/components/dashboard/PrevistoXRealizado"] = {
 // oito do painel.
 MODULOS["@/components/dashboard/MapaDeCalor"] = {
   MapaDeCalor: esboco("MAPA-DE-CALOR"),
+};
+// Os dois widgets do Minhas Financas (06/11/2026) tambem buscam os proprios
+// dados (/api/reports/categories e /api/reports/lancamentos), pelo mesmo
+// motivo do mapa: esbocados, as rotas deles nao entram na rede da sonda.
+MODULOS["@/components/dashboard/DespesasPorCategoria"] = {
+  DespesasPorCategoria: esboco("DESPESAS-POR-CATEGORIA"),
+};
+MODULOS["@/components/dashboard/UltimasDespesas"] = {
+  UltimasDespesas: esboco("ULTIMAS-DESPESAS"),
 };
 MODULOS["@/components/SemRede"] = {
   NumeroIndisponivel: esboco("NUMERO-INDISPONIVEL"),
@@ -989,17 +999,19 @@ for (const [chave, nome, , temCartao] of CASOS) {
     // importar e que a sonda esbocou calada -- e que pode estar justamente no
     // caminho do que as outras assercoes leem.
     //
-    // SAO TRES (o mapa de calor desenha em todo periodo), e nao os cinco
-    // declarados em MODULOS: `Progress` so desenha
+    // SAO CINCO (o mapa de calor e os dois widgets do Minhas Financas
+    // desenham em todo periodo), e nao os sete declarados em MODULOS: `Progress` so desenha
     // dentro de uma meta (a rota devolve lista vazia) e `NumeroIndisponivel` so
     // quando uma rota falha em ler. (Eram cinco ate a HMO-470: o quinto era o
     // `PainelDePapel`, o outro ramo do portao, apagado com o painel.)
     // Esboco declarado e esboco RENDERIZADO sao coisas diferentes, e e o
     // segundo que pode encostar numa assercao.
     assert.deepEqual(resultado[chave].esbocos, [
+      "[ESBOCO-DESPESAS-POR-CATEGORIA]",
       "[ESBOCO-MAPA-DE-CALOR]",
       "[ESBOCO-PREVISTO-X-REALIZADO]",
       "[ESBOCO-SELETOR-DE-PERIODO]",
+      "[ESBOCO-ULTIMAS-DESPESAS]",
     ]);
   });
 }
