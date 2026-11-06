@@ -306,13 +306,17 @@ test("esconder tudo devolve lista vazia, nao o padrao", () => {
 // Agrupar em linhas
 // ---------------------------------------------------------------------------
 
-test("a ordem de fabrica mantem 'A vencer' e 'Metas' lado a lado", () => {
-  // E como a tela sempre foi. Se esta linha quebrar, a alteracao mudou o
-  // desenho do painel de todo mundo que nunca configurou nada.
+test("a ordem de fabrica mantem os pares lado a lado", () => {
+  // 'A vencer' e 'Metas' como a tela sempre foi, e desde 06/11/2026 a rosca e
+  // as ultimas despesas (os widgets do Minhas Financas) dividindo a linha
+  // delas. Se este teste quebrar, a alteracao mudou o desenho do painel de
+  // todo mundo que nunca configurou nada.
   const linhas = agruparEmLinhas(secoesVisiveis(layoutPadrao()));
   const pares = linhas.filter((l) => l.length === 2);
-  assert.equal(pares.length, 1);
-  assert.deepEqual(pares[0], ["a-vencer", "metas"]);
+  assert.deepEqual(pares, [
+    ["despesas-por-categoria", "ultimas-despesas"],
+    ["a-vencer", "metas"],
+  ]);
 });
 
 test("meia largura separada por um bloco largo ocupa linha propria", () => {
@@ -342,4 +346,81 @@ test("agrupar nao perde nem duplica bloco", () => {
 test("tituloDaSecao devolve o id quando nao conhece a secao", () => {
   assert.equal(tituloDaSecao(IDS[0]), SECOES_DO_PAINEL[0].titulo);
   assert.equal(tituloDaSecao("inventado"), "inventado");
+});
+
+// ---------------------------------------------------------------------------
+// Os widgets do Minhas Financas (lib/widgets-do-painel.ts)
+// ---------------------------------------------------------------------------
+
+const { fatiasDaRosca, ultimasDespesas, ID_DE_OUTRAS } = await import(
+  "../.tmp-dashboard-layout/widgets-do-painel.js"
+);
+
+const cat = (id, expense, nome = id, cor = null) => ({
+  category_id: id,
+  category: { name: nome, color_hex: cor },
+  expense,
+});
+
+test("rosca: as maiores primeiro, e as que sobram viram 'Outras'", () => {
+  const { fatias, total } = fatiasDaRosca(
+    [cat("a", 10), cat("b", 300), cat("c", 50), cat("d", 20), cat("e", 5), cat("f", 15)],
+    4
+  );
+  assert.equal(total, 400);
+  assert.deepEqual(
+    fatias.map((f) => f.id),
+    ["b", "c", "d", ID_DE_OUTRAS]
+  );
+  // 10 + 5 + 15 = 30, a soma exata das tres que sobraram.
+  assert.equal(fatias[3].valor, 30);
+  assert.equal(fatias[3].nome, "Outras (3)");
+  assert.equal(fatias[0].parte, 0.75);
+});
+
+test("rosca: sem 'Outras' quando todas cabem, e a cor da categoria vale", () => {
+  const { fatias } = fatiasDaRosca([cat("a", 10, "Casa", "#ff0000"), cat("b", 20)], 5);
+  assert.deepEqual(fatias.map((f) => f.id), ["b", "a"]);
+  assert.equal(fatias[1].cor, "#ff0000");
+  assert.match(fatias[0].cor, /^#[0-9a-f]{6}$/);
+});
+
+test("rosca: estorno (despesa negativa) e zero ficam fora; tudo zero da vazio", () => {
+  const { fatias, total } = fatiasDaRosca([cat("a", -40), cat("b", 0), cat("c", 25)]);
+  assert.deepEqual(fatias.map((f) => f.id), ["c"]);
+  assert.equal(total, 25);
+  assert.deepEqual(fatiasDaRosca([cat("a", -1)]), { fatias: [], total: 0 });
+});
+
+test("rosca: soma em centavos, sem o erro do ponto flutuante", () => {
+  const dez = Array.from({ length: 10 }, (_, i) => cat(`c${i}`, 0.1));
+  const { fatias, total } = fatiasDaRosca(dez, 1);
+  assert.equal(total, 1);
+  assert.equal(fatias.length, 1);
+  assert.equal(fatias[0].valor, 1);
+});
+
+const lanc = (id, data, tipo = "expense") => ({
+  id,
+  descricao: id,
+  tipo,
+  valor: 1,
+  data,
+  conta_id: null,
+  soma: true,
+});
+
+test("ultimas despesas: da mais nova para a mais velha, so despesa, corta em n", () => {
+  const linhas = [
+    lanc("a", "2026-11-01"),
+    lanc("b", "2026-11-03"),
+    lanc("r", "2026-11-09", "income"),
+    lanc("c", "2026-11-05"),
+    lanc("d", "2026-11-05"),
+  ];
+  assert.deepEqual(
+    ultimasDespesas(linhas, 3).map((l) => l.id),
+    ["d", "c", "b"]
+  );
+  assert.deepEqual(ultimasDespesas(linhas, 0), []);
 });

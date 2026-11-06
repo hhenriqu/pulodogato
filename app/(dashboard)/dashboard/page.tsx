@@ -105,6 +105,8 @@ import { SeletorDePeriodo } from "@/components/dashboard/SeletorDePeriodo";
 import { NumeroIndisponivel } from "@/components/SemRede";
 import { PrevistoXRealizado } from "@/components/dashboard/PrevistoXRealizado";
 import { MapaDeCalor } from "@/components/dashboard/MapaDeCalor";
+import { DespesasPorCategoria } from "@/components/dashboard/DespesasPorCategoria";
+import { UltimasDespesas } from "@/components/dashboard/UltimasDespesas";
 import {
   somarMesesPrevistos,
   type PrevistoDoPeriodo,
@@ -1256,6 +1258,22 @@ function PainelCompleto() {
     // ------------------------------------------------------------------
     "mapa-de-calor": (
       <MapaDeCalor de={periodo.de} ate={periodo.ate} rotulo={rotulo} />
+    ),
+
+    // ------------------------------------------------------------------
+    // Os dois widgets do Resumo do Minhas Financas (06/11/2026). Buscam os
+    // proprios dados, como o mapa de calor -- ver lib/widgets-do-painel.ts.
+    // ------------------------------------------------------------------
+    "despesas-por-categoria": (
+      <DespesasPorCategoria de={periodo.de} ate={periodo.ate} rotulo={rotulo} />
+    ),
+    "ultimas-despesas": (
+      <UltimasDespesas
+        de={periodo.de}
+        ate={periodo.ate}
+        rotulo={rotulo}
+        nomesDasContas={Object.fromEntries(contas.map((c) => [c.id, c.name]))}
+      />
     ),
 
     // ------------------------------------------------------------------
