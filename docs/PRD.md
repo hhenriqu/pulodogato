@@ -34,6 +34,7 @@
 | 2.13 | 02/11/2026 | RN025 nova: o participante sem conta no app (só o nome) divide as despesas do grupo, aparece no saldo e no acerto; quem tem conta lança a despesa que outra pessoa pagou, que fica só no grupo. Nesta versão, nenhum dos dois entra em grupo com dia de fechamento | Helio |
 | 2.14 | 04/11/2026 | RN020.12 nova: o pagamento para uma pessoa da família aparece para quem recebe, que confirma a conta em que o dinheiro entrou | Helio |
 | 2.15 | 06/11/2026 | RN004.7 nova: a fatura vence no próximo dia útil quando o dia do vencimento cai em fim de semana ou feriado bancário. Opção do cartão, ligada por padrão, como no Minhas Finanças | Helio |
+| 2.16 | 06/11/2026 | RN004.8 nova: o cartão mostra o limite, o valor em aberto (a dívida inteira, parcelas futuras incluídas) e o disponível, e a fatura do mês leva o selo Aberta, Fechada ou Futura, como no Minhas Finanças | Helio |
 
 > **O que a versão 2.0 corrigiu.** Até aqui esta PRD descrevia um app de carteira
 > de investimentos: o problema era "investidores pessoa física", as personas eram
@@ -331,6 +332,12 @@ a tela não pode contorná-las. As marcadas **(tela)** vivem em TypeScript testa
   fatura conta nesse mês (RN017.4). É uma opção do cadastro do cartão, ligada
   por padrão; desligada, a fatura vence sempre no dia escolhido. Feriado
   estadual e municipal não contam.
+- RN004.8 **Limite e situação da fatura**: em cada cartão, **Em aberto** é a
+  dívida inteira do cartão hoje (compras, inclusive as parcelas futuras,
+  menos estornos e pagamentos) e **Disponível** é o limite menos ela, com uma
+  barra de uso. A fatura do mês na tela é **Aberta** enquanto uma compra feita
+  hoje ainda cairia nela, **Fechada** depois do fechamento e **Futura** antes
+  de começar a receber compras.
 
 ### RN005 — Parcelamento ✅
 

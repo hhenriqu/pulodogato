@@ -214,7 +214,12 @@ test("o seletor do mes mostra o mes que esta na tela", () => {
 test("sem mes para nomear, o total nao aparece", () => {
   // Um mes ilegivel deixaria o rotulo quebrado. A regra e a mesma do estado de
   // leitura: sem como dizer de QUANDO e o numero, ele nao sai.
-  const t = texto(render({ mes: "2026-13" }));
+  // O saldo do cartao (o "Em aberto" do cabecalho, que e de hoje e nao do mes)
+  // vai diferente do total da fatura, para a busca pelo total nao confundir
+  // os dois numeros.
+  const t = texto(
+    render({ mes: "2026-13", conta: { ...CONTA, current_balance: -999 } })
+  );
 
   assert.ok(!t.includes("R$ 320,00"), `o total saiu sem eixo de tempo: ${t}`);
   assert.ok(t.includes("—"), "faltou o travessao de numero indisponivel");
@@ -573,8 +578,14 @@ test("o CASO DA ISSUE: 3.000 em 10x mostra a parcela do mes, nao a compra inteir
 
   assert.ok(t.includes("R$ 300,00"), `falta a fatura do mes: ${t}`);
   assert.ok(
-    !t.includes("R$ 3.000,00"),
-    `a divida inteira voltou para a tela: ${t}`
+    !t.includes("Fatura de outubro de 2026 R$ 3.000,00"),
+    `a divida inteira voltou para o numero da fatura: ${t}`
+  );
+  // A divida inteira tem lugar proprio desde a comparacao com o Minhas
+  // Financas: "Em aberto", que e o que consome o limite.
+  assert.ok(
+    t.includes("Em aberto R$ 3.000,00 Disponível R$ 2.000,00"),
+    `falta o em aberto do limite: ${t}`
   );
 });
 
@@ -614,7 +625,11 @@ test("sem mes para nomear, o numero do card NAO sai", () => {
   // `rotuloDaFatura` devolve `null` para o que nao da para ler, em vez de
   // "undefined de 2026". Quem recebe `null` esconde o numero junto: um total
   // sem o mes ao lado e um numero sobre um periodo que ninguem declarou.
-  const t = texto(listaHtml(CONTA, { rotuloDoMes: null }));
+  // Saldo diferente do total da fatura: o "Em aberto" e de hoje, nao do mes,
+  // e sai sem eixo de tempo de proposito.
+  const t = texto(
+    listaHtml({ ...CONTA, current_balance: -999 }, { rotuloDoMes: null })
+  );
 
   assert.ok(!t.includes("R$ 320,00"), `o total saiu sem eixo de tempo: ${t}`);
   assert.ok(!t.includes("undefined"), `vazou undefined: ${t}`);

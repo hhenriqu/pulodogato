@@ -28,7 +28,10 @@
     "`card_invoice_month` do banco. lib/services/cobranca-no-cartao.ts e",
     "lib/services/fatura-prevista.ts entram pelos dois passos que falam com o",
     "banco (virar compra no dia, e somar como prevista na fatura aberta),",
-    "medidos contra um banco de mentira na mesma suite."
+    "medidos contra um banco de mentira na mesma suite.",
+    "",
+    "lib/limite-do-cartao.ts (06/11/2026): limite, em aberto e o selo",
+    "Aberta/Fechada. O selo usa `faturaAbertaDoCartao` daqui."
   ],
   "compilerOptions": {
     "target": "es2020",
@@ -48,6 +51,7 @@
     "../lib/lancamento.ts",
     "../lib/cobranca-no-cartao.ts",
     "../lib/services/cobranca-no-cartao.ts",
-    "../lib/services/fatura-prevista.ts"
+    "../lib/services/fatura-prevista.ts",
+    "../lib/limite-do-cartao.ts"
   ]
 }

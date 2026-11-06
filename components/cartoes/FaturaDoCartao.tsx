@@ -65,6 +65,7 @@ import {
   rotuloDaFatura,
   rotuloDoCiclo,
 } from "@/lib/fatura-do-cartao";
+import { limiteDoCartao } from "@/lib/limite-do-cartao";
 import { comOrigem } from "@/lib/retorno-do-lancamento";
 import { rotuloDaParcela } from "@/lib/lancamento";
 import {
@@ -279,6 +280,10 @@ export function FaturaDoCartao({
   const cobrancas = cobrancasDaFatura(fatura, conta.id);
   const rotuloDoMes = rotuloDaFatura(mes);
   const ciclo = rotuloDoCiclo(conta);
+  // Em aberto e disponivel (lib/limite-do-cartao.ts): a divida inteira do
+  // cartao hoje, como no Minhas Financas. Le o cadastro, que o cabecalho ja
+  // mostra mesmo sem a fatura -- e por isso o mesmo pedagio de rede dele.
+  const limite = podeMostrarNumero(estado) ? limiteDoCartao(conta) : null;
   // O total so aparece com dado atras dele E com mes para nomear: o rotulo e o
   // eixo de tempo do numero.
   const mostraTotal = podeMostrarNumero(estado) && rotuloDoMes !== null;
@@ -327,6 +332,28 @@ export function FaturaDoCartao({
                 : "não informado"}
             </p>
           </div>
+          {limite ? (
+            <>
+              <div>
+                <p className="text-xs text-muted-foreground">Em aberto</p>
+                <p className="font-semibold">
+                  {formatarValor(limite.emAberto, conta.currency)}
+                </p>
+              </div>
+              {limite.disponivel !== null ? (
+                <div>
+                  <p className="text-xs text-muted-foreground">Disponível</p>
+                  <p
+                    className={`font-semibold ${
+                      limite.disponivel < 0 ? "text-destructive" : ""
+                    }`}
+                  >
+                    {formatarValor(limite.disponivel, conta.currency)}
+                  </p>
+                </div>
+              ) : null}
+            </>
+          ) : null}
           <div>
             <p className="text-xs text-muted-foreground">Fatura</p>
             {ciclo ? (

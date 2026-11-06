@@ -70,6 +70,12 @@ import {
   totalDaFatura,
 } from "@/lib/fatura-do-periodo";
 import { podeMostrarNumero, type EstadoDaLeitura } from "@/lib/offline-leitura";
+import {
+  ROTULO_DA_SITUACAO,
+  hojeNoFusoDoCartao,
+  limiteDoCartao,
+  situacaoDaFatura,
+} from "@/lib/limite-do-cartao";
 import { NumeroIndisponivel } from "@/components/SemRede";
 
 interface CartaoDaListaProps {
@@ -87,6 +93,8 @@ interface CartaoDaListaProps {
   estado: EstadoDaLeitura | null;
   /** "outubro de 2026", ou `null` quando o mes nao da para nomear. */
   rotuloDoMes: string | null;
+  /** O mes da fatura na tela, 'AAAA-MM'. Decide o selo Aberta/Fechada. */
+  mesDaFatura?: string | null;
   aoEditar: (conta: FinancialAccount) => void;
   aoArquivar: (conta: FinancialAccount) => void;
 }
@@ -96,6 +104,7 @@ export function CartaoDaLista({
   fatura,
   estado,
   rotuloDoMes,
+  mesDaFatura,
   aoEditar,
   aoArquivar,
 }: CartaoDaListaProps) {
@@ -104,6 +113,16 @@ export function CartaoDaLista({
 
   const total = totalDaFatura(fatura);
   const parcelasFuturas = parcelasFuturasDaFatura(fatura, conta.id);
+
+  // Limite, em aberto e disponivel (lib/limite-do-cartao.ts). Le o CADASTRO,
+  // e o saldo do cadastro e o de hoje: vale em qualquer mes da tela, e por
+  // isso nao passa pelo `rotuloDoMes`. Sem rede, passa pelo `estado`.
+  const limite = podeMostrarNumero(estado) ? limiteDoCartao(conta) : null;
+  const situacao = situacaoDaFatura(
+    mesDaFatura,
+    hojeNoFusoDoCartao(),
+    conta.closing_day
+  );
 
   // As TRES condicoes, e cada uma barra um jeito diferente de mentir:
   // `podeMostrarNumero` barra o zero confiante sem rede; `rotuloDoMes` barra o
@@ -148,6 +167,20 @@ export function CartaoDaLista({
                 que o seletor escolheu -- que nem sempre e o corrente. */}
             <p className="text-xs text-muted-foreground">
               {rotuloDoMes ? `Fatura de ${rotuloDoMes}` : "Fatura"}
+              {situacao ? (
+                <Badge
+                  variant="outline"
+                  className={`ml-2 px-1.5 py-0 text-[10px] ${
+                    situacao === "aberta"
+                      ? "border-info/40 text-info"
+                      : situacao === "fechada"
+                        ? "border-destructive/40 text-destructive"
+                        : "text-muted-foreground"
+                  }`}
+                >
+                  {ROTULO_DA_SITUACAO[situacao]}
+                </Badge>
+              ) : null}
               {/* "FORA DOS TOTAIS" AO LADO DO ROTULO (HMO-434).
                   Mesma decisao da tela de Contas (HMO-431), e por isso o selo
                   cai no mesmo lugar: ao lado do ROTULO, nao do numero. A
@@ -211,11 +244,59 @@ export function CartaoDaLista({
             )}
           </div>
 
-          {conta.credit_limit != null && (
+          {/* LIMITE, EM ABERTO E DISPONIVEL, como no Minhas Financas. Em
+              aberto e a divida inteira do cartao, parcelas futuras incluidas;
+              disponivel e o limite menos ela. Sem limite cadastrado, so o em
+              aberto. */}
+          {limite && limite.limite !== null && limite.disponivel !== null ? (
+            <div className="space-y-1">
+              <div className="grid grid-cols-3 gap-2 text-xs">
+                <div>
+                  <p className="text-muted-foreground">Limite</p>
+                  <p className="font-medium">
+                    {formatarValor(limite.limite, conta.currency)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">Em aberto</p>
+                  <p className="font-medium">
+                    {formatarValor(limite.emAberto, conta.currency)}
+                  </p>
+                </div>
+                <div className="text-right">
+                  <p className="text-muted-foreground">Disponível</p>
+                  <p
+                    className={`font-medium ${
+                      limite.disponivel < 0 ? "text-destructive" : ""
+                    }`}
+                  >
+                    {formatarValor(limite.disponivel, conta.currency)}
+                  </p>
+                </div>
+              </div>
+              <div
+                className="h-1.5 w-full overflow-hidden rounded-full bg-muted"
+                role="progressbar"
+                aria-label="Uso do limite"
+                aria-valuenow={limite.percentualUsado ?? 0}
+                aria-valuemin={0}
+                aria-valuemax={100}
+              >
+                <div
+                  className="h-full rounded-full bg-primary"
+                  style={{ width: `${limite.percentualUsado ?? 0}%` }}
+                />
+              </div>
+            </div>
+          ) : limite ? (
+            <p className="text-xs text-muted-foreground">
+              Em aberto {formatarValor(limite.emAberto, conta.currency)}
+            </p>
+          ) : conta.credit_limit != null ? (
             <p className="text-xs text-muted-foreground">
               Limite {formatarValor(Number(conta.credit_limit), conta.currency)}
             </p>
-          )}
+          ) : null}
 
           {semDias || !ciclo ? (
             <Badge variant="outline" className="border-warning/30 text-warning">

@@ -51,6 +51,11 @@ import {
 // recusa de `mesDaFaturaValido` e o `null` de `rotuloDaFatura` concordam" no fim
 // deste arquivo, e o porque em scripts/tsconfig.fatura-do-cartao-test.json.
 import { mesDaFaturaValido } from "../.tmp-fatura-do-cartao/lib/lancamento.js";
+import {
+  hojeNoFusoDoCartao,
+  limiteDoCartao,
+  situacaoDaFatura,
+} from "../.tmp-fatura-do-cartao/lib/limite-do-cartao.js";
 
 // ---------------------------------------------------------------------------
 // O FUSO E PARTE DESTE TESTE, E ELE TEM QUE SER O DO USUARIO
@@ -1505,4 +1510,78 @@ test("cobranca no cartao: a compra ligada a mao continua na RN006.5", async () =
   });
 
   assert.equal(await cobrancaDaCompra(banco, USUARIO, manual), null);
+});
+
+// ---------------------------------------------------------------------------
+// LIMITE, EM ABERTO E SITUACAO DA FATURA (comparacao com o Minhas Financas)
+// ---------------------------------------------------------------------------
+// Os numeros sao os medidos no Minhas Financas em 06/11/2026 com lancamentos
+// de teste: R$ 300 a vista + R$ 600 em 3x no Itau (limite R$ 30.000).
+
+test("em aberto e a divida inteira, parcelas futuras incluidas", () => {
+  // O saldo do cartao depois das duas compras: -900 (a serie parcelada e
+  // gravada inteira, HMO-290).
+  assert.deepEqual(
+    limiteDoCartao({ current_balance: -900, credit_limit: 30000 }),
+    { emAberto: 900, limite: 30000, disponivel: 29100, percentualUsado: 3 }
+  );
+});
+
+test("o pagamento libera o limite", () => {
+  // Pagou R$ 200: a perna do pagamento entra positiva no cartao.
+  const depois = limiteDoCartao({ current_balance: "-700.00", credit_limit: "30000" });
+  assert.equal(depois.emAberto, 700);
+  assert.equal(depois.disponivel, 29300);
+});
+
+test("estorno abate o em aberto", () => {
+  assert.equal(limiteDoCartao({ current_balance: -50, credit_limit: 6000 }).disponivel, 5950);
+});
+
+test("cartao estourado fica com disponivel negativo e barra cheia", () => {
+  const estourado = limiteDoCartao({ current_balance: -1200, credit_limit: 1000 });
+  assert.equal(estourado.disponivel, -200);
+  assert.equal(estourado.percentualUsado, 100);
+});
+
+test("cartao com credito: em aberto negativo, sem virar zero", () => {
+  const credito = limiteDoCartao({ current_balance: 50, credit_limit: 1000 });
+  assert.equal(credito.emAberto, -50);
+  assert.equal(credito.disponivel, 1050);
+  assert.equal(credito.percentualUsado, 0);
+});
+
+test("sem limite cadastrado, so o em aberto", () => {
+  assert.deepEqual(limiteDoCartao({ current_balance: -10, credit_limit: null }), {
+    emAberto: 10,
+    limite: null,
+    disponivel: null,
+    percentualUsado: null,
+  });
+  // Saldo zerado nao vira "-R$ 0,00".
+  assert.ok(Object.is(limiteDoCartao({ current_balance: 0 }).emAberto, 0));
+});
+
+test("saldo ilegivel nao vira zero confiante", () => {
+  assert.equal(limiteDoCartao({ current_balance: null, credit_limit: 1000 }), null);
+  assert.equal(limiteDoCartao({ current_balance: "abc" }), null);
+});
+
+test("selo da fatura: aberta, fechada, futura", () => {
+  // Itau fecha dia 17: em 06/11 a fatura de novembro esta aberta.
+  assert.equal(situacaoDaFatura("2026-11", "2026-11-06", 17), "aberta");
+  // BRB fecha dia 4: em 06/11 a de novembro ja fechou, a aberta e dezembro.
+  assert.equal(situacaoDaFatura("2026-11", "2026-11-06", 4), "fechada");
+  assert.equal(situacaoDaFatura("2026-12", "2026-11-06", 4), "aberta");
+  assert.equal(situacaoDaFatura("2027-01-01", "2026-11-06", 4), "futura");
+  // No proprio dia do fechamento a compra ainda cai na fatura (006).
+  assert.equal(situacaoDaFatura("2026-11", "2026-11-17", 17), "aberta");
+  // Sem fechamento: a fatura do proprio mes.
+  assert.equal(situacaoDaFatura("2026-11", "2026-11-30", null), "aberta");
+  assert.equal(situacaoDaFatura(null, "2026-11-06", 4), null);
+  assert.equal(situacaoDaFatura("2026-13", "2026-11-06", 4), null);
+});
+
+test("hoje no fuso do cartao: 23h de Sao Paulo ainda e o mesmo dia", () => {
+  assert.equal(hojeNoFusoDoCartao(new Date("2026-12-01T01:30:00Z")), "2026-11-30");
 });
