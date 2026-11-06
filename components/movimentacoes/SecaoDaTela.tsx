@@ -587,6 +587,51 @@ function BotoesDaLinha({
  * linha inteira -- para que o botao Pagar possa existir a direita sem ficar
  * aninhado numa ancora. Ver o comentario antes do `return`.
  */
+/**
+ * AS COLUNAS DA TABELA NO DESKTOP -- comparacao com o Minhas Financas
+ * (06/11/2026): Categoria, Conta e Data em colunas proprias, como la. No
+ * celular elas nao aparecem, e a linha de detalhes de baixo do nome continua
+ * dizendo as tres.
+ */
+function ColunasDaLinha({ linha }: { linha: LinhaDaTela }) {
+  return (
+    <>
+      <span className="hidden w-36 shrink-0 md:block">
+        {linha.categoria ? (
+          <span className="inline-block max-w-full truncate rounded-full bg-muted px-2 py-0.5 text-xs text-foreground">
+            {linha.categoria}
+          </span>
+        ) : (
+          <span className="text-xs text-muted-foreground">—</span>
+        )}
+      </span>
+      <span className="hidden w-36 shrink-0 truncate text-sm text-muted-foreground md:block">
+        {linha.conta ?? "—"}
+      </span>
+      <span className="hidden w-14 shrink-0 text-sm tabular-nums text-muted-foreground md:block">
+        {dataCurta(linha.data)}
+      </span>
+    </>
+  );
+}
+
+/** O cabecalho das colunas, so no desktop. As larguras sao as de `ColunasDaLinha`. */
+function CabecalhoDaTabela() {
+  return (
+    <div
+      aria-hidden="true"
+      className="hidden items-center gap-3 border-b border-border pb-2 text-xs font-medium text-muted-foreground md:flex"
+    >
+      <span className="flex-1">Descrição</span>
+      <span className="w-36 shrink-0">Categoria</span>
+      <span className="w-36 shrink-0">Conta</span>
+      <span className="w-14 shrink-0">Data</span>
+      <span className="w-28 shrink-0 text-right">Valor</span>
+      <span className="w-32 shrink-0 text-right">Ações</span>
+    </div>
+  );
+}
+
 function LinhaDaSecao({
   linha,
   aparencia,
@@ -622,7 +667,7 @@ function LinhaDaSecao({
 
   const conteudo = (
     <>
-      <div className="min-w-0 space-y-0.5">
+      <div className="min-w-0 space-y-0.5 flex-1">
         {destinoDoCartao ? (
           <p className="truncate font-medium">
             <Link
@@ -645,12 +690,17 @@ function LinhaDaSecao({
             e o unico vizinho a esquerda, e "↘ · 14/08" deixa um separador
             pendurado que se le como um campo que faltou carregar.
           */}
-          <span>
+          {/*
+            Data, categoria e conta tem COLUNA PROPRIA no desktop (a tabela do
+            Minhas Financas, 06/11/2026), entao aqui elas so aparecem no
+            celular. O texto e a ordem continuam os de sempre.
+          */}
+          <span className="md:hidden">
             {rotulo ? "· " : ""}
             {dataCurta(linha.data)}
           </span>
-          {linha.categoria && <span>· {linha.categoria}</span>}
-          {linha.conta && <span>· {linha.conta}</span>}
+          {linha.categoria && <span className="md:hidden">· {linha.categoria}</span>}
+          {linha.conta && <span className="md:hidden">· {linha.conta}</span>}
           {linha.moeda && <span>· {linha.moeda}</span>}
           {/*
             "Vencida" sai de `effective_status`, que a view calcula na hora --
@@ -747,12 +797,15 @@ function LinhaDaSecao({
           )}
         </p>
       </div>
-      <p className="shrink-0 font-semibold">{moeda(linha.valor)}</p>
+      <ColunasDaLinha linha={linha} />
+      <p className="shrink-0 font-semibold md:w-28 md:text-right tabular-nums">
+        {moeda(linha.valor)}
+      </p>
     </>
   );
 
   const classe =
-    "flex items-start justify-between gap-3 border-b border-border py-2 last:border-0";
+    "flex items-start justify-between gap-3 border-b border-border py-2 last:border-0 md:items-center";
 
   // NENHUMA LINHA E `<a>` DESDE A HMO-311 -- e o que mudou foi a fatura.
   //
@@ -774,7 +827,14 @@ function LinhaDaSecao({
   return (
     <div className={classe}>
       {conteudo}
-      <BotoesDaLinha linha={linha} acoes={acoes} />
+      {/*
+        A coluna das acoes tem largura FIXA no desktop, para Valor alinhar em
+        toda linha -- com e sem botao. No celular `contents` some com a caixa e
+        a linha fica como era.
+      */}
+      <div className="contents md:flex md:w-32 md:shrink-0 md:justify-end">
+        <BotoesDaLinha linha={linha} acoes={acoes} />
+      </div>
     </div>
   );
 }
@@ -892,6 +952,7 @@ export function SecaoDaTela({
           <p className="py-4 text-sm text-muted-foreground">{vazio}</p>
         ) : (
           <div className="space-y-1">
+            <CabecalhoDaTabela />
             {linhas.map((linha) => {
               const grupo = grupoDaLinha.get(linha.id);
               if (grupo) {
