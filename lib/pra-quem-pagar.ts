@@ -72,7 +72,7 @@ import {
 // de Pao. A F6 apagou aquele arquivo -- a conversa (`ConversaDePapel`) ocupou o
 // lugar do painel e nao le NENHUMA funcao dele --, mas o tipo NAO morreu junto:
 // quem produz estas linhas hoje e `destinosDoPagamento` logo abaixo, e quem as
-// desenha e `components/papel-de-pao/LinhaDeDetalhe.tsx`, o renderizador que a
+// desenha e `components/movimentacoes/LinhaDeDetalhe.tsx`, o renderizador que a
 // aba Despesas reusa desde a HMO-365.
 //
 // Ele veio para CA, e nao para um arquivo novo, porque esta e a sua unica fonte

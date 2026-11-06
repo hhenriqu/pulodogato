@@ -164,7 +164,7 @@ const PARTES = [
   // A LINHA DO DETALHE, a MESMA do painel do dashboard (HMO-300, extraida na
   // HMO-365). Esbocar seria medir a propria copia justamente nas assercoes que
   // leem o rotulo de grupo e a data.
-  "components/papel-de-pao/LinhaDeDetalhe.js",
+  "components/movimentacoes/LinhaDeDetalhe.js",
   "components/movimentacoes/PainelPraQuemPagar.js",
 ];
 
