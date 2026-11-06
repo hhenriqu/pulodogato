@@ -111,8 +111,12 @@ const PERMITIDO = "components/ui/campo-de-data.tsx";
  * neste arquivo, e a sonda volta a passar verde sobre um campo apagado -- em
  * silencio, do mesmo jeito. Igualdade falha ALTO nas duas direcoes e obriga a
  * decisao a passar por aqui, com o motivo, sempre.
+ *
+ * 16 -> 18: o relatorio de lancamentos com data de referencia (comparacao com
+ * o Minhas Financas, 06/11/2026) tem data inicial e data final
+ * (components/relatorios/RelatorioDeLancamentos.tsx).
  */
-const CHAMADAS_ESPERADAS = 16;
+const CHAMADAS_ESPERADAS = 18;
 
 const ATRIBUTO_DE_DATA = /type\s*=\s*(?:["']date["']|\{\s*["']date["']\s*\})/gi;
 

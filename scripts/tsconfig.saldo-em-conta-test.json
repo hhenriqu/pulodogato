@@ -16,6 +16,7 @@
   },
   "include": [
     "../lib/saldo-em-conta.ts",
-    "../lib/saldo-por-conta.ts"
+    "../lib/saldo-por-conta.ts",
+    "../lib/relatorio-de-lancamentos.ts"
   ]
 }

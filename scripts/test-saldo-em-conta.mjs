@@ -310,3 +310,107 @@ test("mes da conta: saldo zerado nao sai como -0", () => {
   assert.ok(!Object.is(r.contas[0].saldo, -0));
   assert.ok(!Object.is(r.total.previsto, -0));
 });
+
+// =============================================================================
+// O RELATORIO DE LANCAMENTOS COM DATA DE REFERENCIA (lib/relatorio-de-lancamentos.ts)
+// =============================================================================
+
+const { montarRelatorio, dataDaEfetivada, dataDaPendente } = await import(
+  "../.tmp-saldo-em-conta/lib/relatorio-de-lancamentos.js"
+);
+
+// Conta de luz: lancada em 28/10, vencia 05/11, paga em 03/11.
+const luz = {
+  id: "luz",
+  description: "Luz",
+  amount: -150,
+  transaction_type: "expense",
+  transaction_date: "2026-11-03",
+  expected_date: "2026-11-05",
+  launch_date: "2026-10-28",
+  tags: ["casa"],
+};
+// Compra sem as datas da 027: vale a data da transacao nas tres referencias.
+const mercado = {
+  id: "mercado",
+  description: "Mercado",
+  amount: -80,
+  transaction_type: "expense",
+  transaction_date: "2026-11-10",
+};
+const salario = {
+  id: "sal",
+  description: "Salário",
+  amount: 5000,
+  transaction_type: "income",
+  transaction_date: "2026-11-05",
+};
+const transferencia = {
+  id: "tr",
+  description: "Para a poupança",
+  amount: -500,
+  transaction_type: "transfer",
+  transaction_date: "2026-11-05",
+};
+const fora = { ...mercado, id: "fora", description: "Ajuste", include_in_total: false };
+const aluguel = {
+  id: "alug",
+  description: "Aluguel",
+  amount: 2000,
+  direction: "expense",
+  due_date: "2026-11-10",
+  created_at: "2026-10-01T12:00:00Z",
+};
+
+const base = {
+  efetivadas: [luz, mercado, salario, transferencia, fora],
+  pendentes: [aluguel],
+  de: "2026-11-01",
+  ate: "2026-11-30",
+  situacao: "todas",
+};
+
+test("relatorio: as tres datas da mesma conta de luz", () => {
+  assert.equal(dataDaEfetivada(luz, "lancamento"), "2026-10-28");
+  assert.equal(dataDaEfetivada(luz, "vencimento"), "2026-11-05");
+  assert.equal(dataDaEfetivada(luz, "efetivacao"), "2026-11-03");
+  assert.equal(dataDaEfetivada(mercado, "vencimento"), "2026-11-10");
+  assert.equal(dataDaPendente(aluguel, "efetivacao"), null);
+  assert.equal(dataDaPendente(aluguel, "lancamento"), "2026-10-01");
+});
+
+test("relatorio: por vencimento, novembro tem a luz, o mercado e o aluguel pendente", () => {
+  const r = montarRelatorio({ ...base, referencia: "vencimento" });
+  // Por data, e no mesmo dia pela descricao.
+  assert.deepEqual(r.linhas.map((l) => l.id), ["luz", "sal", "fora", "alug", "mercado"]);
+  assert.equal(r.receitas, 5000);
+  // 150 + 80 + 2000; o "Ajuste" fora dos totais aparece e nao soma.
+  assert.equal(r.despesas, 2230);
+  assert.equal(r.saldo, 2770);
+  // A transferencia nao entra.
+  assert.ok(!r.linhas.some((l) => l.id === "tr"));
+});
+
+test("relatorio: por lancamento, a luz anotada em outubro sai de novembro", () => {
+  const r = montarRelatorio({ ...base, referencia: "lancamento" });
+  assert.ok(!r.linhas.some((l) => l.id === "luz"));
+  // O aluguel foi lancado em 01/10: tambem fora.
+  assert.ok(!r.linhas.some((l) => l.id === "alug"));
+});
+
+test("relatorio: por efetivacao, nenhuma pendente entra", () => {
+  const r = montarRelatorio({ ...base, referencia: "efetivacao" });
+  assert.ok(r.linhas.every((l) => l.origem === "efetivada"));
+});
+
+test("relatorio: situacao, tipo e tag recortam", () => {
+  const pend = montarRelatorio({ ...base, referencia: "vencimento", situacao: "pendentes" });
+  assert.deepEqual(pend.linhas.map((l) => l.id), ["alug"]);
+  const efet = montarRelatorio({ ...base, referencia: "vencimento", situacao: "efetivadas" });
+  assert.ok(efet.linhas.every((l) => l.origem === "efetivada"));
+  const receitas = montarRelatorio({ ...base, referencia: "vencimento", tipo: "income" });
+  assert.deepEqual(receitas.linhas.map((l) => l.id), ["sal"]);
+  assert.equal(receitas.despesas, 0);
+  const casa = montarRelatorio({ ...base, referencia: "vencimento", tag: "casa" });
+  assert.deepEqual(casa.linhas.map((l) => l.id), ["luz"]);
+});

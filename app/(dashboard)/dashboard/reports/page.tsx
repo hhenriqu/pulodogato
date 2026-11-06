@@ -24,6 +24,7 @@ import {
   SoftFeatureGuard,
   PremiumBadge,
 } from "@/components/subscription/SoftFeatureGuard";
+import { RelatorioDeLancamentos } from "@/components/relatorios/RelatorioDeLancamentos";
 import { AnomaliesCard } from "@/components/financial/AnomaliesCard";
 import {
   Card,
@@ -733,6 +734,10 @@ export default function ReportsPage() {
             </Tabs>
           </>
         )}
+
+        {/* O relatorio de lancamentos com data de referencia, como no Minhas
+            Financas. Le a propria rota, independente dos quatro de cima. */}
+        <RelatorioDeLancamentos />
       </div>
     </SoftFeatureGuard>
   );
