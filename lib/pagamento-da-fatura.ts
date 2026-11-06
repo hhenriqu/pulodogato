@@ -420,6 +420,15 @@ export async function pagarAFatura(params: {
   /** 'AAAA-MM-DD'. Quem tem o fuso da tela e a tela. */
   pagoEm: string;
   rede: ChamadaDeRede;
+  /**
+   * Pagamento parcial (como no Minhas Financas). Ausente ou `null` = o total.
+   * A rota compara com o total da fatura -- a tela nao decide o restante.
+   */
+  valorPago?: number | null;
+  /** Pagou a menos: levar o restante para a fatura seguinte. */
+  levarRestante?: boolean;
+  /** Juros/multa/IOF, despesa na fatura seguinte. */
+  encargo?: number | null;
 }): Promise<ResultadoDoPagamento> {
   const { linha, contaPagadoraId, pagoEm, rede } = params;
   const decisao = decisaoDePagamentoDaFatura(linha);
@@ -485,6 +494,11 @@ export async function pagarAFatura(params: {
       body: JSON.stringify({
         paid_date: pagoEm,
         ...(contaPagadoraId ? { payment_account_id: contaPagadoraId } : {}),
+        ...(params.valorPago != null ? { amount: params.valorPago } : {}),
+        ...(params.levarRestante ? { levar_restante: true } : {}),
+        ...(params.encargo != null && params.encargo > 0
+          ? { encargo: params.encargo }
+          : {}),
       }),
     }
   );

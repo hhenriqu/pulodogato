@@ -1303,6 +1303,7 @@ export function ListaDeMovimentacao({
             valorFormatado={
               faturaParaPagar ? formatCurrency(faturaParaPagar.valor) : ""
             }
+            valor={faturaParaPagar ? Number(faturaParaPagar.valor) : null}
             vencimentoFormatado={
               faturaParaPagar ? dataLonga(faturaParaPagar.data) : ""
             }

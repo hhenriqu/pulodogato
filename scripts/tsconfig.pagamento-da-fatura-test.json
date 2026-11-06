@@ -33,6 +33,7 @@
   },
   "include": [
     "../lib/pagamento-da-fatura.ts",
+    "../lib/pagamento-parcial-da-fatura.ts",
     "../lib/agenda-do-cartao.ts",
     "../lib/card-invoice.ts",
     "../lib/chave-da-fatura.ts",

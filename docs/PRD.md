@@ -35,6 +35,7 @@
 | 2.14 | 04/11/2026 | RN020.12 nova: o pagamento para uma pessoa da família aparece para quem recebe, que confirma a conta em que o dinheiro entrou | Helio |
 | 2.15 | 06/11/2026 | RN004.7 nova: a fatura vence no próximo dia útil quando o dia do vencimento cai em fim de semana ou feriado bancário. Opção do cartão, ligada por padrão, como no Minhas Finanças | Helio |
 | 2.16 | 06/11/2026 | RN004.8 nova: o cartão mostra o limite, o valor em aberto (a dívida inteira, parcelas futuras incluídas) e o disponível, e a fatura do mês leva o selo Aberta, Fechada ou Futura, como no Minhas Finanças | Helio |
+| 2.17 | 06/11/2026 | RN004.9 nova: pagamento parcial da fatura com o restante levado para a fatura seguinte e encargos opcionais, como no Minhas Finanças | Helio |
 
 > **O que a versão 2.0 corrigiu.** Até aqui esta PRD descrevia um app de carteira
 > de investimentos: o problema era "investidores pessoa física", as personas eram
@@ -338,6 +339,13 @@ a tela não pode contorná-las. As marcadas **(tela)** vivem em TypeScript testa
   barra de uso. A fatura do mês na tela é **Aberta** enquanto uma compra feita
   hoje ainda cairia nela, **Fechada** depois do fechamento e **Futura** antes
   de começar a receber compras.
+- RN004.9 **Pagamento parcial da fatura**: ao pagar a fatura, a pessoa pode
+  informar um valor menor que o total. Marcando **Valor restante na próxima
+  fatura**, o que faltou sai desta fatura (que fecha no valor pago) e entra na
+  fatura seguinte; o saldo devido do cartão só muda pelo valor pago, e as duas
+  linhas do restante ficam fora dos totais de receita e despesa. **Encargos**
+  (juros, multa, IOF) informados no pagamento são despesa na fatura seguinte.
+  Estornar o pagamento desfaz o restante e o encargo junto.
 
 ### RN005 — Parcelamento ✅
 

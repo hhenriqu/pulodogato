@@ -1642,6 +1642,7 @@ export default function BillsPage() {
         valorFormatado={
           faturaParaPagar ? moeda(Number(faturaParaPagar.amount)) : ""
         }
+        valor={faturaParaPagar ? Number(faturaParaPagar.amount) : null}
         vencimentoFormatado={
           faturaParaPagar ? dataCurta(faturaParaPagar.due_date) : ""
         }
