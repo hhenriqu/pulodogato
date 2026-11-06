@@ -1188,6 +1188,36 @@ export function CamposDeLancamento({
               ? "Entra nos relatórios como qualquer lançamento."
               : AVISO_DO_FLAG_DOS_TOTAIS}
           </p>
+          {/* 083, como no Minhas Financas: o "ignorar em orcamentos" e as
+              tags moram no mesmo bloco e pelo mesmo portao -- as duas colunas
+              sao de `financial_transactions`. */}
+          <div className="flex items-center gap-2 pt-2">
+            <input
+              type="checkbox"
+              id="ignorar-nos-orcamentos"
+              checked={valores.ignorarNosOrcamentos}
+              onChange={(e) =>
+                aoMudar({ ignorarNosOrcamentos: e.target.checked })
+              }
+            />
+            <Label htmlFor="ignorar-nos-orcamentos" className="font-medium">
+              Ignorar nos orçamentos
+            </Label>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {valores.ignorarNosOrcamentos
+              ? "Não consome o teto da categoria, mas continua nos relatórios."
+              : "Consome o teto da categoria no orçamento do mês."}
+          </p>
+          <div className="space-y-1 pt-2">
+            <Label htmlFor="tags-do-lancamento">Tags</Label>
+            <Input
+              id="tags-do-lancamento"
+              value={valores.tags}
+              onChange={(e) => aoMudar({ tags: e.target.value })}
+              placeholder="#viagem #presente"
+            />
+          </div>
         </div>
       )}
 

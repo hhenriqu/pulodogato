@@ -542,6 +542,12 @@ export interface LinhaDaTela {
    * nenhuma. Ver `linhaPrevista`.
    */
   soma_nos_totais: boolean;
+  /**
+   * As tags da linha (083), so quando ha alguma. OPCIONAL e ausente no vazio:
+   * a linha prevista e a fatura sintetizada nao tem tags, e as comparacoes de
+   * linha inteira dos testes continuam valendo.
+   */
+  tags?: string[];
 }
 
 /** Uma linha de `financial_transactions`, como a consulta a devolve. */
@@ -588,6 +594,8 @@ export interface RealizadaCrua extends LancamentoComConta {
    * `recurring_rule_id` e `user_id`.
    */
   include_in_total?: boolean | null;
+  /** As tags (083). Ausente no cache offline e no banco sem a 083. */
+  tags?: string[] | null;
   /**
    * A chave canonica da fatura, quando esta linha e uma perna do pagamento dela
    * -- HMO-264.
@@ -1670,6 +1678,9 @@ export function linhaRealizada(
     // `!== false` trata "nao sei" como "soma", que e o DEFAULT da coluna e o
     // comportamento de antes da feature. Errar para o lado do app de ontem.
     soma_nos_totais: crua.include_in_total !== false,
+    ...(Array.isArray(crua.tags) && crua.tags.length > 0
+      ? { tags: crua.tags }
+      : {}),
   };
 }
 

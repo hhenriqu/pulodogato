@@ -38,6 +38,7 @@
 | 2.17 | 06/11/2026 | RN004.9 nova: pagamento parcial da fatura com o restante levado para a fatura seguinte e encargos opcionais, como no Minhas Finanças | Helio |
 | 2.18 | 06/11/2026 | RN016.1.2 nova: o mês de cada conta (saldo inicial, receitas, despesas, transferências, saldo e previsto) na tela Contas, como no Minhas Finanças | Helio |
 | 2.19 | 06/11/2026 | RN004.10 e RN004.11 novas: mover a fatura para o próximo vencimento e parcelar a fatura, como no Minhas Finanças | Helio |
+| 2.20 | 06/11/2026 | RN016.6.1 nova: tags no lançamento e "ignorar nos orçamentos", como no Minhas Finanças (migration 083) | Helio |
 
 > **O que a versão 2.0 corrigiu.** Até aqui esta PRD descrevia um app de carteira
 > de investimentos: o problema era "investidores pessoa física", as personas eram
@@ -507,6 +508,10 @@ nas contas que o fechamento gerou.
   investimento e o principal do MyBank não entram em nenhum dos dois totais
   (RN003.3, RN021.2).
 - RN016.6 Conta marcada fora dos totais (058) aparece na lista e não soma.
+- RN016.6.1 **Tags e ignorar nos orçamentos** (083), como no Minhas Finanças:
+  o lançamento leva etiquetas (minúsculas, sem `#`, no máximo 20) que aparecem
+  na lista como `#tag`. Marcado **Ignorar nos orçamentos**, ele não consome o
+  teto da categoria, mas continua nos relatórios e no saldo.
 - RN016.7 O **Quanto ainda posso gastar** é a sobra do período da tela:
   **Receitas − Despesas − o que falta aportar nas metas**, dividida pelos dias
   que faltam até o fim do período, contando hoje. Receitas e Despesas são os

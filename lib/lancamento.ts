@@ -724,6 +724,18 @@ export interface ValoresDeLancamento {
    * `somaNosTotaisEstaNaTela`.
    */
   somaNosTotais: boolean;
+  /**
+   * As etiquetas, como a pessoa digitou ("viagem, #natal"). Quem normaliza para
+   * a coluna `tags` (083) e `tagsDoTexto` (lib/tags.ts), no Salvar. Mesmo
+   * portao do `somaNosTotais`: so vale no destino `transacao`.
+   */
+  tags: string;
+  /**
+   * "Ignorar em orcamentos" (083), como no Minhas Financas: a linha nao
+   * consome o teto da categoria, mas continua nos relatorios. Mesmo portao do
+   * `somaNosTotais`.
+   */
+  ignorarNosOrcamentos: boolean;
   notas: string;
 
   /**
@@ -931,6 +943,8 @@ export function valoresIniciais(): ValoresDeLancamento {
     // soma. Nascer `false` tiraria dos relatorios tudo o que a pessoa anotasse
     // sem mexer na checkbox, e o sintoma seria um total que nunca sobe.
     somaNosTotais: true,
+    tags: "",
+    ignorarNosOrcamentos: false,
     notas: "",
     natureza: "one_off",
     diaDeVencimento: "",

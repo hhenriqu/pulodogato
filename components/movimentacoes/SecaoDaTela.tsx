@@ -715,6 +715,12 @@ function LinhaDaSecao({
           {seloDaLinha(linha) && (
             <span className="text-warning">· {seloDaLinha(linha)}</span>
           )}
+          {/* As tags da linha (083), como as hashtags do Minhas Financas. */}
+          {linha.tags?.map((tag) => (
+            <span key={tag} className="text-info">
+              #{tag}
+            </span>
+          ))}
           {/*
             O ELO DA FATURA -- HMO-305, o rotulo e a acao.
 

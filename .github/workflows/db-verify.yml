@@ -6288,6 +6288,21 @@ jobs:
       - name: A fatura vence no proximo dia util quando o cartao pede
         run: $PSQL -f database/tests/082_vencimento_da_fatura_em_dia_util_test.sql
 
+      # =====================================================================
+      # 083 -- tags e "ignorar em orcamentos" no lancamento
+      # =====================================================================
+      # Como no Minhas Financas: etiquetas no lancamento, e um interruptor que
+      # tira a linha do teto da categoria sem tira-la dos relatorios. A suite
+      # roda num BEGIN com ROLLBACK.
+      - name: 083_tags_e_ignorar_em_orcamentos
+        run: $PSQL -f database/migrations/083_tags_e_ignorar_em_orcamentos.sql
+
+      - name: 083 e idempotente
+        run: $PSQL -f database/migrations/083_tags_e_ignorar_em_orcamentos.sql
+
+      - name: O orcamento ignora o lancamento marcado, e as tags valem
+        run: $PSQL -f database/tests/083_tags_e_ignorar_em_orcamentos_test.sql
+
       - name: schema-columns.json em dia com as migrations
         run: node scripts/gen-schema-columns.mjs --check
 

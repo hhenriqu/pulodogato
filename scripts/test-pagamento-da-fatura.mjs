@@ -1010,3 +1010,35 @@ test("faturaParcelada so reconhece o credito do parcelamento", () => {
   );
   assert.equal(faturaParcelada([{ description: "Mercado", transaction_type: "income" }]), false);
 });
+
+// =================================================================
+// AS TAGS DO LANCAMENTO (lib/tags.ts, 083). Na mesma suite porque e a que ja
+// compila as regras novas da comparacao com o Minhas Financas.
+// =================================================================
+
+const { tagsDoTexto, textoDasTags, MAXIMO_DE_TAGS } = await import(
+  "../.tmp-pagamento-da-fatura/tags.js"
+);
+
+test("tags: minusculas, sem #, sem repetir, separadas por espaco ou virgula", () => {
+  assert.deepEqual(tagsDoTexto("Viagem, #Natal natal ;  #férias"), [
+    "viagem",
+    "natal",
+    "férias",
+  ]);
+  assert.deepEqual(tagsDoTexto(""), []);
+  assert.deepEqual(tagsDoTexto(null), []);
+  assert.deepEqual(tagsDoTexto("## !!"), []);
+});
+
+test("tags: no maximo 20, e 30 caracteres cada (o CHECK da 083)", () => {
+  const muitas = Array.from({ length: 30 }, (_, i) => `t${i}`).join(" ");
+  assert.equal(tagsDoTexto(muitas).length, MAXIMO_DE_TAGS);
+  assert.equal(tagsDoTexto("a".repeat(50))[0].length, 30);
+});
+
+test("tags: o texto do campo volta com #", () => {
+  assert.equal(textoDasTags(["viagem", "natal"]), "#viagem #natal");
+  assert.equal(textoDasTags(undefined), "");
+  assert.deepEqual(tagsDoTexto(textoDasTags(["viagem", "natal"])), ["viagem", "natal"]);
+});
