@@ -232,6 +232,21 @@ dizer zerar. Uma calculadora opcional (critérios de empresa ou de FII, de 0 a
 10, ponderados) sugere o peso. Os pesos são do usuário: a tela não usa
 vocabulário de recomendação.
 
+**Custo de vida e reserva de emergência** (sem migration): gráfico mês a mês
+dos últimos 12 meses fechados (realizado) e dos 12 a partir do mês corrente
+(previsão), cada mês separado em contas fixas e gasto variável. O realizado é
+pela competência e só com a parte do usuário: despesa sem grupo na data dela
+(compra no cartão na data da compra; o pagamento da fatura é transferência e
+não entra), a parte do usuário em cada despesa de grupo (`group_share_entries`,
+tenha ele pago ou não) e a conta do fechamento quitada; transferência, receita e
+linha "fora dos totais" não entram. A previsão de cada mês é a soma das
+ocorrências das contas fixas de despesa que vencem nele (pela parte do usuário;
+conta com data de fim ou número de parcelas para de contar quando acaba) mais
+a média mensal do gasto variável realizado. O variável é o realizado menos o
+que foi baixa de conta prevista ou tem a descrição de uma conta fixa (ativa ou
+encerrada). A reserva sugerida é a soma dos 12 meses previstos. Só a moeda
+oficial.
+
 ### PWA e offline ✅
 
 Instalável; leitura offline com carimbo de quando o dado foi servido; fila de

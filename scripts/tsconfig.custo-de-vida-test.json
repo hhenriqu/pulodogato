@@ -1,0 +1,15 @@
+{
+  "//": "Build so do teste de lib/custo-de-vida.ts, que puxa lib/recurrence.ts (as ocorrencias da conta fixa) e lib/recurrence-detector.ts (a chave da descricao) pelo alias @/. O tsc nao reescreve o alias no JS emitido: o npm script roda scripts/resolve-aliases.mjs depois, igual ao test:variable-spend.",
+  "compilerOptions": {
+    "outDir": "../.tmp-custo-de-vida",
+    "rootDir": "../lib",
+    "module": "es2020",
+    "target": "es2020",
+    "moduleResolution": "node",
+    "strict": true,
+    "skipLibCheck": true,
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": ["../lib/custo-de-vida.ts"]
+}

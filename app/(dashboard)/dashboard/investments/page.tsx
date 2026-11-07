@@ -56,6 +56,7 @@ import {
 } from "@/components/investments/ModalDeCadastroDeAtivo";
 import { CarteiraPorConta } from "@/components/investments/CarteiraPorConta";
 import { RebalanceamentoDaCarteira } from "@/components/investments/RebalanceamentoDaCarteira";
+import { CustoDeVida } from "@/components/investments/CustoDeVida";
 import { comporCarteiraPorConta } from "@/lib/carteira-na-tela";
 import type { LimitesDosCrivos } from "@/lib/crivos";
 import {
@@ -734,6 +735,12 @@ export default function InvestmentsPage() {
             estimado ao lado. Devolve `null` quando nao ha renda fixa na
             carteira -- ver o componente. */}
         <RendaFixaDaCarteira dados={rendaFixa} />
+
+        {/* O CUSTO DE VIDA: 12 meses realizados, 12 previstos e a reserva de
+            emergencia sugerida. Le rota propria e nao depende da carteira --
+            aparece mesmo sem ativo, porque a reserva e a primeira pergunta de
+            quem ainda vai comecar a investir. */}
+        <CustoDeVida valorDaCarteira={resumo?.currentValue ?? null} />
         {/* --- Os critérios de fundamento (HMO-195) ------------------------- */}
         {erroCrivos && (
           <Alert>
