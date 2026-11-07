@@ -539,14 +539,12 @@ export default function GroupDetailPage() {
     useState<SplitSuggestion | null>(null);
 
   // Estados dos accordions
-  // "scheduled" comece aberta: a despesa fixa de grupo era invisivel nesta tela
-  // (HMO-177), e nascer fechada atras de um clique repetiria o sintoma.
+  // "scheduled" nasce FECHADA desde 07/11/2026: a linha de resumo das
+  // previstas ja diz quantas sao e quanto (ver o comentario no JSX), entao a
+  // despesa fixa nao fica invisivel como na HMO-177.
   // A conta aberta na lista (a divisao dela so aparece ao tocar na linha).
   const [contaAberta, setContaAberta] = useState<string | null>(null);
-  const [openSections, setOpenSections] = useState<string[]>([
-    "scheduled",
-    "current",
-  ]);
+  const [openSections, setOpenSections] = useState<string[]>(["current"]);
 
   // Os oito `load*` abaixo sao `useCallback` porque `loadData` chama todos, e
   // com funcao recriada a cada render a dependencia dele nunca estabilizaria --
@@ -1894,193 +1892,173 @@ export default function GroupDetailPage() {
             </CardHeader>
             <CardContent className="space-y-4">
             {/*
-              Previstas: o que o grupo AINDA VAI pagar (HMO-177), no mes do
-              seletor (HMO-248).
+              AS PREVISTAS, ENXUTAS (pedido do Helio, 07/11/2026): o cartao
+              grande, com avatar, cracha e o quadro de quem pagou aberto em toda
+              conta, ocupava mais altura que a lista de contas logo abaixo.
+              Agora e UMA linha de resumo (quantas, total, minha parte), e as
+              contas, no mesmo desenho de tres colunas da lista, so ao tocar.
 
-              Fica separada das outras secoes de proposito. As demais listam
-              despesa que ja aconteceu e tem divisao gravada, com uma parte por
-              membro; aqui nao ha divisao nenhuma ainda -- ela nasce na baixa da
-              conta prevista. Misturar as duas na mesma lista faria o total do
-              grupo somar dinheiro que ninguem gastou.
+              Nascer fechada nao repete o sintoma da HMO-177: a linha de resumo
+              continua dizendo que ha conta a vencer, e quanto.
 
-              O RECORTE DE MES E O QUE A HMO-248 CONSERTOU. Uma despesa fixa
-              nao grava uma linha: grava uma regra e MATERIALIZA uma parcela por
-              mes do horizonte. Sem recorte, o aluguel de R$ 1.800 aparecia tres
-              vezes e a legenda dizia "Total: R$ 5.400" -- o aluguel de tres
-              meses somado num cartao que nao diz de qual mes fala.
+              O RECORTE DE MES continua o da HMO-248: uma despesa fixa grava uma
+              regra e MATERIALIZA uma parcela por mes. Sem recorte, o aluguel de
+              R$ 1.800 aparecia tres vezes e o total dizia "R$ 5.400" -- tres
+              meses somados num resumo que nao diz de qual mes fala. Por isso
+              nada aqui soma `scheduled` cru.
 
-              So aparece quando existe alguma NO MES: mes sem conta prevista
-              continua vendo a tela de antes.
+              O que ficou de fora do mes vai na mesma caixa, em texto menor
+              (HMO-248): sumir sem rotulo e indistinguivel de "nao existe".
             */}
-            {previstasDoMes.doMes.length > 0 && (
-              <Card>
-                <CardHeader
-                  className="cursor-pointer hover:bg-muted/50 transition-colors"
-                  onClick={() => toggleSection("scheduled")}
-                >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <CardTitle className="flex items-center gap-2">
-                        <Clock className="h-5 w-5" />
+            {(previstasDoMes.doMes.length > 0 ||
+              previstasDoMes.antes.quantidade > 0 ||
+              previstasDoMes.depois.quantidade > 0) && (
+              <div className="rounded-lg border">
+                {previstasDoMes.doMes.length > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => toggleSection("scheduled")}
+                    aria-expanded={openSections.includes("scheduled")}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-muted/50"
+                  >
+                    <Clock className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    <span className="min-w-0 flex-1 truncate">
+                      <span className="font-medium">
                         Previstas de {rotuloDoMesDoGrupo}
-                        <Badge variant="outline">
-                          {previstasDoMes.doMes.length} a vencer
-                        </Badge>
-                      </CardTitle>
-                      <CardDescription>
-                        Ainda não aconteceram • Total:{" "}
-                        {formatCurrency(previstasDoMes.total)} • Sua parte:{" "}
+                      </span>{" "}
+                      <span className="text-muted-foreground">
+                        • {previstasDoMes.doMes.length} a vencer •{" "}
+                        {formatCurrency(previstasDoMes.total)} • sua parte{" "}
                         {formatCurrency(previstasDoMes.parte)}
-                      </CardDescription>
-                    </div>
+                      </span>
+                    </span>
                     {openSections.includes("scheduled") ? (
-                      <ChevronDown className="h-5 w-5" />
+                      <ChevronDown className="h-4 w-4 shrink-0" />
                     ) : (
-                      <ChevronRight className="h-5 w-5" />
+                      <ChevronRight className="h-4 w-4 shrink-0" />
                     )}
-                  </div>
-                </CardHeader>
-                {openSections.includes("scheduled") && (
-                  <CardContent className="space-y-3">
-                    {previstasDoMes.doMes.map((item) => (
-                      <div key={item.id} className="border rounded-lg p-4">
-                        <div className="flex items-start justify-between gap-3">
+                  </button>
+                ) : (
+                  <p className="px-3 py-2 text-sm text-muted-foreground">
+                    Nenhuma prevista em {rotuloDoMesDoGrupo}.
+                  </p>
+                )}
+
+                {previstasDoMes.doMes.length > 0 &&
+                  openSections.includes("scheduled") && (
+                    <ul className="divide-y border-t">
+                      {previstasDoMes.doMes.map((item) => (
+                        <li key={item.id} className="px-3 py-2">
                           <div className="flex items-center gap-3">
-                            <Avatar className="h-8 w-8">
-                              <AvatarImage src={item.payer?.avatar_url} />
-                              <AvatarFallback>
-                                {inicial(item.payer?.full_name)}
-                              </AvatarFallback>
-                            </Avatar>
-                            <div>
-                              <h4 className="font-medium flex items-center gap-2">
+                            <div className="w-9 shrink-0 text-center leading-tight">
+                              <span className="block text-[10px] uppercase text-muted-foreground">
+                                {MESES_CURTOS[
+                                  Number(item.due_date?.slice(5, 7)) - 1
+                                ] ?? ""}
+                              </span>
+                              <span className="block font-semibold">
+                                {item.due_date?.slice(8, 10)}
+                              </span>
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate text-sm font-medium">
                                 {item.description}
                                 {item.is_recurring && (
-                                  <Badge
-                                    variant="secondary"
-                                    className="text-xs"
-                                  >
-                                    Fixa
-                                  </Badge>
-                                )}
-                              </h4>
-                              <p className="text-sm text-muted-foreground">
-                                {item.payer
-                                  ? `Vai pagar: ${item.payer.full_name}`
-                                  : "Responsável não identificado"}{" "}
-                                • vence{" "}
-                                {dataNaTela(item.due_date)}
-                              </p>
-                            </div>
-                          </div>
-                          <div className="text-right">
-                            <p className="font-bold text-lg">
-                              {formatCurrency(item.amount)}
-                            </p>
-                            <p className="text-sm text-muted-foreground">
-                              sua parte {formatCurrency(item.share_amount)}
-                            </p>
-                            <Badge
-                              variant="outline"
-                              className={`text-xs ${
-                                item.is_overdue
-                                  ? "bg-destructive/10 text-destructive"
-                                  : "bg-warning/10 text-warning"
-                              }`}
-                            >
-                              {item.is_overdue ? "Vencida" : "A vencer"}
-                            </Badge>
-                          </div>
-                        </div>
-
-                        {/*
-                          QUEM JA RESOLVEU A PARTE DELE (HMO-411).
-
-                          Sem este bloco o `reported` que o membro grava em
-                          `group_bill_payments` e dado sem leitor -- nesta base
-                          o mesmo que nao existir --, e a feature passaria
-                          verde com ninguem vendo nada.
-
-                          `item.estado_por_membro &&` e nao `?.length`: a
-                          resposta guardada no aparelho de antes desta feature
-                          vem sem o campo, e desenhar um quadro vazio ali
-                          afirmaria "ninguem avisou" com base num corpo que
-                          nunca respondeu isso.
-                        */}
-                        {item.estado_por_membro && (
-                          <div
-                            className="mt-3 border-t border-border pt-2"
-                            data-quadro-da-prevista={item.id}
-                          >
-                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-                              {item.estado_por_membro.map((membro, i) => (
-                                <span
-                                  key={membro.user_id}
-                                  data-estado-do-membro={membro.user_id}
-                                  data-estado={membro.estado}
-                                >
-                                  {i > 0 && <span className="mr-2">·</span>}
-                                  <span
-                                    className={
-                                      membro.estado === "pendente"
-                                        ? ""
-                                        : "text-foreground"
-                                    }
-                                  >
-                                    {membro.full_name ?? "Membro"}{" "}
-                                    {FRASE_DO_ESTADO[membro.estado]}
+                                  <span className="ml-1 text-xs font-normal text-muted-foreground">
+                                    (fixa)
                                   </span>
-                                </span>
-                              ))}
-                            </div>
-                            {item.estado_parcial && (
-                              <p
-                                className="mt-1 text-xs text-muted-foreground"
-                                data-quadro-parcial={item.id}
-                              >
-                                {SO_O_DONO_VE_O_QUADRO}
+                                )}
                               </p>
-                            )}
+                              <p className="truncate text-xs text-muted-foreground">
+                                {item.payer
+                                  ? `${nomeNaTela(item.payer)} vai pagar`
+                                  : "Responsável não identificado"}
+                                {item.is_overdue && (
+                                  <span className="text-destructive">
+                                    {" "}
+                                    • vencida
+                                  </span>
+                                )}
+                              </p>
+                            </div>
+                            <div className="shrink-0 text-right">
+                              <p className="text-sm font-semibold">
+                                {formatCurrency(item.amount)}
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                sua parte {formatCurrency(item.share_amount)}
+                              </p>
+                            </div>
                           </div>
-                        )}
-                      </div>
-                    ))}
-                  </CardContent>
+
+                          {/*
+                            QUEM JA RESOLVEU A PARTE DELE (HMO-411), numa linha
+                            de texto pequena. `item.estado_por_membro &&` e nao
+                            `?.length`: a resposta guardada antes desta feature
+                            vem sem o campo, e um quadro vazio afirmaria
+                            "ninguem avisou" sem base.
+                          */}
+                          {item.estado_por_membro && (
+                            <div
+                              className="ml-12 mt-1"
+                              data-quadro-da-prevista={item.id}
+                            >
+                              <p className="text-xs text-muted-foreground">
+                                {item.estado_por_membro.map((membro, i) => (
+                                  <span
+                                    key={membro.user_id}
+                                    data-estado-do-membro={membro.user_id}
+                                    data-estado={membro.estado}
+                                  >
+                                    {i > 0 && " · "}
+                                    <span
+                                      className={
+                                        membro.estado === "pendente"
+                                          ? ""
+                                          : "text-foreground"
+                                      }
+                                    >
+                                      {membro.full_name ?? "Membro"}{" "}
+                                      {FRASE_DO_ESTADO[membro.estado]}
+                                    </span>
+                                  </span>
+                                ))}
+                              </p>
+                              {item.estado_parcial && (
+                                <p
+                                  className="text-xs text-muted-foreground"
+                                  data-quadro-parcial={item.id}
+                                >
+                                  {SO_O_DONO_VE_O_QUADRO}
+                                </p>
+                              )}
+                            </div>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+
+                {(previstasDoMes.antes.quantidade > 0 ||
+                  previstasDoMes.depois.quantidade > 0) && (
+                  <p className="border-t px-3 py-1.5 text-xs text-muted-foreground">
+                    Fora de {rotuloDoMesDoGrupo}:{" "}
+                    {[
+                      previstasDoMes.antes.quantidade > 0 &&
+                        `${previstasDoMes.antes.quantidade} vencida${
+                          previstasDoMes.antes.quantidade !== 1 ? "s" : ""
+                        } antes (${formatCurrency(previstasDoMes.antes.total)})`,
+                      previstasDoMes.depois.quantidade > 0 &&
+                        `${previstasDoMes.depois.quantidade} a vencer depois (${formatCurrency(
+                          previstasDoMes.depois.total
+                        )})`,
+                    ]
+                      .filter(Boolean)
+                      .join(" • ")}
+                    . Use as setas acima para ver.
+                  </p>
                 )}
-              </Card>
-            )}
-
-            {/*
-              O que o recorte do mes DEIXOU DE FORA, dito em texto (HMO-248).
-
-              Recortar no mes escondia duas coisas uteis: a parcela VENCIDA de
-              um mes passado -- que e justamente a que pede acao -- e o aluguel
-              do mes que vem. Sumir da tela sem rotulo e indistinguivel de "nao
-              existe", e a pessoa que acabou de cadastrar a despesa fixa
-              concluiria que ela nao foi gravada.
-
-              Fica FORA do cartao de propósito: aparece tambem quando o mes nao
-              tem nenhuma prevista e o cartao acima nem e montado, que e
-              exatamente o caso de quem esta olhando o mes errado.
-            */}
-            {(previstasDoMes.antes.quantidade > 0 ||
-              previstasDoMes.depois.quantidade > 0) && (
-              <p className="text-xs text-muted-foreground">
-                Fora de {rotuloDoMesDoGrupo}:{" "}
-                {[
-                  previstasDoMes.antes.quantidade > 0 &&
-                    `${previstasDoMes.antes.quantidade} vencida${
-                      previstasDoMes.antes.quantidade !== 1 ? "s" : ""
-                    } antes (${formatCurrency(previstasDoMes.antes.total)})`,
-                  previstasDoMes.depois.quantidade > 0 &&
-                    `${previstasDoMes.depois.quantidade} a vencer depois (${formatCurrency(
-                      previstasDoMes.depois.total
-                    )})`,
-                ]
-                  .filter(Boolean)
-                  .join(" • ")}
-                . Use as setas acima para ver.
-              </p>
+              </div>
             )}
 
               {itensDoMes.length > 0 ? (
