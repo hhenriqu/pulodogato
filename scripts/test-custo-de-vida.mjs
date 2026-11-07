@@ -20,6 +20,7 @@ const {
   mesesDaPrevisao,
   somarMeses,
   fimDoMes,
+  resumoDoCusto,
 } = await import("../.tmp-custo-de-vida/custo-de-vida.js");
 
 const HOJE = "2026-11-07";
@@ -169,4 +170,29 @@ test("conta com frequencia desconhecida nao derruba a conta inteira", () => {
     hoje: HOJE,
   });
   assert.equal(custo.reservaSugerida, 1440);
+});
+
+test("sem o variavel, a reserva e as medias ficam so com o fixo", () => {
+  const despesas = [];
+  for (const mes of mesesDoHistorico(HOJE)) {
+    despesas.push({ data: `${mes}-10`, valor: 1700, descricao: "Aluguel" });
+    despesas.push({ data: `${mes}-12`, valor: 800, descricao: "Mercado" });
+  }
+  const custo = calcularCustoDeVida({
+    despesas,
+    contasFixas: [
+      { descricao: "Aluguel", valor: 1700, frequency: "monthly", due_day: 10, start_date: "2024-01-10" },
+    ],
+    hoje: HOJE,
+  });
+
+  const com = resumoDoCusto(custo, true);
+  assert.equal(com.reserva, 30000);
+  assert.equal(com.mediaPrevista, 2500);
+  assert.equal(com.mediaRealizada, 2500);
+
+  const sem = resumoDoCusto(custo, false);
+  assert.equal(sem.reserva, 20400);
+  assert.equal(sem.mediaPrevista, 1700);
+  assert.equal(sem.mediaRealizada, 1700);
 });

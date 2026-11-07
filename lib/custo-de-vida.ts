@@ -306,3 +306,38 @@ export function calcularCustoDeVida(entrada: EntradaDoCustoDeVida): CustoDeVida 
     mesesComGasto,
   };
 }
+
+/** Os numeros da tela com ou sem o gasto variavel. */
+export interface ResumoDoCusto {
+  reserva: number;
+  mediaPrevista: number;
+  mediaRealizada: number;
+}
+
+/**
+ * A chave "considerar o gasto variavel" da tela.
+ *
+ * Ligada, devolve os numeros que a rota calculou. Desligada, a reserva e a
+ * soma so do FIXO previsto e a media realizada so do fixo -- a pergunta vira
+ * "quanto preciso para pagar as contas fixas por 12 meses". A media realizada
+ * continua sobre os meses com gasto (qualquer gasto), para as duas versoes
+ * dividirem pelo mesmo numero de meses.
+ */
+export function resumoDoCusto(custo: CustoDeVida, comVariavel: boolean): ResumoDoCusto {
+  if (comVariavel) {
+    return {
+      reserva: custo.reservaSugerida,
+      mediaPrevista: custo.mediaPrevista,
+      mediaRealizada: custo.mediaRealizada,
+    };
+  }
+  const reserva = arredondar(custo.previsao.reduce((s, m) => s + m.fixo, 0));
+  const comGasto = custo.historico.filter((m) => m.total > 0);
+  return {
+    reserva,
+    mediaPrevista: custo.previsao.length ? arredondar(reserva / custo.previsao.length) : 0,
+    mediaRealizada: comGasto.length
+      ? arredondar(comGasto.reduce((s, m) => s + m.fixo, 0) / comGasto.length)
+      : 0,
+  };
+}

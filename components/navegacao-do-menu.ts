@@ -55,6 +55,7 @@ import {
   CalendarClock,
   HandCoins,
   PiggyBank,
+  Umbrella,
   Target,
   Bell,
   FileUp,
@@ -362,6 +363,16 @@ export const menuAgrupado: EntradaDoMenu[] = [
         name: "Patrimônio",
         href: "/dashboard/net-worth",
         icon: Landmark,
+      },
+      // "Custo de vida" mora em Investimentos a pedido do Helio: e a pergunta
+      // que vem antes de investir -- quanto custa um mes e quanto guardar de
+      // reserva de emergencia. Era uma secao dentro da Carteira (#441) e saiu
+      // para tela propria. Sem `requiredFeature`, como "Patrimônio": so le
+      // despesas e contas fixas que o usuario ja lancou.
+      {
+        name: "Custo de vida",
+        href: "/dashboard/investments/custo-de-vida",
+        icon: Umbrella,
       },
       {
         // Trading desceu para ca na HMO-423 e nao ganhou nem perdeu gate: ele
