@@ -164,6 +164,7 @@ next-env.d.ts
 /.tmp-investments/
 # saida do `npm run test:rebalanceamento`
 /.tmp-rebalanceamento/
+/.tmp-custo-de-vida/
 # saida do `npm run test:cotacao-brapi`
 /.tmp-cotacao-brapi/
 
