@@ -162,6 +162,7 @@ import {
 } from "@/lib/telas-de-movimentacao";
 import {
   lerAReceberDoMyBank,
+  lerDividaDoMyBank,
   lerJurosDevidosDoMyBank,
   lerJurosPagosDoMyBank,
 } from "@/lib/services/divida-do-mybank";
@@ -1005,6 +1006,37 @@ export async function GET(request: NextRequest) {
     }
 
     // ----------------------------------------------------------------
+    // 3d'. A PARCELA CHEIA DO MYBANK, FORA DO TOTAL -- decisao do Helio,
+    //      07/11/2026 ("linha a pagar, total so com juros")
+    // ----------------------------------------------------------------
+    // A Lais abria Despesas e nao via o que tem de pagar ao MyBank: a aba so
+    // mostra o JURO (RN021.6), e emprestimo sem juro nao aparecia em lugar
+    // nenhum dela. A parcela cheia vem num campo PROPRIO, fora de `linhas` e
+    // de `resumo`: o principal e transferencia (RN021.2), e somar aqui
+    // contaria como gasto o dinheiro que ela so esta devolvendo -- e o juro,
+    // que ja esta em `parcelasDevidas`, entraria duas vezes. A mesma leitura
+    // de Contas a Pagar (`lerDividaDoMyBank`), que ja exclui o emprestimo a
+    // si mesmo (RN021.4).
+    let parcelasDoMyBank: ParcelaDevidaNaAgenda[] = [];
+
+    if (tela.tipo === "expense") {
+      const leitura = await lerDividaDoMyBank(supabase, user.id, {
+        de: periodo.de,
+        ate: periodo.ate,
+        hoje,
+      });
+
+      if (!leitura.ok) {
+        console.error(
+          "A tela de movimentação seguiu sem as parcelas do MyBank a pagar:",
+          leitura.mensagem
+        );
+      } else {
+        parcelasDoMyBank = comODonoDaLeitura(leitura.linhas, user.id);
+      }
+    }
+
+    // ----------------------------------------------------------------
     // 3e. O FECHAMENTO DO GRUPO -- fase 4, RN017 e RN018.7
     // ----------------------------------------------------------------
     // Duas leituras, uma de cada lado:
@@ -1344,6 +1376,7 @@ export async function GET(request: NextRequest) {
         grupos.add(g.group_id);
         for (const i of g.itens) if (i.quem_lancou) pessoas.add(i.quem_lancou);
         for (const t of g.transferencias) pessoas.add(t.para_user_id);
+        for (const r of g.recebimentos ?? []) pessoas.add(r.de_user_id);
       }
       for (const c of contasDosOutros) {
         grupos.add(c.group_id);
@@ -1366,6 +1399,14 @@ export async function GET(request: NextRequest) {
               ...t,
               nome: t.nome ?? nomes.get(t.para_user_id) ?? null,
             })),
+            ...(g.recebimentos
+              ? {
+                  recebimentos: g.recebimentos.map((r) => ({
+                    ...r,
+                    nome: r.nome ?? nomes.get(r.de_user_id) ?? null,
+                  })),
+                }
+              : {}),
           })),
           ...gruposSemFechamento(contasDosOutros, nomesDosGrupos, nomes),
         ]
@@ -1464,6 +1505,12 @@ export async function GET(request: NextRequest) {
        * cadastrou, ou a RLS de `user_pix_keys` nao a libera.
        */
       chaves_pix: chavesPix,
+      /**
+       * A parcela CHEIA do MyBank que eu devo no periodo, so na aba Despesas.
+       * Fora de `resumo` e de `linhas`: o total da aba soma so o juro
+       * (RN021.6), e a tela diz isso ao lado da lista.
+       */
+      parcelas_do_mybank: parcelasDoMyBank,
     });
   } catch (error) {
     console.error("Erro na tela de movimentação:", error);

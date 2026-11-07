@@ -24,6 +24,7 @@ import { paresDoAcerto, type ContaEmAberto } from "@/lib/acerto-do-fechamento";
 import { tabelaDePixAusente, type TipoDeChavePix } from "@/lib/chave-pix";
 import {
   detalheDoPeriodo,
+  recebimentosDoMembro,
   transferenciasDoMembro,
   type GrupoNaLista,
 } from "@/lib/despesas-do-grupo";
@@ -109,10 +110,10 @@ export async function lerContasDoFechamentoEmAberto(
     }
 
     // OS PIX QUE QUITAM, por grupo: o que esta em aberto e do GRUPO inteiro, e
-    // o par sai das contas de todos (RN019.5). So em Despesas: quem recebe nao
-    // tem transferencia a fazer.
+    // o par sai das contas de todos (RN019.5). Em Despesas sao os Pix que eu
+    // faco; em Receitas, os que eu recebo (07/11/2026).
     const paresPorGrupo = new Map<string, ReturnType<typeof paresDoAcerto>>();
-    if (tipo === "expense") {
+    {
       const grupos = Array.from(
         new Set(
           contas
@@ -155,11 +156,26 @@ export async function lerContasDoFechamentoEmAberto(
         fechamento: fechamento.period_end,
         itens: doDetalhe,
         abatimentos,
-        transferencias: transferenciasDoMembro(
-          paresPorGrupo.get(fechamento.group_id) ?? [],
-          userId,
-          new Map()
-        ),
+        transferencias:
+          tipo === "expense"
+            ? transferenciasDoMembro(
+                paresPorGrupo.get(fechamento.group_id) ?? [],
+                userId,
+                new Map()
+              )
+            : [],
+        // O espelho na aba Receitas (07/11/2026): quem me paga a conta "A
+        // receber do grupo", para a tela dizer de quem vem o Pix e deixar
+        // confirmar que ele chegou.
+        ...(tipo === "income"
+          ? {
+              recebimentos: recebimentosDoMembro(
+                paresPorGrupo.get(fechamento.group_id) ?? [],
+                userId,
+                new Map()
+              ),
+            }
+          : {}),
       });
     }
 

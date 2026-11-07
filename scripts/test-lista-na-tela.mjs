@@ -653,6 +653,19 @@ const PainelQuemMePaga = (props) =>
     : null;
 
 /**
+ * O PAINEL "A PAGAR NO MYBANK" (07/11/2026): MARCADOR, irmao dos dois de cima.
+ *
+ * Mesmo motivo: \`ListaDeMovimentacao\` passou a importa-lo, e um nome que a
+ * pagina nao declara vira \`ReferenceError\` no render. A guarda e a da
+ * producao: os corpos desta suite nao tem \`parcelas_do_mybank\`, o estado chega
+ * \`[]\` e o componente de verdade devolve \`null\`.
+ */
+const PainelParcelasDoMyBank = (props) =>
+  props.parcelas && props.parcelas.length > 0
+    ? React.createElement("div", null, "ESBOCO-PARCELAS-DO-MYBANK")
+    : null;
+
+/**
  * A LINHA DE GRUPO ("Despesas do Grupo {nome}", 24/10/2026): MARCADOR.
  *
  * Mesmo motivo dos dois paineis acima: ela nao e assunto desta suite (a

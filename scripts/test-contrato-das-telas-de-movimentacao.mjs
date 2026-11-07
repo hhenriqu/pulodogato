@@ -646,11 +646,16 @@ test("a rota LE o juro devido do MyBank e o CONCATENA nas previstas (HMO-377, fa
       "DEVE a uma conexao desaparece da aba Despesas"
   );
 
-  // E A PARCELA CHEIA NAO VOLTA para esta aba.
+  // E A PARCELA CHEIA NAO ENTRA NO TOTAL. Desde 07/11/2026 a aba le a divida
+  // cheia (`lerDividaDoMyBank`), mas so para o painel "A pagar no MyBank"
+  // (`parcelas_do_mybank`), fora de `linhas` e de `resumo`. O que nao pode
+  // acontecer e ela entrar na lista que `linhasDaTela` soma.
+  const previstasDaTela = rota.match(/const previstas: PrevistaCrua\[\] = \[([\s\S]*?)\];/);
+  assert.ok(previstasDaTela, `${ROTA} nao monta mais \`previstas\` como esta sonda espera`);
   assert.doesNotMatch(
-    rota,
-    /await lerDividaDoMyBank\(/,
-    `${ROTA} voltou a ler a divida cheia: o principal entraria em Despesas`
+    previstasDaTela[1],
+    /parcelasDoMyBank/,
+    `${ROTA} pos a divida cheia nas previstas: o principal entraria no total de Despesas`
   );
 
   // 2. E ELA E GUARDADA PELA ABA DE DESPESAS. Sem a guarda, Receitas e

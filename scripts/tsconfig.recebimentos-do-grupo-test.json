@@ -1,0 +1,17 @@
+{
+  "//": "Build so do teste dos recebimentos do grupo (07/11/2026): lib/despesas-do-grupo.ts (recebimentosDoMembro) e lib/acerto-do-fechamento.ts (paresDoAcerto), para os pares virem da aritmetica de producao e nao de um objeto escrito a mao. Ver scripts/test-recebimentos-do-grupo.mjs.",
+  "compilerOptions": {
+    "outDir": "../.tmp-recebimentos-do-grupo",
+    "rootDir": "../lib",
+    "module": "es2020",
+    "target": "es2020",
+    "moduleResolution": "node",
+    "skipLibCheck": true,
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": [
+    "../lib/despesas-do-grupo.ts",
+    "../lib/acerto-do-fechamento.ts"
+  ]
+}
