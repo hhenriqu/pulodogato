@@ -757,3 +757,4 @@ next-env.d.ts
 
 # Graphify: grafo do codigo gerado localmente (graphify update .)
 graphify-out/
+/.tmp-acesso-pelo-claude/

@@ -75,6 +75,17 @@ const nextConfig = {
   images: {
     domains: ["localhost"],
   },
+  // Os metadados do OAuth do conector do Claude (`app/api/mcp/**`). O Claude
+  // os procura em `/.well-known/...` na raiz do dominio, com e sem o caminho
+  // do recurso no fim; as rotas de verdade moram em `/api/mcp/oauth/`.
+  async rewrites() {
+    return [
+      { source: "/.well-known/oauth-protected-resource", destination: "/api/mcp/oauth/recurso" },
+      { source: "/.well-known/oauth-protected-resource/:caminho*", destination: "/api/mcp/oauth/recurso" },
+      { source: "/.well-known/oauth-authorization-server", destination: "/api/mcp/oauth/servidor" },
+      { source: "/.well-known/oauth-authorization-server/:caminho*", destination: "/api/mcp/oauth/servidor" },
+    ];
+  },
 };
 
 module.exports = withPWA(nextConfig);

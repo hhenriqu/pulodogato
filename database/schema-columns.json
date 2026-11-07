@@ -926,6 +926,17 @@
     "to_status",
     "user_id"
   ],
+  "tokens_do_claude": [
+    "codigo_hash",
+    "criado_em",
+    "id",
+    "nome",
+    "prefixo",
+    "revogado_em",
+    "token_hash",
+    "usado_em",
+    "user_id"
+  ],
   "transaction_categories": [
     "color_hex",
     "created_at",

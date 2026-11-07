@@ -6,6 +6,8 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
+import type { Route } from "next";
+import { destinoDepoisDoLogin } from "@/lib/destino-do-login";
 import {
   Card,
   CardContent,
@@ -60,7 +62,9 @@ function LoginContent() {
     if (error) {
       setError(error.message);
     } else {
-      router.push("/dashboard");
+      // `?next=` traz de volta quem veio de uma tela que exige login (a
+      // autorizacao do Claude, `/conectar-claude`). So caminho do proprio app.
+      router.push(destinoDepoisDoLogin(searchParams.get("next")) as Route);
     }
 
     setIsLoading(false);

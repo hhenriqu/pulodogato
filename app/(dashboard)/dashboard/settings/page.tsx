@@ -57,6 +57,7 @@ import {
 import { toast } from "sonner";
 import { ConfiguracaoDeMoeda } from "@/components/financial/ConfiguracaoDeMoeda";
 import { PainelDeLimites } from "@/components/subscription/PainelDeLimites";
+import { ConexaoComOClaude } from "@/components/configuracoes/ConexaoComOClaude";
 import {
   LayoutDashboard,
   GripVertical,
@@ -71,6 +72,7 @@ import {
   EyeOff,
   Coins,
   Gauge,
+  Bot,
 } from "lucide-react";
 import {
   SECOES_DO_PAINEL,
@@ -247,6 +249,10 @@ export default function ConfiguracoesPage() {
             <Gauge className="h-4 w-4 mr-2" />
             Plano e limites
           </TabsTrigger>
+          <TabsTrigger value="claude">
+            <Bot className="h-4 w-4 mr-2" />
+            Claude
+          </TabsTrigger>
           <TabsTrigger value="conta">
             <AlertTriangle className="h-4 w-4 mr-2" />
             Conta
@@ -422,6 +428,13 @@ export default function ConfiguracoesPage() {
               </Button>
             </div>
           </div>
+        </TabsContent>
+
+        {/* ---------------------------------------------------------------- */}
+        {/* Aba: lancar pelo Claude (servidor MCP, migration 085)             */}
+        {/* ---------------------------------------------------------------- */}
+        <TabsContent value="claude" className="mt-4">
+          <ConexaoComOClaude />
         </TabsContent>
 
         {/* ---------------------------------------------------------------- */}

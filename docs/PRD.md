@@ -997,6 +997,15 @@ migration é passo manual no SQL Editor do Supabase.
   legível pelo admin e pela pessoa cuja conta foi usada. A volta usa o refresh
   token do admin num cookie httpOnly de 4 h; se falhar, o navegador sai
   deslogado, nunca preso na conta do membro.
+- **Lançar pelo Claude** (servidor MCP em `/api/mcp`, Configurações → Claude)
+  qualquer pessoa com conta adiciona o app como conector no Claude, entra com a
+  própria conta (OAuth com PKCE) e lança despesa, receita e compra parcelada
+  conversando. O Claude só vê e grava o que a pessoa vê no app: o token vira
+  uma sessão normal dela, sob RLS. Do token só o SHA-256 fica gravado
+  (`tokens_do_claude`, migration 085); a pessoa vê as conexões e desconecta na
+  hora. Compra parcelada passa pela mesma rota da tela
+  (`/api/financial-installments`), então a série e a fatura de cada parcela
+  seguem a mesma regra.
 - **LGPD** dados do próprio usuário; o painel de configurações permite zerar a
   conta (RN022), e o plano de apagamento respeita a ordem das dependências e
   não apaga o que é de outra pessoa.
