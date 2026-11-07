@@ -32,6 +32,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
   Card,
   CardContent,
@@ -189,6 +190,16 @@ interface FaturaDoCartaoProps {
    */
   aoExcluirPrevisao?: (previsao: PrevisaoAcionavel) => void;
   /**
+   * Marcar ou desmarcar a CONTA FIXA desta previsao como assinatura
+   * (migration 084). So aparece na previsao que tem serie
+   * (`recurring_rule_id`): a marca mora na regra, e a conta avulsa nao tem
+   * regra onde grava-la.
+   *
+   * OPCIONAL como os outros: sem ele o interruptor nao aparece, e este
+   * componente continua sem rede.
+   */
+  aoMarcarAssinatura?: (previsao: PrevisaoAcionavel, assinatura: boolean) => void;
+  /**
    * O formulario da conta prevista em edicao, como SLOT (HMO-460).
    *
    * Mesmo motivo do `blocoDeAjuste` abaixo: o formulario tem cinco pedacos de
@@ -257,6 +268,7 @@ export function FaturaDoCartao({
   categoriaDeAjuste,
   aoEditarPrevisao,
   aoExcluirPrevisao,
+  aoMarcarAssinatura,
   blocoDeEdicaoDaPrevisao,
   blocoDeAjuste,
 }: FaturaDoCartaoProps) {
@@ -929,6 +941,27 @@ export function FaturaDoCartao({
                     cobrança em {diaEMes(previsao.due_date)}
                     {previsao.category ? ` · ${previsao.category.name}` : ""}
                   </p>
+                  {/* "E ASSINATURA" (migration 084). Embaixo da descricao, e
+                      nao ao lado do valor: a linha ja tem valor e dois
+                      botoes, e um interruptor a mais empurraria o valor para
+                      fora da tela num celular de 320px. */}
+                  {aoMarcarAssinatura && previsao.recurring_rule_id ? (
+                    <label
+                      htmlFor={`assinatura-${previsao.id}`}
+                      className="mt-1 flex w-fit cursor-pointer items-center gap-2 text-xs text-muted-foreground"
+                    >
+                      <Switch
+                        id={`assinatura-${previsao.id}`}
+                        className="h-5 w-9 [&>span]:h-4 [&>span]:w-4 [&>span[data-state=checked]]:translate-x-4"
+                        checked={previsao.is_subscription === true}
+                        onCheckedChange={(marcado) =>
+                          aoMarcarAssinatura(previsao, marcado)
+                        }
+                        aria-label={`Marcar ${previsao.description} como assinatura`}
+                      />
+                      Assinatura
+                    </label>
+                  ) : null}
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
                   {/* O mesmo pedagio do total: valor impresso a partir de uma

@@ -25,6 +25,9 @@ const CAMPOS_EDITAVEIS = [
   "auto_post",
   "is_active",
   "notes",
+  // Conta fixa marcada como assinatura (migration 084). Nao toca a agenda: so
+  // decide se a regra aparece na tela de Assinaturas.
+  "is_subscription",
 ] as const;
 
 export async function PATCH(
@@ -53,6 +56,13 @@ export async function PATCH(
     if (Object.keys(patch).length === 0) {
       return NextResponse.json(
         { error: "Nenhum campo editável foi enviado" },
+        { status: 400 }
+      );
+    }
+
+    if ("is_subscription" in patch && typeof patch.is_subscription !== "boolean") {
+      return NextResponse.json(
+        { error: "is_subscription deve ser verdadeiro ou falso" },
         { status: 400 }
       );
     }

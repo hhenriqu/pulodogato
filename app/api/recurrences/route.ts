@@ -1,6 +1,16 @@
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
-import { totalMensal, type RecurrenceStatus } from "@/lib/recurrence-detector";
+import {
+  normalizeMerchant,
+  totalMensal,
+  type RecurrenceStatus,
+} from "@/lib/recurrence-detector";
+import {
+  assinaturasDasContasFixas,
+  totalMensalDasContasFixas,
+  type AssinaturaDaContaFixa,
+  type RegraDeAssinatura,
+} from "@/lib/assinaturas-das-contas-fixas";
 import {
   alertasDasRecorrencias,
   type RecorrenciaParaAlerta,
@@ -76,20 +86,70 @@ export async function GET(request: NextRequest) {
       lista as RecorrenciaParaAlerta[]
     );
 
+    // -----------------------------------------------------------------
+    // AS CONTAS FIXAS MARCADAS COMO ASSINATURA (migration 084)
+    // -----------------------------------------------------------------
+    // O usuario cadastrou e marcou "e assinatura" na conta fixa (no cartao,
+    // tipicamente). Elas entram na tela ao lado das detectadas e somam no
+    // total.
+    //
+    // FALHAR AQUI NAO DERRUBA A TELA. Antes da migration 084 rodar a coluna
+    // nao existe e o PostgREST responde 42703; `null` diz a tela que esta
+    // parte nao foi lida, e as detectadas continuam aparecendo.
+    let assinaturasFixas: AssinaturaDaContaFixa[] | null = null;
+    const { data: regras, error: erroRegras } = await supabase
+      .from("recurring_rules")
+      .select(
+        "id, description, amount, frequency, interval_count, due_day, account_id, is_active, transaction_type"
+      )
+      .eq("user_id", user.id)
+      .eq("is_subscription", true)
+      .eq("is_active", true);
+
+    if (erroRegras) {
+      console.error("Assinaturas seguiram sem as contas fixas:", erroRegras);
+    } else {
+      assinaturasFixas = assinaturasDasContasFixas(
+        (regras ?? []) as RegraDeAssinatura[]
+      );
+    }
+
+    // A MESMA ASSINATURA NAO CONTA DUAS VEZES. A conta fixa no cartao vira
+    // compra todo mes, e o detector acaba achando a mesma Netflix no extrato.
+    // Quando a chave do lojista da detectada bate com a descricao de uma
+    // conta fixa marcada, vale a conta fixa (que o usuario cadastrou) e a
+    // detectada sai da soma.
+    const chavesDasFixas = new Set(
+      (assinaturasFixas ?? []).map((a) => normalizeMerchant(a.descricao))
+    );
+
+    const totalDetectadas = totalMensal(
+      lista
+        .filter((r: { status: RecurrenceStatus }) =>
+          r.status === "DETECTED" || r.status === "CONFIRMED"
+        )
+        .filter(
+          (r: { merchant_key: string }) => !chavesDasFixas.has(r.merchant_key)
+        )
+        .map((r: { monthly_cost: string | number }) => ({
+          monthlyCost: Number(r.monthly_cost),
+        }))
+    );
+    const totalFixas = assinaturasFixas
+      ? totalMensalDasContasFixas(assinaturasFixas)
+      : 0;
+
     return NextResponse.json({
       recurrences: lista,
       // O total soma so o que esta valendo. Uma assinatura marcada como
       // cancelada ou ignorada nao pode continuar pesando no "quanto gasto por
       // mes" -- era esse numero que a tela existe para o usuario baixar.
-      monthlyTotal: totalMensal(
-        lista
-          .filter((r: { status: RecurrenceStatus }) =>
-            r.status === "DETECTED" || r.status === "CONFIRMED"
-          )
-          .map((r: { monthly_cost: string | number }) => ({
-            monthlyCost: Number(r.monthly_cost),
-          }))
-      ),
+      monthlyTotal: Math.round((totalDetectadas + totalFixas) * 100) / 100,
+      // `null` = nao deu para ler (ver acima); `[]` = nenhuma marcada.
+      fixedSubscriptions: assinaturasFixas,
+      fixedMonthlyTotal: assinaturasFixas ? totalFixas : null,
+      // As detectadas que repetem uma conta fixa, para a tela avisar.
+      duplicatedMerchantKeys: Array.from(chavesDasFixas),
       alerts: alertas,
     });
   } catch (error) {
