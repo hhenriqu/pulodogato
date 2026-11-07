@@ -32,13 +32,10 @@ import { toast } from "sonner";
 import {
   ArrowLeft,
   Plus,
-  Calendar,
-  DollarSign,
   Users,
-  TrendingUp,
   ChevronDown,
   ChevronRight,
-  Receipt,
+  ChevronLeft,
   Calculator,
   Crown,
   AlertCircle,
@@ -105,6 +102,7 @@ import {
 import { ModalDeLancamento } from "@/components/movimentacoes/ModalDeLancamento";
 import { SalvarEContinuar } from "@/components/movimentacoes/SalvarEContinuar";
 import { proximaDespesaDeGrupo } from "@/lib/retorno-do-lancamento";
+import { mesVizinho, minhaPosicaoNaConta } from "@/lib/minha-parte-na-conta";
 
 import { Dica } from "@/components/ui/dica";
 /**
@@ -509,7 +507,7 @@ export default function GroupDetailPage() {
    */
   const [contas, setContas] = useState<ContaParaEscolher[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState("expenses");
+  const [activeTab, setActiveTab] = useState("mes");
 
   // Estados do formulário de nova despesa
   const [showAddExpense, setShowAddExpense] = useState(false);
@@ -543,6 +541,8 @@ export default function GroupDetailPage() {
   // Estados dos accordions
   // "scheduled" comece aberta: a despesa fixa de grupo era invisivel nesta tela
   // (HMO-177), e nascer fechada atras de um clique repetiria o sintoma.
+  // A conta aberta na lista (a divisao dela so aparece ao tocar na linha).
+  const [contaAberta, setContaAberta] = useState<string | null>(null);
   const [openSections, setOpenSections] = useState<string[]>([
     "scheduled",
     "current",
@@ -1413,33 +1413,407 @@ export default function GroupDetailPage() {
       percentage: member.percentage,
     }));
 
+  /*
+    A LINHA DE UM ACERTO NA LISTA DO MES.
+
+    Os pagamentos registrados moravam numa lista propria, na aba Balancos. Na
+    tela simplificada eles entram na MESMA lista das contas, na data em que
+    aconteceram -- "Fulano pagou Beltrano" e um evento do mes como o mercado ou
+    a luz, e e assim que se le o historico do grupo de cima para baixo.
+
+    O corpo e o mesmo de antes, sem mudar uma regra: o estado da minha perna, o
+    Desfazer e o "Lancar o que recebi" continuam vindo de `comoEuVejoOAcerto`.
+  */
+  const linhaDoAcerto = (s: Settlement) => {
+                        /*
+                          O ESTADO DESTE ACERTO PARA MIM (HMO-245, fase 12).
+
+                          A MESMA funcao que a rota usa para decidir se aceita o
+                          pedido. Duas copias da regra -- uma no JSX, outra no
+                          servidor -- divergem no caso que importa, e a tela
+                          passa a oferecer uma acao que a rota recusa.
+
+                          `minha_perna` e o dado que nao se deduz da tela: o
+                          acerto aparece IGUAL lancado e nao lancado, e e por
+                          isso que "nao lancado" seria indistinguivel de "nao
+                          aconteceu" sem o rotulo.
+                        */
+                        const visao: AcertoVistoPorMim = comoEuVejoOAcerto({
+                          acerto: {
+                            from_user_id: s.from_user_id,
+                            to_user_id: s.to_user_id,
+                            created_by: s.created_by,
+                          },
+                          userId: user?.id || "",
+                          temPerna: Boolean(s.minha_perna),
+                          nomeDaConta: contas.find(
+                            (c) => c.id === s.minha_perna?.account_id
+                          )?.name,
+                        });
+
+                        const estaEmVoo = pernaSalvando === s.id;
+
+                        return (
+                        /*
+                          "Fulano pagou Beltrano em 12/03/2026" numa linha que
+                          nao quebrava: dois avatares mais dois nomes livres
+                          mais a data dao um min-content bem acima de 320px, e
+                          o piso de min-content nao encolhe com a viewport --
+                          a pagina e que anda para o lado (HMO-185).
+
+                          Aqui a saida e `flex-wrap`, nao `truncate` como na
+                          lista de lancamentos: cortar "Fulan... pagou Belt..."
+                          tira justamente a informacao da frase. Quebrar em
+                          duas linhas nao tira nada.
+                        */
+                        <div
+                          key={s.id}
+                          className="p-3 rounded-lg bg-muted/40 space-y-2"
+                        >
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm min-w-0">
+                            <Avatar className="h-6 w-6 shrink-0">
+                              <AvatarImage src={s.from_user?.avatar_url} />
+                              <AvatarFallback>
+                                {inicial(s.from_user?.full_name)}
+                              </AvatarFallback>
+                            </Avatar>
+                            <span className="font-medium">
+                              {s.from_user?.full_name || "Sem nome"}
+                            </span>
+                            <span className="text-muted-foreground">pagou</span>
+                            <Avatar className="h-6 w-6 shrink-0">
+                              <AvatarImage src={s.to_user?.avatar_url} />
+                              <AvatarFallback>
+                                {inicial(s.to_user?.full_name)}
+                              </AvatarFallback>
+                            </Avatar>
+                            <span className="font-medium">
+                              {s.to_user?.full_name || "Sem nome"}
+                            </span>
+                            <span className="text-muted-foreground">
+                              em {formatDate(s.settled_on)}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-3 shrink-0">
+                            {/* Um acerto em dolar tem que aparecer em dolar. Com
+                                `formatCurrency` sozinho, US$ 50,00 sairia como
+                                "R$ 50,00" -- o mesmo erro de 80% que o CHECK da
+                                026 fecha no banco, reaberto na leitura. O valor
+                                em real vem embaixo porque e o que a divida
+                                abateu, e e o unico numero que soma com os
+                                outros acertos da lista. */}
+                            <span className="font-semibold text-right">
+                              {formatarValor(
+                                s.amount,
+                                moedaDaViagem(s.currency)
+                              )}
+                              {moedaDaViagem(s.currency) !== MOEDA_PADRAO && (
+                                <span className="block text-xs font-normal text-muted-foreground">
+                                  {formatCurrency(
+                                    s.amount_in_brl ??
+                                      s.amount * (s.exchange_rate ?? 1)
+                                  )}{" "}
+                                  na cotação do dia
+                                </span>
+                              )}
+                            </span>
+                            {visao.podeDesfazerOAcerto && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => handleDesfazerAcerto(s.id)}
+                              >
+                                Desfazer
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+
+                        {/*
+                          O ESTADO DESTE ACERTO NA MINHA CONTA (fase 12).
+
+                          Sem esta linha, a tela de quem nao confirmou mostra o
+                          acerto com valor, data e os dois nomes -- e nenhum
+                          sinal de que o dinheiro nao passou pela conta dela.
+                          "Nao lancado" fica indistinguivel de "nao aconteceu",
+                          e o Pix nunca entra no extrato dela.
+
+                          `visao.rotulo` e `null` para o acerto entre outras
+                          duas pessoas: ali a frase seria mentira.
+                        */}
+                        {visao.rotulo && (
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span
+                              className={
+                                visao.estado === "a_lancar"
+                                  ? "text-xs text-warning"
+                                  : "text-xs text-muted-foreground"
+                              }
+                            >
+                              {visao.rotulo}
+                            </span>
+
+                            {visao.podeLancar && visao.direcao && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={estaEmVoo}
+                                onClick={() =>
+                                  abrirLancamentoDaMinhaPerna(s, visao.direcao!)
+                                }
+                              >
+                                {visao.direcao === "recebi"
+                                  ? "Lançar o que recebi"
+                                  : "Lançar o que paguei"}
+                              </Button>
+                            )}
+
+                            {visao.podeDesfazerSoAMinhaPerna && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                disabled={estaEmVoo}
+                                onClick={() => removerMinhaPerna(s.id)}
+                              >
+                                Desfazer o meu lançamento
+                              </Button>
+                            )}
+                          </div>
+                        )}
+                        </div>
+                        );
+  };
+
+  /** "Você" quando o id e o meu; o nome, quando ha; senao "Sem nome". */
+  const nomeNaTela = (
+    pessoa: { id?: string | null; full_name?: string | null } | null | undefined
+  ) =>
+    pessoa?.id && pessoa.id === user?.id
+      ? "Você"
+      : pessoa?.full_name || "Sem nome";
+
+  const MESES_CURTOS = [
+    "jan", "fev", "mar", "abr", "mai", "jun",
+    "jul", "ago", "set", "out", "nov", "dez",
+  ];
+
+  /*
+    UMA CONTA NA LISTA, NO JEITO DIRETO (pedido do Helio, 07/11/2026).
+
+    Tres colunas e nada mais: a data, o que foi e quem pagou quanto, e o que
+    isso significa PARA MIM ("você emprestou" / "você deve"). A divisao inteira,
+    a cotacao e o Apagar da despesa so do grupo continuam existindo, mas so
+    aparecem quando a pessoa toca na linha -- antes vinham abertos em toda
+    despesa, e uma lista de dez contas virava uma parede de partes.
+  */
+  const linhaDaConta = (transaction: GroupTransaction) => {
+    const moeda = moedaDaViagem(transaction.currency);
+    const posicao = minhaPosicaoNaConta(transaction, user?.id);
+    const aberta = contaAberta === transaction.id;
+    const dia = transaction.transaction_date?.slice(8, 10) ?? "";
+    const mesCurto =
+      MESES_CURTOS[Number(transaction.transaction_date?.slice(5, 7)) - 1] ?? "";
+
+    return (
+      <li key={`conta-${transaction.id}`} className="py-1">
+        <button
+          type="button"
+          onClick={() => setContaAberta(aberta ? null : transaction.id)}
+          aria-expanded={aberta}
+          className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-left transition-colors hover:bg-muted/50"
+        >
+          <div className="w-9 shrink-0 text-center leading-tight">
+            <span className="block text-[10px] uppercase text-muted-foreground">
+              {mesCurto}
+            </span>
+            <span className="block text-lg font-semibold">{dia}</span>
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="truncate font-medium">{transaction.description}</p>
+            <p className="truncate text-xs text-muted-foreground">
+              {nomeNaTela(transaction.payer)}{" "}
+              pagou{" "}
+              {formatarValor(transaction.amount, moeda)}
+            </p>
+          </div>
+          <div className="shrink-0 text-right">
+            {posicao.tipo === "fora" ? (
+              <p className="text-xs text-muted-foreground">não participa</p>
+            ) : (
+              <>
+                <p
+                  className={`text-xs ${
+                    posicao.tipo === "emprestou" ? "text-success" : "text-warning"
+                  }`}
+                >
+                  {posicao.tipo === "emprestou" ? "você emprestou" : "você deve"}
+                </p>
+                <p
+                  className={`font-semibold ${
+                    posicao.tipo === "emprestou" ? "text-success" : "text-warning"
+                  }`}
+                >
+                  {formatarValor(posicao.valor, moeda)}
+                </p>
+              </>
+            )}
+          </div>
+        </button>
+
+        {aberta && (
+          <div className="ml-14 mr-2 mb-2 space-y-2 rounded-md bg-muted/40 p-3 text-sm">
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <span>{dataNaTela(transaction.transaction_date)}</span>
+              {transaction.category && (
+                <Badge variant="secondary" className="text-xs">
+                  {transaction.category.name}
+                </Badge>
+              )}
+              {/* Na moeda da DESPESA, com o valor em real ao lado so quando a
+                  moeda e outra -- pela cotacao congelada do dia da compra. */}
+              {moeda !== MOEDA_PADRAO && (
+                <span>
+                  {formatCurrency(
+                    valorEmReais(transaction.amount, transaction.exchange_rate ?? 1)
+                  )}{" "}
+                  na cotação do dia
+                </span>
+              )}
+              {transaction.so_do_grupo && (
+                <Badge variant="outline" className="text-xs">
+                  Só no grupo
+                </Badge>
+              )}
+            </div>
+            <ul className="space-y-1">
+              {transaction.splits.map((split) => (
+                <li
+                  key={split.id}
+                  className="flex items-center justify-between gap-2"
+                >
+                  <span className="truncate">{nomeNaTela(split.member)}</span>
+                  <span className="shrink-0">
+                    {formatarValor(split.amount, moeda)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            {/* A despesa paga por outro (077): mora so no grupo, nao em conta
+                nenhuma. Quem lancou ou o admin apaga; valor e pagador nao se
+                editam. */}
+            {transaction.so_do_grupo &&
+              (transaction.created_by === user?.id || souAdmin) && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 px-2 text-xs"
+                  onClick={() => handleApagarDespesaSoDoGrupo(transaction.id)}
+                >
+                  <Trash2 className="h-3 w-3 mr-1" />
+                  Apagar
+                </Button>
+              )}
+          </div>
+        )}
+      </li>
+    );
+  };
+
+  // Os acertos do mes do seletor, pelo mesmo recorte de string das contas.
+  const acertosDoMes = settlements.filter(
+    (s) => mesDaData(s.settled_on) === mesDaData(mesDoGrupo)
+  );
+
+  // A lista do mes: contas e acertos juntos, do mais novo para o mais antigo.
+  // A data e `YYYY-MM-DD` nos dois, entao a ordem de string e a ordem do tempo.
+  const itensDoMes = [
+    ...despesasDoMes.map((t) => ({
+      chave: `c-${t.id}`,
+      data: t.transaction_date ?? "",
+      criado: t.created_at ?? "",
+      no: linhaDaConta(t),
+    })),
+    ...acertosDoMes.map((s) => ({
+      chave: `a-${s.id}`,
+      data: s.settled_on ?? "",
+      criado: "",
+      no: <li key={`acerto-${s.id}`} className="py-1">{linhaDoAcerto(s)}</li>,
+    })),
+  ].sort((a, b) => b.data.localeCompare(a.data) || b.criado.localeCompare(a.criado));
+
+  const meuSaldo = balances.find((b) => user?.id && b.member.id === user.id);
+  const membrosAtivos = (group.members ?? []).filter(
+    (m) => m.status === "active"
+  ).length;
+  const pedidosPendentes = souAdmin ? group.pendingMembers?.length ?? 0 : 0;
+
+  const irParaQuemPagaQuem = () =>
+    document
+      .getElementById("quem-paga-quem")
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+
+  const abrirMembros = () => {
+    setActiveTab("members");
+    document
+      .getElementById("mais-do-grupo")
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
   return (
     <div className="container mx-auto py-6 space-y-6">
+      {/*
+        A TELA DO GRUPO, SIMPLIFICADA (pedido do Helio, 07/11/2026).
+
+        Antes: quatro cartoes de numeros, o orcamento, quatro abas e, na
+        primeira delas, o fechamento do mes inteiro antes da primeira despesa.
+        A pergunta de quem abre esta tela e uma de duas -- "o que foi lancado?"
+        e "quem paga quem?" -- e cada uma estava atras de um clique ou de uma
+        rolagem.
+
+        Agora: o cabecalho com as duas acoes (adicionar despesa e acertar), a
+        lista de contas do mes ao lado do "quem paga quem", e o resto (fechamento
+        do mes, painel, membros e divisao) embaixo, em "Mais do grupo". Nenhuma
+        funcao saiu da tela: so mudou o que aparece primeiro.
+      */}
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-3">
           <Button
-            variant="outline"
-            size="sm"
+            variant="ghost"
+            size="icon"
+            aria-label="Voltar para Grupos"
             onClick={() => router.push("/dashboard/expense-groups")}
           >
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Voltar
+            <ArrowLeft className="h-5 w-5" />
           </Button>
-          <div>
-            <h1 className="text-3xl font-bold flex items-center gap-2">
-              <Users className="h-8 w-8" />
-              {group.name}
+          <div className="min-w-0">
+            <h1 className="flex flex-wrap items-center gap-2 text-2xl font-bold">
+              <span className="truncate">{group.name}</span>
               <SeloDoTipoDoGrupo tipo={tipoDoGrupo(group.group_kind)} />
             </h1>
-            <p className="text-muted-foreground">
-              {group.description || "Sem descrição"} • Código:{" "}
-              {group.group_code}
+            <p className="text-sm text-muted-foreground">
+              {membrosAtivos} {membrosAtivos === 1 ? "pessoa" : "pessoas"} •
+              código {group.group_code}
+              {pedidosPendentes > 0 && (
+                <>
+                  {" • "}
+                  <button
+                    type="button"
+                    className="font-medium text-warning underline-offset-2 hover:underline"
+                    onClick={abrirMembros}
+                  >
+                    {pedidosPendentes}{" "}
+                    {pedidosPendentes === 1 ? "pedido" : "pedidos"} para entrar
+                  </button>
+                </>
+              )}
             </p>
           </div>
         </div>
 
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button
             // A moeda do grupo e semeada na ABERTURA, e nao num efeito sobre
             // `group`: um efeito sobrescreveria a moeda que a pessoa acabou de
@@ -1456,139 +1830,69 @@ export default function GroupDetailPage() {
             className="flex items-center gap-2"
           >
             <Plus className="h-4 w-4" />
-            Adicionar Despesa
+            Adicionar despesa
+          </Button>
+          <Button
+            variant="outline"
+            onClick={irParaQuemPagaQuem}
+            className="flex items-center gap-2"
+          >
+            <CheckCircle className="h-4 w-4" />
+            Acertar contas
           </Button>
         </div>
       </div>
 
-      {/* Group Info Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2">
-              <Users className="h-4 w-4 text-muted-foreground" />
-              <div>
-                <p className="text-sm text-muted-foreground">Membros</p>
-                <p className="text-2xl font-bold">
-                  {group.members?.length || 0}
-                </p>
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        {/* ------------------------------------------------------------
+            CONTAS LANCADAS
+            ------------------------------------------------------------ */}
+        <div className="space-y-4 lg:col-span-2">
+          <Card>
+            <CardHeader className="pb-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <CardTitle className="text-lg">
+                    {/* O mes no TITULO: a lista segue o seletor, e um titulo
+                        fixo mentiria sobre ela em todo mes que nao e o de hoje. */}
+                    Despesas de {rotuloDoMesDoGrupo}
+                  </CardTitle>
+                  <CardDescription>
+                    {despesasDoMes.length} conta
+                    {despesasDoMes.length !== 1 ? "s" : ""} • Total:{" "}
+                    {formatCurrency(
+                      despesasDoMes.reduce(
+                        (sum, t) =>
+                          sum + valorEmReais(t.amount, t.exchange_rate ?? 1),
+                        0
+                      )
+                    )}
+                  </CardDescription>
+                </div>
+                {/* As setas mexem no MESMO `mesDoGrupo` do seletor do
+                    fechamento (em Mais do grupo): dois meses na mesma tela
+                    dariam uma lista de um mes e um rateio de outro. */}
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-label="Mês anterior"
+                    onClick={() => setMesDoGrupo(mesVizinho(mesDoGrupo, -1))}
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-label="Próximo mês"
+                    onClick={() => setMesDoGrupo(mesVizinho(mesDoGrupo, 1))}
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                </div>
               </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2">
-              <Receipt className="h-4 w-4 text-muted-foreground" />
-              <div>
-                <p className="text-sm text-muted-foreground">Despesas</p>
-                <p className="text-2xl font-bold">{transactions.length}</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2">
-              <DollarSign className="h-4 w-4 text-muted-foreground" />
-              <div>
-                <p className="text-sm text-muted-foreground">Total Gasto</p>
-                <p className="text-2xl font-bold">
-                  {/* Cada parcela e convertida ANTES de somar, pela cotacao
-                      congelada da propria despesa -- a mesma conta que
-                      `group_member_balances` faz no banco. Somar `t.amount` cru
-                      juntaria 180 dolares com 1.000 reais e daria 1.180 de moeda
-                      nenhuma: um total plausivel, sem erro, e 80% menor do que o
-                      real na parte em dolar. */}
-                  {formatCurrency(
-                    transactions.reduce(
-                      (sum, t) =>
-                        sum + valorEmReais(t.amount, t.exchange_rate ?? 1),
-                      0
-                    )
-                  )}
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2">
-              <Calculator className="h-4 w-4 text-muted-foreground" />
-              <div>
-                <p className="text-sm text-muted-foreground">Pendências</p>
-                <p className="text-2xl font-bold">
-                  {balances.filter((b) => Math.abs(b.balance) > 0.01).length}
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/*
-        A barra do orcamento da viagem (HMO-180).
-
-        Fica ACIMA das abas, e nao dentro de uma delas, porque "quanto ja
-        gastamos da viagem" e a pergunta de quem abre esta tela -- atras de um
-        clique ela repetiria, em menor escala, o problema que a HMO-180
-        resolveu: a resposta existindo num lugar que nao e onde a pergunta e
-        feita.
-
-        Só aparece quando o grupo tem teto no mes: grupo sem teto continua vendo
-        a tela de antes, como as Previstas da HMO-177. Quem quer criar um teto
-        faz isso em Orcamento > Grupo, que e onde o formulario mora.
-      */}
-      {orcamento && (
-        <CartaoOrcamentoGrupo
-          grupo={orcamento}
-          titulo="Orçamento do grupo"
-          mes={mesDoOrcamento}
-        />
-      )}
-
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        {/* `grid-cols-4` acompanha o numero de abas: com 3 colunas para 4
-            gatilhos o ultimo sai da faixa. */}
-        <TabsList className="grid w-full grid-cols-4">
-          <TabsTrigger value="expenses">Despesas</TabsTrigger>
-          <TabsTrigger value="painel">Painel</TabsTrigger>
-          <TabsTrigger value="balances">Balanços</TabsTrigger>
-          <TabsTrigger value="members">Membros</TabsTrigger>
-        </TabsList>
-
-        {/* O painel do grupo (HMO-201): totais e gasto por categoria, no
-            periodo que a pessoa escolher. Montado so quando a aba esta
-            ativa -- ele dispara duas chamadas, e faze-las no carregamento da
-            tela custaria isso a quem so veio olhar a lista de despesas. */}
-        <TabsContent value="painel" className="space-y-4">
-          {activeTab === "painel" && (
-            <PainelDoGrupo groupId={groupId} />
-          )}
-        </TabsContent>
-
-        <TabsContent value="expenses" className="space-y-4">
-          {/*
-            O fechamento do mes (HMO-245), ACIMA das listas.
-
-            As secoes abaixo separam "ja aconteceu" de "vai acontecer", e essa
-            separacao esta certa para a lista -- divisao gravada so existe no
-            realizado. Mas ela faz a conta de internet vencendo dia 15 nao
-            entrar em total nenhum do mes. Este cartao e o total que junta os
-            dois e diz quanto cada um paga.
-          */}
-          <FechamentoDoMes
-            groupId={groupId}
-            mes={mesDoGrupo}
-            onMesChange={setMesDoGrupo}
-          />
-
-          {/* Expenses by Period */}
-          <div className="space-y-4">
+            </CardHeader>
+            <CardContent className="space-y-4">
             {/*
               Previstas: o que o grupo AINDA VAI pagar (HMO-177), no mes do
               seletor (HMO-248).
@@ -1775,229 +2079,70 @@ export default function GroupDetailPage() {
                 ]
                   .filter(Boolean)
                   .join(" • ")}
-                . Troque o mês no seletor acima para ver.
+                . Use as setas acima para ver.
               </p>
             )}
 
-            {/* As despesas JA REALIZADAS do mes do seletor (HMO-248). */}
-            <Card>
-              <CardHeader
-                className="cursor-pointer hover:bg-muted/50 transition-colors"
-                onClick={() => toggleSection("current")}
-              >
-                <div className="flex items-center justify-between">
-                  <div>
-                    <CardTitle className="flex items-center gap-2">
-                      <Calendar className="h-5 w-5" />
-                      {/* O mes no TITULO, e nao "Mes Atual": com o seletor
-                          mandando, um titulo fixo mentiria sobre a lista em
-                          todo mes que nao e o de hoje. */}
-                      Despesas de {rotuloDoMesDoGrupo}
-                      <Badge variant="outline">
-                        {despesasDoMes.length} despesa
-                        {despesasDoMes.length !== 1 ? "s" : ""}
-                      </Badge>
-                    </CardTitle>
-                    <CardDescription>
-                      Total:{" "}
-                      {formatCurrency(
-                        despesasDoMes.reduce((sum, t) => sum + t.amount, 0)
-                      )}
-                    </CardDescription>
-                  </div>
-                  {openSections.includes("current") ? (
-                    <ChevronDown className="h-5 w-5" />
-                  ) : (
-                    <ChevronRight className="h-5 w-5" />
-                  )}
+              {itensDoMes.length > 0 ? (
+                <ul className="divide-y">{itensDoMes.map((item) => item.no)}</ul>
+              ) : (
+                <div className="py-10 text-center">
+                  <p className="font-medium">Nenhuma conta neste mês</p>
+                  <p className="text-sm text-muted-foreground">
+                    Toque em &quot;Adicionar despesa&quot; para lançar a primeira.
+                  </p>
                 </div>
-              </CardHeader>
-              {openSections.includes("current") && (
-                <CardContent className="space-y-3">
-                  {despesasDoMes.length > 0 ? (
-                    despesasDoMes.map((transaction) => (
-                      <div
-                        key={transaction.id}
-                        className="border rounded-lg p-4"
-                      >
-                        <div className="flex items-start justify-between mb-3">
-                          <div className="flex items-center gap-3">
-                            <Avatar className="h-8 w-8">
-                              <AvatarImage src={transaction.payer?.avatar_url} />
-                              <AvatarFallback>
-                                {inicial(transaction.payer?.full_name)}
-                              </AvatarFallback>
-                            </Avatar>
-                            <div>
-                              <h4 className="font-medium">
-                                {transaction.description}
-                              </h4>
-                              <p className="text-sm text-muted-foreground">
-                                Pago por {transaction.payer?.full_name || "Sem nome"} •{" "}
-                                {dataNaTela(transaction.transaction_date)}
-                              </p>
-                              {/* A despesa paga por outro (077): mora so no
-                                  grupo, nao em conta nenhuma. Quem lancou ou
-                                  o admin apaga; valor e pagador nao se editam. */}
-                              {transaction.so_do_grupo && (
-                                <div className="flex items-center gap-2 mt-1">
-                                  <Badge variant="outline" className="text-xs">
-                                    Só no grupo
-                                  </Badge>
-                                  {(transaction.created_by === user?.id ||
-                                    souAdmin) && (
-                                    <Button
-                                      type="button"
-                                      size="sm"
-                                      variant="ghost"
-                                      className="h-6 px-2 text-xs"
-                                      onClick={() =>
-                                        handleApagarDespesaSoDoGrupo(transaction.id)
-                                      }
-                                    >
-                                      <Trash2 className="h-3 w-3 mr-1" />
-                                      Apagar
-                                    </Button>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                          <div className="text-right">
-                            <p className="font-bold text-lg">
-                              {/* Na moeda da DESPESA. `formatCurrency` forca
-                                  real e escreveria "R$ 180,00" sobre um jantar
-                                  de US$ 180. */}
-                              {formatarValor(
-                                transaction.amount,
-                                moedaDaViagem(transaction.currency)
-                              )}
-                            </p>
-                            {moedaDaViagem(transaction.currency) !==
-                              MOEDA_PADRAO && (
-                              <p className="text-xs text-muted-foreground">
-                                {formatCurrency(
-                                  valorEmReais(
-                                    transaction.amount,
-                                    transaction.exchange_rate ?? 1
-                                  )
-                                )}{" "}
-                                na cotação do dia
-                              </p>
-                            )}
-                            {transaction.category && (
-                              <Badge variant="secondary" className="text-xs">
-                                {transaction.category.name}
-                              </Badge>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Transaction Splits */}
-                        <div className="space-y-2">
-                          <p className="text-sm font-medium">Divisão:</p>
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                            {transaction.splits.map((split) => (
-                              <div
-                                key={split.id}
-                                className="flex items-center justify-between p-2 bg-muted rounded"
-                              >
-                                <div className="flex items-center gap-2">
-                                  <Avatar className="h-6 w-6">
-                                    <AvatarImage
-                                      src={split.member.avatar_url}
-                                    />
-                                    <AvatarFallback className="text-xs">
-                                      {inicial(split.member.full_name)}
-                                    </AvatarFallback>
-                                  </Avatar>
-                                  <span className="text-sm">
-                                    {split.member.full_name}
-                                  </span>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                  {/* A parte de cada um esta na moeda da
-                                      despesa: ela e uma fracao do todo, e
-                                      `group_expense_splits` nao tem moeda
-                                      propria de proposito (ver a 026). */}
-                                  <span className="text-sm font-medium">
-                                    {formatarValor(
-                                      split.amount,
-                                      moedaDaViagem(transaction.currency)
-                                    )}
-                                  </span>
-                                  {/* O CRACHA DE STATUS E OS BOTOES DE
-                                      APROVAR/RECUSAR/REABRIR SAIRAM AQUI
-                                      (HMO-425). A linha agora diz o que a
-                                      divisao e: quem, e quanto. Nao ha estado
-                                      intermediario entre a despesa nascer e o
-                                      membro dever a parte dele. */}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-                    ))
-                  ) : (
-                    <p className="text-center text-muted-foreground py-8">
-                      Nenhuma despesa neste período
-                    </p>
-                  )}
-                </CardContent>
               )}
-            </Card>
+            </CardContent>
+          </Card>
+        </div>
 
-            {/*
-              A SECAO "Mes Anterior" SAIU AQUI (HMO-248).
-
-              Ela existia porque a aba nao tinha seletor: a unica forma de ver
-              o mes passado era um segundo cartao, fixo, com o mes anterior ao
-              de HOJE. Agora o seletor do fechamento manda na aba inteira, e
-              escolher setembro mostra setembro no cartao de cima -- com o
-              fechamento e o rateio de setembro ao lado, que o cartao fixo nao
-              tinha. Mantê-la daria DOIS recortes de mes na mesma lista, e o de
-              baixo ignorando o seletor.
-
-              Nenhuma despesa ficou sem leitor: o seletor oferece todo mes que
-              tem conta (`mesesComConta`, lib/fechamento-do-grupo.ts).
-            */}
-          </div>
-        </TabsContent>
-
-        <TabsContent value="balances" className="space-y-4">
-          {/* Balance Summary */}
+        {/* ------------------------------------------------------------
+            QUEM PAGA QUEM
+            ------------------------------------------------------------ */}
+        <div id="quem-paga-quem" className="scroll-mt-6 space-y-4">
           <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Calculator className="h-5 w-5" />
-                Resumo de Balanços
-              </CardTitle>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-lg">Quem paga quem</CardTitle>
               {/*
-                O EIXO DE TEMPO E O RECORTE, ESCRITOS (HMO-404, item 2)
-                ------------------------------------------------------
-                Medido em producao (HMO-367, 12/10/2026, fixture HMO-255): este
-                cartao dizia R$ 240,00 a receber do mesmo devedor de quem o
-                bloco "A receber dos grupos" da aba Receitas dizia R$ 39,99 --
-                no mesmo dia, sem acerto nenhum no meio. Nenhum dos dois esta
-                errado: aqui sai de `group_member_balances` (007), que e o
-                ACUMULADO de todos os meses e conta SO O REALIZADO, e ja neta os
-                acertos registrados; la sai de `fecharMes`, que e por mes e soma
-                previsto junto com realizado.
-
-                Sem o eixo de tempo escrito, os dois numeros se leem como um
-                deles estando quebrado -- `painel-sem-eixo-de-tempo-mente-no-rotulo`
-                aplicado a duas telas em vez de uma. A frase nao unifica nada: os
-                numeros continuam diferentes porque as perguntas sao diferentes.
+                O EIXO DE TEMPO E O RECORTE, ESCRITOS (HMO-404, item 2): este
+                saldo sai de `group_member_balances` (007), o ACUMULADO de todos
+                os meses, so do realizado e com os acertos netados -- e por isso
+                difere do rateio do mes, que soma o previsto. Sem a frase, os
+                dois numeros se leem como um deles estando quebrado.
               */}
               <CardDescription>
                 Quem deve pagar para quem — acumulado de todos os meses, só do
-                que já foi pago, com os acertos já descontados. A aba Receitas
-                mostra o previsto do período.
+                que já foi pago, com os acertos já descontados.
               </CardDescription>
             </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
+            <CardContent className="space-y-4">
+              {/* O MEU saldo primeiro, numa frase: e o numero que quem abre a
+                  tela quer saber antes de ler a lista de todo mundo. */}
+              {meuSaldo && (
+                <div className="rounded-lg bg-muted p-3">
+                  {meuSaldo.balance > 0.01 ? (
+                    <p className="text-sm">
+                      Você tem{" "}
+                      <span className="font-semibold text-success">
+                        {formatCurrency(meuSaldo.balance)}
+                      </span>{" "}
+                      a receber
+                    </p>
+                  ) : meuSaldo.balance < -0.01 ? (
+                    <p className="text-sm">
+                      Você deve{" "}
+                      <span className="font-semibold text-warning">
+                        {formatCurrency(Math.abs(meuSaldo.balance))}
+                      </span>{" "}
+                      no total
+                    </p>
+                  ) : (
+                    <p className="text-sm">Você está quitado neste grupo.</p>
+                  )}
+                </div>
+              )}
+
                 {/* A MOEDA DA VIAGEM, E O QUE ELA SIGNIFICA AQUI (HMO-182, item 4)
                     O saldo e em real porque cada despesa foi convertida pela
                     cotacao do dia DELA, congelada -- e por isso o valor do
@@ -2034,105 +2179,6 @@ export default function GroupDetailPage() {
                   </div>
                 )}
 
-                {/* Individual Balances */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {balances.map((balance) => (
-                    <div
-                      key={balance.member.id}
-                      className="border rounded-lg p-4"
-                    >
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <Avatar className="h-8 w-8">
-                            <AvatarImage src={balance.member.avatar_url} />
-                            <AvatarFallback>
-                              {inicial(balance.member.full_name)}
-                            </AvatarFallback>
-                          </Avatar>
-                          <div>
-                            <h4 className="font-medium">
-                              {balance.member.full_name}
-                            </h4>
-                            <p className="text-sm text-muted-foreground">
-                              {balance.transactions_count} transação
-                              {balance.transactions_count !== 1 ? "ões" : ""}
-                            </p>
-                          </div>
-                        </div>
-                        <div className="text-right">
-                          <p
-                            className={`font-bold text-lg ${
-                              balance.balance > 0
-                                ? "text-success"
-                                : balance.balance < 0
-                                ? "text-destructive"
-                                : "text-muted-foreground"
-                            }`}
-                          >
-                            {formatCurrency(Math.abs(balance.balance))}
-                          </p>
-                          <p className="text-sm text-muted-foreground">
-                            {balance.balance > 0
-                              ? "A receber"
-                              : balance.balance < 0
-                              ? "Deve pagar"
-                              : "Quitado"}
-                          </p>
-                          {/* O mesmo saldo na moeda da viagem. `Math.abs` no
-                              valor, igual a linha de cima, porque o sentido
-                              ("A receber"/"Deve pagar") ja esta escrito acima --
-                              repetir o sinal aqui daria "-US$ 50,00" embaixo de
-                              "Deve pagar", que se le como dois menos. */}
-                          {(() => {
-                            const apresentado = saldoNaMoedaDaViagem(
-                              balance.balance,
-                              contextoDeMoeda.group_currency,
-                              contextoDeMoeda.today_rate
-                            );
-                            if (apresentado.naMoedaDaViagem === null) return null;
-                            return (
-                              <p
-                                className="text-xs text-muted-foreground"
-                                title={
-                                  rotuloDaConversao(
-                                    apresentado,
-                                    contextoDeMoeda.today
-                                  ) ?? undefined
-                                }
-                              >
-                                ≈{" "}
-                                {formatarValor(
-                                  Math.abs(apresentado.naMoedaDaViagem),
-                                  apresentado.moeda
-                                )}{" "}
-                                hoje
-                              </p>
-                            );
-                          })()}
-                        </div>
-                      </div>
-
-                      {/* O Pix de quem esta A RECEBER (HMO-201). So dele: uma
-                          chave ao lado de quem DEVE pagar nao serve para nada,
-                          e mostrar a de todo mundo transforma a lista de
-                          saldos numa lista de chaves. O `> 0.01` e a mesma
-                          tolerancia de centavo usada acima para decidir quem
-                          esta quitado -- senao apareceria botao de copiar ao
-                          lado de um saldo de R$ 0,00. A propria chave fica de
-                          fora: ninguem precisa se pagar. */}
-                      {balance.balance > 0.01 &&
-                        balance.member.id !== user?.id && (
-                          <div className="mt-3 pt-3 border-t">
-                            <PixDoMembro
-                              pix={chavesPix.get(balance.member.id)}
-                              nome={balance.member.full_name}
-                            />
-                          </div>
-                        )}
-                    </div>
-                  ))}
-                </div>
-
                 {/* O grupo nao fecha: avisa antes de sugerir um acerto que
                     nunca termina. */}
                 {Math.abs(residual) >= 0.02 && (
@@ -2154,363 +2200,296 @@ export default function GroupDetailPage() {
                   </div>
                 )}
 
-                {/* Transfer Suggestions */}
-                {transfers.length > 0 ? (
-                  <div className="space-y-3">
-                    <h3 className="flex items-center gap-1.5 text-lg font-semibold">
-                      Sugestões de Pagamento
-                      <Dica rotulo="Sobre as sugestões de pagamento">
-                        O menor número de transferências que zera o grupo. Ao
-                        registrar, a sugestão sai da lista.
-                      </Dica>
-                    </h3>
-                    <div className="space-y-2">
-                      {transfers.map((transfer, index) => {
-                        const chave = `${transfer.from.id}->${transfer.to.id}`;
-                        // So quem paga ou quem recebe pode registrar: a policy
-                        // de INSERT da 007 exige isso, e oferecer o botao a um
-                        // terceiro seria prometer uma acao que o banco recusa.
-                        const souParte =
-                          user?.id === transfer.from.id ||
-                          user?.id === transfer.to.id;
+              {/* Transfer Suggestions: o menor numero de transferencias que
+                  zera o grupo. Ao registrar, a sugestao sai da lista e o
+                  pagamento entra na lista de contas, no mes em que aconteceu. */}
+              {transfers.length > 0 ? (
+                <ul className="space-y-2">
+                  {transfers.map((transfer, index) => {
+                    const chave = `${transfer.from.id}->${transfer.to.id}`;
+                    // So quem paga ou quem recebe pode registrar: a policy
+                    // de INSERT da 007 exige isso, e oferecer o botao a um
+                    // terceiro seria prometer uma acao que o banco recusa.
+                    const souParte =
+                      user?.id === transfer.from.id ||
+                      user?.id === transfer.to.id;
+                    // QUEM RECEBE NAO PAGOU: o rotulo diz a direcao.
+                    const souQuemRecebe = user?.id === transfer.to.id;
+                    const souQuemPaga = user?.id === transfer.from.id;
 
-                        // QUEM RECEBE NAO PAGOU. O rotulo dizia "Já paguei"
-                        // para os dois lados, entao quem estava recebendo
-                        // clicava num botao que afirmava o contrario do que ia
-                        // registrar. A direcao passou a ser calculada de
-                        // qualquer forma (o dialogo precisa dela para o sinal
-                        // da perna), entao o rotulo pode dize-la.
-                        const souQuemRecebe = user?.id === transfer.to.id;
+                    // O mesmo pagamento na moeda da viagem, ao cambio de
+                    // hoje -- ou `null` quando nao ha o que oferecer. O teste
+                    // de moeda vem ANTES da chamada porque
+                    // `acertoNaMoedaDaViagem(x, 'BRL', 1)` responde um acerto
+                    // valido, e poria um "Paguei em BRL" em todo grupo em real.
+                    const naViagem =
+                      contextoDeMoeda.group_currency !== MOEDA_PADRAO
+                        ? acertoNaMoedaDaViagem(
+                            transfer.amount,
+                            contextoDeMoeda.group_currency,
+                            contextoDeMoeda.today_rate
+                          )
+                        : null;
 
-                        // O mesmo pagamento na moeda da viagem, ao cambio de
-                        // hoje -- ou `null` quando nao ha o que oferecer.
-                        //
-                        // O teste de moeda vem ANTES da chamada porque
-                        // `acertoNaMoedaDaViagem(x, 'BRL', 1)` responde um acerto
-                        // valido (em real, cotacao 1): usar o retorno sozinho
-                        // como condicao poria um segundo botao "Paguei em BRL" ao
-                        // lado do primeiro, em todo grupo em real do app.
-                        const naViagem =
-                          contextoDeMoeda.group_currency !== MOEDA_PADRAO
-                            ? acertoNaMoedaDaViagem(
-                                transfer.amount,
-                                contextoDeMoeda.group_currency,
-                                contextoDeMoeda.today_rate
-                              )
-                            : null;
-
-                        return (
-                          <div
-                            key={index}
-                            className="flex items-center justify-between p-4 bg-info/10 rounded-lg border border-info/30"
-                          >
-                            <div className="flex items-center gap-3">
-                              <Avatar className="h-8 w-8">
-                                <AvatarImage src={transfer.from.avatar_url} />
-                                <AvatarFallback>
-                                  {inicial(transfer.from.full_name)}
-                                </AvatarFallback>
-                              </Avatar>
-                              <span className="font-medium">
-                                {transfer.from.full_name || "Sem nome"}
-                              </span>
-                              <TrendingUp className="h-4 w-4 text-info" />
-                              <Avatar className="h-8 w-8">
-                                <AvatarImage src={transfer.to.avatar_url} />
-                                <AvatarFallback>
-                                  {inicial(transfer.to.full_name)}
-                                </AvatarFallback>
-                              </Avatar>
-                              <span className="font-medium">
-                                {transfer.to.full_name || "Sem nome"}
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-4">
-                              <div className="text-right">
-                                <p className="font-bold text-lg text-info">
-                                  {formatCurrency(transfer.amount)}
-                                </p>
-                                <p className="text-sm text-info">
-                                  Pagamento sugerido
-                                </p>
-                                {/* Quanto e isso na moeda da viagem hoje, para
-                                    quem for pagar em dolar no fim da viagem. */}
-                                {naViagem && (
-                                  <p className="text-xs text-info">
-                                    ≈{" "}
-                                    {formatarValor(
-                                      naViagem.amount,
-                                      naViagem.currency
-                                    )}{" "}
-                                    hoje
-                                  </p>
-                                )}
-                              </div>
-                              {/* Entre dois sem conta (077): ninguem com
-                                  conta e parte, entao o admin registra que o
-                                  dinheiro passou -- sem perna, sem conta. */}
-                              {!souParte &&
-                                souAdmin &&
-                                transfer.from.sem_conta &&
-                                transfer.to.sem_conta && (
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() =>
-                                      handleAcertoEntreSemConta(transfer)
-                                    }
-                                    disabled={settling === chave}
-                                  >
-                                    <CheckCircle className="h-4 w-4 mr-1" />
-                                    {settling === chave
-                                      ? "Registrando..."
-                                      : "Registrar que pagou"}
-                                  </Button>
-                                )}
-                              {souParte && (
-                                <div className="flex flex-col gap-1">
-                                  <Button
-                                    size="sm"
-                                    onClick={() => handleLiquidar(transfer)}
-                                    disabled={settling === chave}
-                                  >
-                                    <CheckCircle className="h-4 w-4 mr-1" />
-                                    {settling === chave
-                                      ? "Registrando..."
-                                      : naViagem
-                                      ? // So vira "em reais" quando ha a outra
-                                        // opcao ao lado. Em grupo em real nao ha
-                                        // escolha a explicitar, e "Já paguei" e
-                                        // a frase que a tela sempre usou.
-                                        souQuemRecebe
-                                        ? "Recebi em reais"
-                                        : "Paguei em reais"
-                                      : souQuemRecebe
-                                      ? "Já recebi"
-                                      : "Já paguei"}
-                                  </Button>
-                                  {/* O segundo botao so existe quando ha cotacao
-                                      de hoje: sem ela, `acertoNaMoedaDaViagem`
-                                      devolve null e o clique nao teria para onde
-                                      ir. Oferecer e falhar depois e pior do que
-                                      nao oferecer. */}
-                                  {naViagem && (
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      onClick={() =>
-                                        handleLiquidar(transfer, "viagem")
-                                      }
-                                      disabled={settling === chave}
-                                      title={
-                                        avisoDeSobra(naViagem) ??
-                                        `Registra ${formatarValor(
-                                          naViagem.amount,
-                                          naViagem.currency
-                                        )} à cotação de hoje (${
-                                          naViagem.exchange_rate
-                                        }).`
-                                      }
-                                    >
-                                      {souQuemRecebe ? "Recebi" : "Paguei"} em{" "}
-                                      {naViagem.currency}
-                                    </Button>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ) : (
-                  balances.length > 0 && (
-                    <div className="flex items-center gap-3 p-4 bg-success/10 rounded-lg border border-success/30">
-                      <CheckCircle className="h-5 w-5 text-success" />
-                      <p className="text-sm text-success">
-                        Tudo acertado. Ninguém deve nada a ninguém neste grupo.
-                      </p>
-                    </div>
-                  )
-                )}
-
-                {/* Acertos ja registrados */}
-                {settlements.length > 0 && (
-                  <div className="space-y-3">
-                    <h3 className="text-lg font-semibold">
-                      Pagamentos registrados
-                    </h3>
-                    <div className="space-y-2">
-                      {settlements.map((s) => {
-                        /*
-                          O ESTADO DESTE ACERTO PARA MIM (HMO-245, fase 12).
-
-                          A MESMA funcao que a rota usa para decidir se aceita o
-                          pedido. Duas copias da regra -- uma no JSX, outra no
-                          servidor -- divergem no caso que importa, e a tela
-                          passa a oferecer uma acao que a rota recusa.
-
-                          `minha_perna` e o dado que nao se deduz da tela: o
-                          acerto aparece IGUAL lancado e nao lancado, e e por
-                          isso que "nao lancado" seria indistinguivel de "nao
-                          aconteceu" sem o rotulo.
-                        */
-                        const visao: AcertoVistoPorMim = comoEuVejoOAcerto({
-                          acerto: {
-                            from_user_id: s.from_user_id,
-                            to_user_id: s.to_user_id,
-                            created_by: s.created_by,
-                          },
-                          userId: user?.id || "",
-                          temPerna: Boolean(s.minha_perna),
-                          nomeDaConta: contas.find(
-                            (c) => c.id === s.minha_perna?.account_id
-                          )?.name,
-                        });
-
-                        const estaEmVoo = pernaSalvando === s.id;
-
-                        return (
-                        /*
-                          "Fulano pagou Beltrano em 12/03/2026" numa linha que
-                          nao quebrava: dois avatares mais dois nomes livres
-                          mais a data dao um min-content bem acima de 320px, e
-                          o piso de min-content nao encolhe com a viewport --
-                          a pagina e que anda para o lado (HMO-185).
-
-                          Aqui a saida e `flex-wrap`, nao `truncate` como na
-                          lista de lancamentos: cortar "Fulan... pagou Belt..."
-                          tira justamente a informacao da frase. Quebrar em
-                          duas linhas nao tira nada.
-                        */
-                        <div
-                          key={s.id}
-                          className="p-3 border rounded-lg space-y-2"
-                        >
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm min-w-0">
-                            <Avatar className="h-6 w-6 shrink-0">
-                              <AvatarImage src={s.from_user?.avatar_url} />
-                              <AvatarFallback>
-                                {inicial(s.from_user?.full_name)}
-                              </AvatarFallback>
-                            </Avatar>
-                            <span className="font-medium">
-                              {s.from_user?.full_name || "Sem nome"}
-                            </span>
-                            <span className="text-muted-foreground">pagou</span>
-                            <Avatar className="h-6 w-6 shrink-0">
-                              <AvatarImage src={s.to_user?.avatar_url} />
-                              <AvatarFallback>
-                                {inicial(s.to_user?.full_name)}
-                              </AvatarFallback>
-                            </Avatar>
-                            <span className="font-medium">
-                              {s.to_user?.full_name || "Sem nome"}
-                            </span>
-                            <span className="text-muted-foreground">
-                              em {formatDate(s.settled_on)}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-3 shrink-0">
-                            {/* Um acerto em dolar tem que aparecer em dolar. Com
-                                `formatCurrency` sozinho, US$ 50,00 sairia como
-                                "R$ 50,00" -- o mesmo erro de 80% que o CHECK da
-                                026 fecha no banco, reaberto na leitura. O valor
-                                em real vem embaixo porque e o que a divida
-                                abateu, e e o unico numero que soma com os
-                                outros acertos da lista. */}
-                            <span className="font-semibold text-right">
-                              {formatarValor(
-                                s.amount,
-                                moedaDaViagem(s.currency)
-                              )}
-                              {moedaDaViagem(s.currency) !== MOEDA_PADRAO && (
-                                <span className="block text-xs font-normal text-muted-foreground">
-                                  {formatCurrency(
-                                    s.amount_in_brl ??
-                                      s.amount * (s.exchange_rate ?? 1)
-                                  )}{" "}
-                                  na cotação do dia
-                                </span>
-                              )}
-                            </span>
-                            {visao.podeDesfazerOAcerto && (
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                onClick={() => handleDesfazerAcerto(s.id)}
-                              >
-                                Desfazer
-                              </Button>
+                    return (
+                      <li
+                        key={index}
+                        className="space-y-2 rounded-lg border p-3"
+                      >
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+                          <Avatar className="h-6 w-6 shrink-0">
+                            <AvatarImage src={transfer.from.avatar_url} />
+                            <AvatarFallback>
+                              {inicial(transfer.from.full_name)}
+                            </AvatarFallback>
+                          </Avatar>
+                          <span className="font-medium">
+                            {nomeNaTela(transfer.from)}
+                          </span>
+                          <span className="text-muted-foreground">paga</span>
+                          <Avatar className="h-6 w-6 shrink-0">
+                            <AvatarImage src={transfer.to.avatar_url} />
+                            <AvatarFallback>
+                              {inicial(transfer.to.full_name)}
+                            </AvatarFallback>
+                          </Avatar>
+                          <span className="font-medium">
+                            {nomeNaTela(transfer.to)}
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap items-end justify-between gap-2">
+                          <div>
+                            <p className="text-lg font-bold">
+                              {formatCurrency(transfer.amount)}
+                            </p>
+                            {naViagem && (
+                              <p className="text-xs text-muted-foreground">
+                                ≈{" "}
+                                {formatarValor(
+                                  naViagem.amount,
+                                  naViagem.currency
+                                )}{" "}
+                                hoje
+                              </p>
                             )}
                           </div>
-                        </div>
-
-                        {/*
-                          O ESTADO DESTE ACERTO NA MINHA CONTA (fase 12).
-
-                          Sem esta linha, a tela de quem nao confirmou mostra o
-                          acerto com valor, data e os dois nomes -- e nenhum
-                          sinal de que o dinheiro nao passou pela conta dela.
-                          "Nao lancado" fica indistinguivel de "nao aconteceu",
-                          e o Pix nunca entra no extrato dela.
-
-                          `visao.rotulo` e `null` para o acerto entre outras
-                          duas pessoas: ali a frase seria mentira.
-                        */}
-                        {visao.rotulo && (
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <span
-                              className={
-                                visao.estado === "a_lancar"
-                                  ? "text-xs text-warning"
-                                  : "text-xs text-muted-foreground"
-                              }
-                            >
-                              {visao.rotulo}
-                            </span>
-
-                            {visao.podeLancar && visao.direcao && (
+                          <div className="flex flex-wrap gap-2">
+                            {/* Entre dois sem conta (077): ninguem com conta
+                                e parte, entao o admin registra que o dinheiro
+                                passou -- sem perna, sem conta. */}
+                            {!souParte &&
+                              souAdmin &&
+                              transfer.from.sem_conta &&
+                              transfer.to.sem_conta && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() =>
+                                    handleAcertoEntreSemConta(transfer)
+                                  }
+                                  disabled={settling === chave}
+                                >
+                                  {settling === chave
+                                    ? "Registrando..."
+                                    : "Registrar que pagou"}
+                                </Button>
+                              )}
+                            {souParte && (
+                              <Button
+                                size="sm"
+                                onClick={() => handleLiquidar(transfer)}
+                                disabled={settling === chave}
+                              >
+                                {settling === chave
+                                  ? "Registrando..."
+                                  : naViagem
+                                  ? souQuemRecebe
+                                    ? "Recebi em reais"
+                                    : "Paguei em reais"
+                                  : souQuemRecebe
+                                  ? "Já recebi"
+                                  : "Já paguei"}
+                              </Button>
+                            )}
+                            {/* O segundo botao so existe quando ha cotacao de
+                                hoje: sem ela o clique nao teria para onde ir. */}
+                            {souParte && naViagem && (
                               <Button
                                 size="sm"
                                 variant="outline"
-                                disabled={estaEmVoo}
                                 onClick={() =>
-                                  abrirLancamentoDaMinhaPerna(s, visao.direcao!)
+                                  handleLiquidar(transfer, "viagem")
+                                }
+                                disabled={settling === chave}
+                                title={
+                                  avisoDeSobra(naViagem) ??
+                                  `Registra ${formatarValor(
+                                    naViagem.amount,
+                                    naViagem.currency
+                                  )} à cotação de hoje (${
+                                    naViagem.exchange_rate
+                                  }).`
                                 }
                               >
-                                {visao.direcao === "recebi"
-                                  ? "Lançar o que recebi"
-                                  : "Lançar o que paguei"}
-                              </Button>
-                            )}
-
-                            {visao.podeDesfazerSoAMinhaPerna && (
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                disabled={estaEmVoo}
-                                onClick={() => removerMinhaPerna(s.id)}
-                              >
-                                Desfazer o meu lançamento
+                                {souQuemRecebe ? "Recebi" : "Paguei"} em{" "}
+                                {naViagem.currency}
                               </Button>
                             )}
                           </div>
-                        )}
                         </div>
-                        );
-                      })}
-                    </div>
+                        {/* O Pix de quem vai RECEBER, para quem vai pagar
+                            (HMO-201). So nessa direcao: a chave ao lado de quem
+                            deve nao serve para nada. */}
+                        {souQuemPaga && (
+                          <div className="border-t pt-2">
+                            <PixDoMembro
+                              pix={chavesPix.get(transfer.to.id)}
+                              nome={transfer.to.full_name}
+                            />
+                          </div>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : (
+                balances.length > 0 && (
+                  <div className="flex items-center gap-2 rounded-lg border border-success/30 bg-success/10 p-3">
+                    <CheckCircle className="h-4 w-4 shrink-0 text-success" />
+                    <p className="text-sm text-success">
+                      Tudo acertado. Ninguém deve nada a ninguém.
+                    </p>
                   </div>
-                )}
-              </div>
+                )
+              )}
+
+              {/* O saldo de cada um, numa linha so. */}
+              {balances.length > 0 && (
+                <div>
+                  <h4 className="mb-1 text-xs font-semibold uppercase text-muted-foreground">
+                    Saldos
+                  </h4>
+                  <ul className="divide-y">
+                    {balances.map((balance) => {
+                      const apresentado = saldoNaMoedaDaViagem(
+                        balance.balance,
+                        contextoDeMoeda.group_currency,
+                        contextoDeMoeda.today_rate
+                      );
+                      return (
+                        <li
+                          key={balance.member.id}
+                          className="flex items-center justify-between gap-2 py-2"
+                        >
+                          <div className="flex min-w-0 items-center gap-2">
+                            <Avatar className="h-6 w-6 shrink-0">
+                              <AvatarImage src={balance.member.avatar_url} />
+                              <AvatarFallback>
+                                {inicial(balance.member.full_name)}
+                              </AvatarFallback>
+                            </Avatar>
+                            <span className="truncate text-sm">
+                              {nomeNaTela(balance.member)}
+                            </span>
+                          </div>
+                          <div className="shrink-0 text-right text-sm">
+                            {balance.balance > 0.01 ? (
+                              <span className="text-success">
+                                recebe {formatCurrency(balance.balance)}
+                              </span>
+                            ) : balance.balance < -0.01 ? (
+                              <span className="text-warning">
+                                deve {formatCurrency(Math.abs(balance.balance))}
+                              </span>
+                            ) : (
+                              <span className="text-muted-foreground">
+                                quitado
+                              </span>
+                            )}
+                            {/* O mesmo saldo na moeda da viagem, ao cambio de
+                                hoje. `Math.abs` porque o sentido ja esta escrito
+                                na frase de cima. */}
+                            {apresentado.naMoedaDaViagem !== null &&
+                              Math.abs(balance.balance) > 0.01 && (
+                                <span
+                                  className="block text-xs text-muted-foreground"
+                                  title={
+                                    rotuloDaConversao(
+                                      apresentado,
+                                      contextoDeMoeda.today
+                                    ) ?? undefined
+                                  }
+                                >
+                                  ≈{" "}
+                                  {formatarValor(
+                                    Math.abs(apresentado.naMoedaDaViagem),
+                                    apresentado.moeda
+                                  )}{" "}
+                                  hoje
+                                </span>
+                              )}
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
             </CardContent>
           </Card>
-        </TabsContent>
+        </div>
+      </div>
 
-        <TabsContent value="members" className="space-y-4">
+      {/* ----------------------------------------------------------------
+          MAIS DO GRUPO: o que antes disputava a primeira dobra da tela.
+          Continua tudo aqui, so que embaixo e sob demanda.
+          ---------------------------------------------------------------- */}
+      <div id="mais-do-grupo" className="scroll-mt-6">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+          {/* `grid-cols-3` acompanha o numero de abas. */}
+          <TabsList className="grid w-full grid-cols-3">
+            <TabsTrigger value="mes">Mês a mês</TabsTrigger>
+            <TabsTrigger value="painel">Painel</TabsTrigger>
+            <TabsTrigger value="members">
+              Membros
+              {pedidosPendentes > 0 && (
+                <Badge variant="secondary" className="ml-1 h-5 px-1.5 text-xs">
+                  {pedidosPendentes}
+                </Badge>
+              )}
+            </TabsTrigger>
+          </TabsList>
+
+          {/*
+            O fechamento do mes (HMO-245): o total que junta previsto e
+            realizado e diz quanto cada um paga no mes. O seletor dele e o MESMO
+            `mesDoGrupo` das setas da lista de contas.
+
+            A barra do orcamento (HMO-180) mora aqui tambem: ela so aparece
+            quando o grupo tem teto no mes.
+          */}
+          <TabsContent value="mes" className="space-y-4">
+            {orcamento && (
+              <CartaoOrcamentoGrupo
+                grupo={orcamento}
+                titulo="Orçamento do grupo"
+                mes={mesDoOrcamento}
+              />
+            )}
+            <FechamentoDoMes
+              groupId={groupId}
+              mes={mesDoGrupo}
+              onMesChange={setMesDoGrupo}
+            />
+          </TabsContent>
+
+          {/* O painel do grupo (HMO-201): totais e gasto por categoria.
+              Montado so com a aba ativa -- ele dispara duas chamadas. */}
+          <TabsContent value="painel" className="space-y-4">
+            {activeTab === "painel" && <PainelDoGrupo groupId={groupId} />}
+          </TabsContent>
+
+          <TabsContent value="members" className="space-y-4">
           {/* Pedidos de entrada pelo codigo, so para o admin (HMO-190). */}
           {souAdmin && (group.pendingMembers?.length ?? 0) > 0 && (
             <Card>
@@ -2719,8 +2698,9 @@ export default function GroupDetailPage() {
               </CardContent>
             </Card>
           )}
-        </TabsContent>
-      </Tabs>
+          </TabsContent>
+        </Tabs>
+      </div>
 
       {/* ----------------------------------------------------------------
           "ADICIONAR NOVA DESPESA": O MODAL DE VERDADE (HMO-251)

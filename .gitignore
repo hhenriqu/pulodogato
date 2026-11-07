@@ -87,6 +87,7 @@ next-env.d.ts
 /.tmp-divisao-ui/
 /.tmp-juros-do-emprestimo/
 /.tmp-settlement/
+/.tmp-minha-parte-na-conta/
 /.tmp-reports/
 /.tmp-statement/
 # saida do `npm run test:categorization` (idem, com reescrita de alias depois)

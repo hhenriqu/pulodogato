@@ -133,7 +133,7 @@ export function PainelDoGrupo({
             <Dica rotulo="Sobre o painel do grupo">
               Os valores abaixo são do grupo inteiro, somando o que todos os
               membros lançaram — não apenas a sua parte. Quanto cada um deve está
-              na aba Balanços.
+              em &quot;Quem paga quem&quot;, no topo da tela.
             </Dica>
           </CardTitle>
         </CardHeader>

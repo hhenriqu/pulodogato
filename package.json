@@ -43,6 +43,7 @@
     "test:recurrence-alerts": "node scripts/compila.mjs -p scripts/tsconfig.recurrence-alerts-test.json && node scripts/resolve-aliases.mjs .tmp-recurrence-alerts lib && node --test scripts/test-recurrence-alerts.mjs",
     "test:recurrence": "node scripts/compila.mjs lib/recurrence.ts --outDir .tmp-recurrence --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-recurrence.mjs",
     "test:settlement": "node scripts/compila.mjs lib/settlement.ts --outDir .tmp-settlement --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-settlement.mjs",
+    "test:minha-parte-na-conta": "node scripts/compila.mjs lib/minha-parte-na-conta.ts --outDir .tmp-minha-parte-na-conta --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-minha-parte-na-conta.mjs",
     "test:reports": "node scripts/compila.mjs -p scripts/tsconfig.reports-test.json && node scripts/resolve-aliases.mjs .tmp-reports lib && node --test scripts/test-reports.mjs",
     "test:statement": "node scripts/compila.mjs lib/statement.ts --outDir .tmp-statement --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-statement.mjs",
     "test:categorization": "node scripts/compila.mjs -p scripts/tsconfig.categorization-test.json && node scripts/resolve-aliases.mjs .tmp-categorization lib && node --test scripts/test-categorization.mjs",
