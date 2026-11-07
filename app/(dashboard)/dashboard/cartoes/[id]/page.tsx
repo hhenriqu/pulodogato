@@ -566,6 +566,49 @@ function GastosDoCartao() {
     void excluirPrevisao(previsao, "apenas_esta");
   };
 
+  /**
+   * Marca ou desmarca a CONTA FIXA desta previsao como assinatura (migration
+   * 084). A marca mora na regra -- vale para todos os meses, nao so para esta
+   * ocorrencia -- e e o que faz a conta aparecer na tela de Assinaturas.
+   */
+  const marcarAssinatura = async (
+    previsao: PrevisaoAcionavel,
+    assinatura: boolean
+  ) => {
+    if (!previsao.recurring_rule_id) return;
+    try {
+      const resposta = await fetch(
+        `/api/recurring-rules/${previsao.recurring_rule_id}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          // `aplicar_em_pendentes: false`: a marca nao muda nada nas
+          // ocorrencias, e a rota nao precisa toca-las.
+          body: JSON.stringify({
+            is_subscription: assinatura,
+            aplicar_em_pendentes: false,
+          }),
+        }
+      );
+      const dados = await resposta.json().catch(() => ({}));
+      if (!resposta.ok) {
+        toast.error(
+          dados.error || `A alteração foi recusada (HTTP ${resposta.status}).`
+        );
+        return;
+      }
+      toast.success(
+        assinatura
+          ? `${previsao.description} agora aparece em Assinaturas.`
+          : `${previsao.description} saiu de Assinaturas.`
+      );
+      recarregar();
+    } catch (erro) {
+      console.error("Erro ao marcar a assinatura:", erro);
+      toast.error("Erro ao marcar a assinatura");
+    }
+  };
+
   /** Abre o formulario com os valores de hoje, para a pessoa corrigir um so. */
   const abrirEdicaoDaPrevisao = (previsao: PrevisaoAcionavel) => {
     // `edicaoInicialDaPrevisao` e nao `String(previsao.amount)`: o campo e lido
@@ -831,6 +874,9 @@ function GastosDoCartao() {
         categoriaDeAjuste={categoriaDeAjuste}
         aoEditarPrevisao={abrirEdicaoDaPrevisao}
         aoExcluirPrevisao={pedirExclusaoDaPrevisao}
+        aoMarcarAssinatura={(previsao, assinatura) =>
+          void marcarAssinatura(previsao, assinatura)
+        }
         blocoDeEdicaoDaPrevisao={
           previsaoEmEdicao && (
             <EdicaoDaPrevisaoDoCartao

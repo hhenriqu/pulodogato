@@ -6312,6 +6312,21 @@ jobs:
       - name: O orcamento ignora o lancamento marcado, e as tags valem
         run: $PSQL -f database/tests/083_tags_e_ignorar_em_orcamentos_test.sql
 
+      # =====================================================================
+      # 084 -- conta fixa marcada como assinatura
+      # =====================================================================
+      # O interruptor "Assinatura" na conta prevista do cartao grava na regra,
+      # e a tela de Assinaturas soma as marcadas. A suite roda num BEGIN com
+      # ROLLBACK.
+      - name: 084_conta_fixa_como_assinatura
+        run: $PSQL -f database/migrations/084_conta_fixa_como_assinatura.sql
+
+      - name: 084 e idempotente
+        run: $PSQL -f database/migrations/084_conta_fixa_como_assinatura.sql
+
+      - name: A conta fixa nasce sem a marca, e a marca grava
+        run: $PSQL -f database/tests/084_conta_fixa_como_assinatura_test.sql
+
       - name: schema-columns.json em dia com as migrations
         run: node scripts/gen-schema-columns.mjs --check
 

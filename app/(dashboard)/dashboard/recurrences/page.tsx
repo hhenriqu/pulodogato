@@ -39,6 +39,10 @@ import { useEstaOnline } from "@/lib/hooks/useEstaOnline";
 import { toast } from "sonner";
 
 import { Dica } from "@/components/ui/dica";
+import {
+  rotuloDaFrequenciaDaRegra,
+  type AssinaturaDaContaFixa,
+} from "@/lib/assinaturas-das-contas-fixas";
 // =====================================================
 // Assinaturas e cobrancas recorrentes (HMO-145)
 // =====================================================
@@ -108,6 +112,12 @@ export default function RecurrencesPage() {
   const [recorrencias, setRecorrencias] = useState<Recurrence[]>([]);
   const [alertas, setAlertas] = useState<Alerta[]>([]);
   const [totalMensal, setTotalMensal] = useState(0);
+  // As contas fixas marcadas como assinatura (migration 084). `null` = a
+  // leitura delas falhou (a coluna nao existe antes da migration), e a tela nao
+  // afirma "nenhuma" sobre o que nao leu.
+  const [fixas, setFixas] = useState<AssinaturaDaContaFixa[] | null>([]);
+  const [totalDasFixas, setTotalDasFixas] = useState<number | null>(0);
+  const [chavesDuplicadas, setChavesDuplicadas] = useState<string[]>([]);
   const [carregando, setCarregando] = useState(true);
   const [varrendo, setVarrendo] = useState(false);
   const [mostrarIgnoradas, setMostrarIgnoradas] = useState(false);
@@ -134,6 +144,9 @@ export default function RecurrencesPage() {
         recurrences?: Recurrence[];
         alerts?: Alerta[];
         monthlyTotal?: number;
+        fixedSubscriptions?: AssinaturaDaContaFixa[] | null;
+        fixedMonthlyTotal?: number | null;
+        duplicatedMerchantKeys?: string[];
       }>(
         // ESTA e a tela em que o separador nao da para cravar na mao: a URL tem
         // `?` so quando a pessoa pediu para ver as ignoradas. `comSemCopia`
@@ -173,6 +186,19 @@ export default function RecurrencesPage() {
         setRecorrencias(leitura.dados.recurrences || []);
         setAlertas(leitura.dados.alerts || []);
         setTotalMensal(leitura.dados.monthlyTotal || 0);
+        // `undefined` (resposta de antes desta versao, vinda da copia do
+        // aparelho) vira lista vazia; `null` (falhou no servidor) fica `null`.
+        setFixas(
+          leitura.dados.fixedSubscriptions === undefined
+            ? []
+            : leitura.dados.fixedSubscriptions
+        );
+        setTotalDasFixas(
+          leitura.dados.fixedMonthlyTotal === undefined
+            ? 0
+            : leitura.dados.fixedMonthlyTotal
+        );
+        setChavesDuplicadas(leitura.dados.duplicatedMerchantKeys || []);
       }
 
       setCarregando(false);
@@ -224,6 +250,25 @@ export default function RecurrencesPage() {
     }
   };
 
+  /** Tira a marca de assinatura de uma conta fixa (ela continua sendo conta fixa). */
+  const desmarcarFixa = async (fixa: AssinaturaDaContaFixa) => {
+    try {
+      const resp = await fetch(`/api/recurring-rules/${fixa.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          is_subscription: false,
+          aplicar_em_pendentes: false,
+        }),
+      });
+      if (!resp.ok) throw new Error("Nao foi possivel desmarcar a assinatura.");
+      toast.success(`${fixa.descricao} saiu de Assinaturas.`);
+      await carregar();
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : "Erro inesperado.");
+    }
+  };
+
   const visiveis = mostrarIgnoradas
     ? recorrencias
     : recorrencias.filter((r) => r.status !== "IGNORED");
@@ -237,7 +282,8 @@ export default function RecurrencesPage() {
             Assinaturas e recorrências
           </h1>
           <p className="text-sm text-muted-foreground">
-            Cobranças que se repetem no seu extrato, encontradas automaticamente.
+            As contas fixas que você marcou como assinatura e as cobranças que
+            se repetem no seu extrato, encontradas automaticamente.
           </p>
         </div>
         {/* A varredura le meses de extrato no servidor: sem rede ela nao tem
@@ -288,8 +334,10 @@ export default function RecurrencesPage() {
           <CardDescription className="flex items-center gap-1.5">
             Total por mês
             <Dica rotulo="O que entra na soma">
-              Soma do que está detectado e confirmado. O que você ignorou ou
-              cancelou não entra na conta.
+              Soma das contas fixas que você marcou como assinatura e do que
+              está detectado e confirmado no extrato. O que você ignorou ou
+              cancelou não entra na conta, e uma cobrança detectada que repete
+              uma conta fixa marcada só conta uma vez.
             </Dica>
           </CardDescription>
           <CardTitle className="text-3xl text-foreground">
@@ -301,6 +349,82 @@ export default function RecurrencesPage() {
           </CardTitle>
         </CardHeader>
       </Card>
+
+      {/* AS CONTAS FIXAS MARCADAS COMO ASSINATURA (migration 084). Antes das
+          detectadas: sao as que o usuario mesmo disse que sao assinatura. */}
+      {podeMostrarNumero(estado) && fixas === null && (
+        <Card>
+          <CardContent className="py-4 text-sm text-muted-foreground">
+            Não foi possível ler as contas fixas marcadas como assinatura agora.
+          </CardContent>
+        </Card>
+      )}
+      {podeMostrarNumero(estado) && fixas !== null && fixas.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-1.5 text-base">
+              Contas fixas marcadas como assinatura
+              <Dica rotulo="Sobre as contas fixas marcadas">
+                Contas fixas (no cartão ou em outra conta) em que você ligou o
+                interruptor &quot;Assinatura&quot;. Para marcar outra, abra o
+                cartão e use o interruptor na conta prevista.
+              </Dica>
+            </CardTitle>
+            <CardDescription>
+              {fixas.length === 1 ? "1 assinatura" : `${fixas.length} assinaturas`}
+              {totalDasFixas !== null
+                ? ` · ${formatarBRL(totalDasFixas)} por mês`
+                : ""}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="divide-y divide-border p-0">
+            {fixas.map((f) => (
+              <div
+                key={f.id}
+                className="flex items-center justify-between gap-3 px-6 py-3"
+              >
+                <div className="min-w-0 space-y-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="truncate font-medium text-foreground">
+                      {f.descricao}
+                    </span>
+                    <Badge variant="secondary">
+                      {rotuloDaFrequenciaDaRegra(f.frequencia, f.intervalo)}
+                    </Badge>
+                  </div>
+                  {f.diaDoVencimento ? (
+                    <p className="text-xs text-muted-foreground">
+                      Todo dia {f.diaDoVencimento}
+                    </p>
+                  ) : null}
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <div className="text-right">
+                    <div className="font-semibold text-foreground">
+                      {formatarBRL(f.valor)}
+                    </div>
+                    {f.frequencia !== "monthly" || f.intervalo !== 1 ? (
+                      <div className="text-xs text-muted-foreground">
+                        {formatarBRL(f.custoMensal)}/mês
+                      </div>
+                    ) : null}
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    title="Não é uma assinatura, tirar da lista"
+                    aria-label={`Tirar ${f.descricao} de Assinaturas`}
+                    disabled={!online}
+                    onClick={() => void desmarcarFixa(f)}
+                  >
+                    <EyeOff className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
 
       {alertas.length > 0 && (
         <div className="space-y-2">
@@ -397,6 +521,10 @@ export default function RecurrencesPage() {
                     </Badge>
                     {r.status !== "DETECTED" && (
                       <Badge variant="outline">{ROTULO_STATUS[r.status]}</Badge>
+                    )}
+                    {/* Ja somada como conta fixa marcada: nao conta de novo. */}
+                    {chavesDuplicadas.includes(r.merchant_key) && (
+                      <Badge variant="outline">Já é conta fixa</Badge>
                     )}
                   </div>
                   <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">

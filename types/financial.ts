@@ -503,6 +503,13 @@ export interface ScheduledTransaction {
    */
   transaction_type?: TransactionFinancialType;
 
+  /**
+   * A REGRA desta ocorrencia esta marcada como assinatura (migration 084,
+   * `recurring_rules.is_subscription`). NAO e coluna desta tabela: quem
+   * preenche e `GET /api/card-invoices`, a partir da regra. Ausente = nao lido.
+   */
+  is_subscription?: boolean;
+
   /** Vem da view scheduled_transactions_effective, calculado na hora. */
   effective_status?: ScheduledStatus;
   /**

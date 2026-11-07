@@ -796,6 +796,7 @@
     "id",
     "interval_count",
     "is_active",
+    "is_subscription",
     "max_occurrences",
     "notes",
     "reminder_days",

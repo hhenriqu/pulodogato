@@ -2579,6 +2579,9 @@ jobs:
       - name: O mapa de calor apaga o futuro e nao deixa o aluguel achatar o mes
         run: npm run test:mapa-de-calor
 
+      - name: A conta fixa marcada como assinatura entra no total mensal certo
+        run: npm run test:assinaturas-das-contas-fixas
+
       # nota: verificacao-notas.md -> "O painel abre no mes certo, e a transferencia fica fora da soma"
       - name: O painel abre no mes certo, e a transferencia fica fora da soma
         run: npm run test:periodo-painel

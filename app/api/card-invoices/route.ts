@@ -216,10 +216,44 @@ export async function GET(request: NextRequest) {
         // dele trocaria um bloco que falta por uma pagina vazia.
         console.error("Faturas seguiram sem as previsões do cartão:", erroPendentes);
       } else {
+        // QUAIS DESTAS CONTAS FIXAS SAO ASSINATURA (migration 084). A marca
+        // mora na regra, nao na ocorrencia; uma leitura a mais, pelos ids das
+        // regras, em vez de um embed pela view `_effective` (o PostgREST nem
+        // sempre infere a FK atraves de uma view).
+        //
+        // Falhar aqui -- a coluna ainda nao existe antes da 084 -- so deixa o
+        // campo ausente: a tela mostra a conta sem o interruptor ligado.
+        const idsDasRegras = Array.from(
+          new Set(
+            ((pendentes ?? []) as ScheduledTransaction[])
+              .map((p) => p.recurring_rule_id)
+              .filter((id): id is string => Boolean(id))
+          )
+        );
+        const assinaturaPorRegra = new Map<string, boolean>();
+        if (idsDasRegras.length > 0) {
+          const { data: regras, error: erroRegras } = await supabase
+            .from("recurring_rules")
+            .select("id, is_subscription")
+            .eq("user_id", user.id)
+            .in("id", idsDasRegras);
+          if (erroRegras) {
+            console.error("Previsões do cartão seguiram sem a marca de assinatura:", erroRegras);
+          } else {
+            for (const regra of regras ?? []) {
+              assinaturaPorRegra.set(regra.id, Boolean(regra.is_subscription));
+            }
+          }
+        }
+
         for (const fatura of faturas) {
-          fatura.scheduled_pending = ((pendentes ?? []) as ScheduledTransaction[]).filter(
-            (p) => p.account_id === fatura.account_id && !ehFatura(p.notes)
-          );
+          fatura.scheduled_pending = ((pendentes ?? []) as ScheduledTransaction[])
+            .filter((p) => p.account_id === fatura.account_id && !ehFatura(p.notes))
+            .map((p) =>
+              p.recurring_rule_id && assinaturaPorRegra.has(p.recurring_rule_id)
+                ? { ...p, is_subscription: assinaturaPorRegra.get(p.recurring_rule_id) }
+                : p
+            );
         }
       }
     }
