@@ -232,11 +232,7 @@ export function TelaDeMovimentacao({ tipo }: { tipo: TipoDaTela }) {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <SeletorDePeriodo periodo={periodo} hoje={hoje} aoMudar={irPara} />
 
-        <Button variant="outline" asChild className="gap-2">
-          <Link href="/dashboard/personal-finance">
-            Ver todos os lançamentos
-          </Link>
-        </Button>
+        <AbasDaMovimentacao tipo={tipo} queryDoPeriodo={queryDoPeriodo} />
       </div>
 
       <ListaDeMovimentacao
@@ -412,5 +408,61 @@ export function TelaDeMovimentacao({ tipo }: { tipo: TipoDaTela }) {
         }
       />
     </div>
+  );
+}
+
+/**
+ * AS ABAS DO TOPO -- comparacao com o Minhas Financas (07/11/2026).
+ *
+ * La, Despesas, Receitas, Transferencias e o Extrato sao abas da MESMA tela, e
+ * trocar de aba mantem o mes. Aqui as tres telas continuam rotas separadas
+ * (cada uma com o seu Total), e as abas sao links que levam o `?de=&ate=`
+ * junto -- o mesmo periodo do outro lado. "Todos" e a lista de Financas
+ * Pessoais, que le o mesmo periodo da URL; o nome "Extrato" ja e da tela de
+ * importar extrato do banco, e repeti-lo aqui confundiria as duas.
+ *
+ * Ela substitui o botao "Ver todos os lançamentos", que levava a "Todos" sem o
+ * periodo.
+ */
+const ABAS: { chave: string; rotulo: string; rota: string }[] = [
+  // A ordem do Minhas Financas; rota e nome vem do catalogo, e nao escritos
+  // de novo aqui, para a aba nao apontar para uma tela que mudou de lugar.
+  ...(["expense", "income", "transfer"] as const).map((t) => {
+    const tela = telaDoTipo(t) ?? TELAS_DE_MOVIMENTACAO[0];
+    return { chave: t, rotulo: tela.titulo, rota: tela.rota };
+  }),
+  { chave: "todos", rotulo: "Todos", rota: "/dashboard/personal-finance" },
+];
+
+function AbasDaMovimentacao({
+  tipo,
+  queryDoPeriodo,
+}: {
+  tipo: TipoDaTela;
+  queryDoPeriodo: string;
+}) {
+  return (
+    <nav
+      aria-label="Movimentações"
+      className="inline-flex w-full overflow-x-auto rounded-lg border border-border bg-muted/40 p-1 sm:w-auto"
+    >
+      {ABAS.map((aba) => {
+        const ativa = aba.chave === tipo;
+        return (
+          <Link
+            key={aba.chave}
+            href={`${aba.rota}?${queryDoPeriodo}` as Route}
+            aria-current={ativa ? "page" : undefined}
+            className={`flex-1 whitespace-nowrap rounded-md px-3 py-1.5 text-center text-sm font-medium transition-colors sm:flex-none ${
+              ativa
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            {aba.rotulo}
+          </Link>
+        );
+      })}
+    </nav>
   );
 }

@@ -342,8 +342,15 @@ test("cada natureza desenha um icone DIFERENTE", () => {
   // sem nada estar errado): e sobre os tres HTMLs serem distintos entre si. Um
   // `marcaDaLinha` que devolvesse sempre o mesmo icone passaria por toda
   // assercao de TEXTO desta suite.
+  // O icone da SITUACAO (a primeira coluna no desktop) sai antes: ele e o
+  // mesmo em toda linha pendente, e o que esta assercao mede e o da natureza.
   const svg = (l) => {
-    const m = /<svg[\s\S]*?<\/svg>/.exec(render({ linhas: [l] }));
+    const m = /<svg[\s\S]*?<\/svg>/.exec(
+      render({ linhas: [l] }).replace(
+        /<span[^>]*data-situacao-da-linha[^>]*>[\s\S]*?<\/span>/g,
+        ""
+      )
+    );
     assert.ok(m, "a linha nao desenhou icone nenhum");
     return m[0];
   };
@@ -1614,4 +1621,22 @@ test("o detalhe do chevron: cada despesa com a minha parte, o abatido e o total"
   assert.match(aReceber, /Você já pagou R\$ 1\.500,00/);
   assert.match(aReceber, /Contas que você lançou R\$ 200,00/);
   assert.match(aReceber, /A receber R\$ 600,00/);
+});
+
+// ---------------------------------------------------------------------------
+// A situacao da linha (a primeira coluna do Minhas Financas, 07/11/2026)
+// ---------------------------------------------------------------------------
+
+test("a situacao da linha: efetivada, pendente e vencida, pelo criterio da tela", () => {
+  const situacao = (l) => {
+    const m = /data-situacao-da-linha="([^"]*)"/.exec(render({ linhas: [l] }));
+    assert.ok(m, "a linha nao desenhou a situacao");
+    return m[1];
+  };
+  assert.equal(situacao(linha({})), "Pendente");
+  assert.equal(situacao(linha({ situacao: "overdue" })), "Vencida");
+  assert.equal(
+    situacao(linha({ origem: "realizado", situacao: null })),
+    "Efetivada"
+  );
 });

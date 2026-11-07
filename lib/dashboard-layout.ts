@@ -79,6 +79,13 @@ export const SECOES_DO_PAINEL: SecaoDoPainel[] = [
     descricao:
       "Saldo das contas, o que entrou e saiu no mês e o custo fixo mensal",
   },
+  // A faixa do topo do Resumo do Minhas Financas (07/11/2026): o saldo do
+  // mes em tres passos, logo abaixo dos quatro numeros.
+  {
+    id: "saldo-do-mes",
+    titulo: "Saldo do mês",
+    descricao: "Saldo inicial, atual e previsto das contas no mês, em sequência",
+  },
   {
     id: "previsto-x-realizado",
     titulo: "Previsto x Realizado",

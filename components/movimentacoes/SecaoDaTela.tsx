@@ -54,6 +54,8 @@ import type { Route } from "next";
 import {
   AlertCircle,
   Check,
+  CheckCircle2,
+  Clock,
   CreditCard,
   Loader2,
   Pencil,
@@ -615,6 +617,30 @@ function ColunasDaLinha({ linha }: { linha: LinhaDaTela }) {
   );
 }
 
+/**
+ * A SITUACAO DA LINHA, NA PRIMEIRA COLUNA -- como a do Minhas Financas
+ * (07/11/2026): o visto verde e a efetivada, o relogio e a pendente, e o alerta
+ * vermelho e a pendente que ja venceu. So no desktop; no celular a secao (o
+ * titulo "Previsto"/"Realizado" em cima da lista) ja diz o mesmo.
+ *
+ * O criterio e o da propria tela: `origem` separa as duas secoes, e "vencida"
+ * e `situacao === "overdue"`, o mesmo de `previstoVencido` -- um terceiro
+ * criterio aqui poria o icone errado numa linha certa.
+ */
+function SituacaoDaLinha({ linha }: { linha: LinhaDaTela }) {
+  const { Icone, cor, rotulo } =
+    linha.origem === "realizado"
+      ? { Icone: CheckCircle2, cor: "text-success", rotulo: "Efetivada" }
+      : linha.situacao === "overdue"
+        ? { Icone: AlertCircle, cor: "text-destructive", rotulo: "Vencida" }
+        : { Icone: Clock, cor: "text-muted-foreground", rotulo: "Pendente" };
+  return (
+    <span className="hidden w-5 shrink-0 md:block" data-situacao-da-linha={rotulo}>
+      <Icone className={`h-4 w-4 ${cor}`} aria-label={rotulo} />
+    </span>
+  );
+}
+
 /** O cabecalho das colunas, so no desktop. As larguras sao as de `ColunasDaLinha`. */
 function CabecalhoDaTabela() {
   return (
@@ -622,6 +648,7 @@ function CabecalhoDaTabela() {
       aria-hidden="true"
       className="hidden items-center gap-3 border-b border-border pb-2 text-xs font-medium text-muted-foreground md:flex"
     >
+      <span className="w-5 shrink-0" />
       <span className="flex-1">Descrição</span>
       <span className="w-36 shrink-0">Categoria</span>
       <span className="w-36 shrink-0">Conta</span>
@@ -667,6 +694,7 @@ function LinhaDaSecao({
 
   const conteudo = (
     <>
+      <SituacaoDaLinha linha={linha} />
       <div className="min-w-0 space-y-0.5 flex-1">
         {destinoDoCartao ? (
           <p className="truncate font-medium">
