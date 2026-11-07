@@ -129,7 +129,7 @@ test("nenhum grupo declara acesso -- quem esconde tela e o ITEM", () => {
 // As 29 telas: nenhuma perdida, nenhuma repetida
 // ---------------------------------------------------------------------------
 
-test("as 30 telas moram em um lugar so, e a lista plana e a soma delas", () => {
+test("as 31 telas moram em um lugar so, e a lista plana e a soma delas", () => {
   const dasEntradas = menuAgrupado.flatMap(telasDa).map((item) => item.href);
 
   // (a) A lista plana E a arvore achatada -- mesmo conteudo, mesma ordem. E o
@@ -138,7 +138,7 @@ test("as 30 telas moram em um lugar so, e a lista plana e a soma delas", () => {
   //     nova, que e exatamente o modo de falha que esta assercao existe para
   //     impedir.
   assert.deepEqual(TODOS_OS_HREFS, dasEntradas);
-  assert.equal(navigation.length, 30);
+  assert.equal(navigation.length, 31);
 
   // (b) Nenhum `href` repetido. Um item em dois grupos pinta a mesma tela duas
   //     vezes no menu (e o React reclamaria de chave repetida no console, que e
@@ -200,8 +200,13 @@ test("nenhuma tela de antes da HMO-423 ficou fora do menu", () => {
   // E a unica tela NOVA e a da issue -- agrupar nao e hora de acrescentar menu.
   const novas = TODOS_OS_HREFS.filter((href) => !ANTES_DA_423.includes(href));
   // A segunda e a "Casa" da 078, que entrou depois e de proposito (ver o
-  // primeiro caso desta suite).
-  assert.deepEqual(novas, ["/dashboard/contas?tipo=investment", "/dashboard/casa"]);
+  // primeiro caso desta suite). A terceira e o "Custo de vida", que saiu de
+  // dentro da Carteira para tela propria.
+  assert.deepEqual(novas, [
+    "/dashboard/contas?tipo=investment",
+    "/dashboard/investments/custo-de-vida",
+    "/dashboard/casa",
+  ]);
 });
 
 // ---------------------------------------------------------------------------
@@ -293,9 +298,9 @@ test("o plano filtra ITEM dentro do grupo, e nao a entrada", () => {
   // As contagens sao as mesmas de `test:menu-papel` -- de proposito: e o MESMO
   // `podeVerItem` nos dois caminhos, e se as duas suites discordassem uma delas
   // estaria medindo um filtro proprio.
-  assert.equal(telasDe("admin").length, 30);
-  assert.equal(telasDe("trader").length, 29);
-  assert.equal(telasDe("free").length, 28);
+  assert.equal(telasDe("admin").length, 31);
+  assert.equal(telasDe("trader").length, 30);
+  assert.equal(telasDe("free").length, 29);
 
   assert.ok(telasDe("trader").includes("/dashboard/trading"));
   assert.ok(!telasDe("trader").includes("/dashboard/admin"));

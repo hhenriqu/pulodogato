@@ -2,6 +2,10 @@
 
 // O CUSTO DE VIDA, dentro da tela de Investimentos.
 //
+// Mora na tela propria /dashboard/investments/custo-de-vida (menu
+// Investimentos > Custo de vida). Era uma secao da Carteira ate o pedido do
+// Helio de separar e poder desligar o variavel.
+//
 // Um grafico de 24 barras -- os 12 ultimos meses fechados (realizado) e os 12
 // a partir do mes corrente (previsao) -- cada barra dividida em contas fixas e
 // gasto variavel, e ao lado a reserva de emergencia sugerida para 12 meses.
@@ -9,6 +13,11 @@
 // Nenhum numero e calculado aqui: tudo vem de GET /api/investments/custo-de-vida
 // (o criterio esta em lib/custo-de-vida.ts). A unica conta da tela e "quantos
 // meses a carteira cobre", que divide dois numeros ja prontos.
+//
+// A CHAVE "CONSIDERAR GASTO VARIAVEL": desligada, o grafico mostra so as
+// contas fixas e a reserva vira "12 meses de contas fixas"
+// (`resumoDoCusto`, lib/custo-de-vida.ts). A escolha fica no navegador, so
+// como conveniencia: sem ela a tela abre ligada.
 
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -31,9 +40,11 @@ import {
 } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Dica } from "@/components/ui/dica";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { formatCurrency } from "@/lib/utils";
 import type { PropsDeTooltip } from "@/types/grafico";
-import type { CustoDeVida as DadosDoCusto } from "@/lib/custo-de-vida";
+import { resumoDoCusto, type CustoDeVida as DadosDoCusto } from "@/lib/custo-de-vida";
 
 interface RespostaDoCusto extends DadosDoCusto {
   hoje: string;
@@ -65,6 +76,24 @@ function rotuloDoMes(mes: string): string {
 const COR_FIXO = "hsl(var(--primary))";
 const COR_VARIAVEL = "hsl(var(--warning))";
 
+const CHAVE_DO_VARIAVEL = "custo-de-vida:com-variavel";
+
+function lerPreferencia(): boolean {
+  try {
+    return window.localStorage.getItem(CHAVE_DO_VARIAVEL) !== "nao";
+  } catch {
+    return true;
+  }
+}
+
+function gravarPreferencia(comVariavel: boolean) {
+  try {
+    window.localStorage.setItem(CHAVE_DO_VARIAVEL, comVariavel ? "sim" : "nao");
+  } catch {
+    // Sem armazenamento (aba privada): a chave so vale ate recarregar.
+  }
+}
+
 interface Props {
   /** O valor atual da carteira, para dizer quantos meses ela cobre. */
   valorDaCarteira?: number | null;
@@ -73,6 +102,16 @@ interface Props {
 export function CustoDeVida({ valorDaCarteira }: Props) {
   const [dados, setDados] = useState<RespostaDoCusto | null>(null);
   const [erro, setErro] = useState<string | null>(null);
+  const [comVariavel, setComVariavel] = useState(true);
+
+  useEffect(() => {
+    setComVariavel(lerPreferencia());
+  }, []);
+
+  const mudarVariavel = (valor: boolean) => {
+    setComVariavel(valor);
+    gravarPreferencia(valor);
+  };
 
   useEffect(() => {
     let vivo = true;
@@ -108,10 +147,10 @@ export function CustoDeVida({ valorDaCarteira }: Props) {
         rotulo: rotuloDoMes(m.mes),
         previsto: false,
         realizadoFixo: m.fixo,
-        realizadoVariavel: m.variavel,
+        realizadoVariavel: comVariavel ? m.variavel : 0,
         previstoFixo: 0,
         previstoVariavel: 0,
-        total: m.total,
+        total: comVariavel ? m.total : m.fixo,
       })),
       ...dados.previsao.map((m) => ({
         mes: m.mes,
@@ -120,25 +159,26 @@ export function CustoDeVida({ valorDaCarteira }: Props) {
         realizadoFixo: 0,
         realizadoVariavel: 0,
         previstoFixo: m.fixo,
-        previstoVariavel: m.variavel,
-        total: m.total,
+        previstoVariavel: comVariavel ? m.variavel : 0,
+        total: comVariavel ? m.total : m.fixo,
       })),
     ];
-  }, [dados]);
+  }, [dados, comVariavel]);
 
   if (erro) {
     return (
       <Alert>
-        <AlertDescription>{erro}. A carteira acima não depende disso.</AlertDescription>
+        <AlertDescription>{erro}. Tente recarregar a página.</AlertDescription>
       </Alert>
     );
   }
   if (!dados) return null;
 
   const semHistorico = dados.mesesComGasto === 0;
+  const resumo = resumoDoCusto(dados, comVariavel);
   const mesesCobertos =
-    valorDaCarteira && valorDaCarteira > 0 && dados.mediaPrevista > 0
-      ? valorDaCarteira / dados.mediaPrevista
+    valorDaCarteira && valorDaCarteira > 0 && resumo.mediaPrevista > 0
+      ? valorDaCarteira / resumo.mediaPrevista
       : null;
   const primeiroPrevisto = dados.previsao[0]?.mes;
 
@@ -153,9 +193,11 @@ export function CustoDeVida({ valorDaCarteira }: Props) {
           {p.rotulo} · {p.previsto ? "previsão" : "realizado"}
         </p>
         <p>Contas fixas: {dinheiro(fixo)}</p>
-        <p>
-          {p.previsto ? "Variável (média)" : "Variável"}: {dinheiro(variavel)}
-        </p>
+        {comVariavel && (
+          <p>
+            {p.previsto ? "Variável (média)" : "Variável"}: {dinheiro(variavel)}
+          </p>
+        )}
         <p className="font-semibold">Total: {dinheiro(p.total)}</p>
       </div>
     );
@@ -165,7 +207,7 @@ export function CustoDeVida({ valorDaCarteira }: Props) {
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-1.5">
-          Custo de vida
+          Mês a mês
           <Dica rotulo="Como o custo de vida é contado">
             Realizado: suas despesas de cada mês, na data da compra (o cartão
             conta pela compra, e o pagamento da fatura não entra de novo), sem
@@ -179,6 +221,20 @@ export function CustoDeVida({ valorDaCarteira }: Props) {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
+        <div className="flex items-center gap-3">
+          <Switch
+            id="custo-com-variavel"
+            checked={comVariavel}
+            onCheckedChange={mudarVariavel}
+          />
+          <Label htmlFor="custo-com-variavel" className="cursor-pointer">
+            Considerar gasto variável
+          </Label>
+          {!comVariavel && (
+            <span className="text-xs text-muted-foreground">mostrando só as contas fixas</span>
+          )}
+        </div>
+
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <div className="rounded-lg border p-4">
             <p className="text-sm text-muted-foreground flex items-center gap-1.5">
@@ -189,9 +245,9 @@ export function CustoDeVida({ valorDaCarteira }: Props) {
                 ano sem renda.
               </Dica>
             </p>
-            <p className="text-2xl font-bold">{dinheiro(dados.reservaSugerida)}</p>
+            <p className="text-2xl font-bold">{dinheiro(resumo.reserva)}</p>
             <p className="text-xs text-muted-foreground mt-1">
-              12 meses ·{" "}
+              {comVariavel ? "12 meses" : "12 meses de contas fixas"} ·{" "}
               {mesesCobertos !== null
                 ? `a carteira lançada aqui equivale a ${mesesCobertos.toLocaleString("pt-BR", {
                     maximumFractionDigits: 1,
@@ -201,14 +257,16 @@ export function CustoDeVida({ valorDaCarteira }: Props) {
           </div>
           <div className="rounded-lg border p-4">
             <p className="text-sm text-muted-foreground">Custo médio previsto</p>
-            <p className="text-2xl font-bold">{dinheiro(dados.mediaPrevista)}</p>
+            <p className="text-2xl font-bold">{dinheiro(resumo.mediaPrevista)}</p>
             <p className="text-xs text-muted-foreground mt-1">
-              por mês, dos quais {dinheiro(dados.mediaVariavel)} de gasto variável
+              {comVariavel
+                ? `por mês, dos quais ${dinheiro(dados.mediaVariavel)} de gasto variável`
+                : `por mês, só contas fixas (sem ${dinheiro(dados.mediaVariavel)} de variável)`}
             </p>
           </div>
           <div className="rounded-lg border p-4">
             <p className="text-sm text-muted-foreground">Custo médio realizado</p>
-            <p className="text-2xl font-bold">{dinheiro(dados.mediaRealizada)}</p>
+            <p className="text-2xl font-bold">{dinheiro(resumo.mediaRealizada)}</p>
             <p className="text-xs text-muted-foreground mt-1">
               {semHistorico
                 ? "sem despesas nos últimos 12 meses"
@@ -259,12 +317,14 @@ export function CustoDeVida({ valorDaCarteira }: Props) {
                 />
               )}
               <Bar dataKey="realizadoFixo" stackId="custo" name="Fixo (realizado)" fill={COR_FIXO} />
+              {comVariavel && (
               <Bar
                 dataKey="realizadoVariavel"
                 stackId="custo"
                 name="Variável (realizado)"
                 fill={COR_VARIAVEL}
               />
+              )}
               <Bar
                 dataKey="previstoFixo"
                 stackId="custo"
@@ -272,6 +332,7 @@ export function CustoDeVida({ valorDaCarteira }: Props) {
                 fill={COR_FIXO}
                 fillOpacity={0.4}
               />
+              {comVariavel && (
               <Bar
                 dataKey="previstoVariavel"
                 stackId="custo"
@@ -280,6 +341,7 @@ export function CustoDeVida({ valorDaCarteira }: Props) {
                 fillOpacity={0.4}
                 radius={[2, 2, 0, 0]}
               />
+              )}
             </BarChart>
           </ResponsiveContainer>
         </div>
