@@ -116,7 +116,7 @@
 //     viraria divida a cada icone novo na pagina. Icone sem esboco e
 //     `React.createElement(undefined)`, que derruba o render INTEIRO;
 //   `SeletorDePeriodo`, `PrevistoXRealizado`, `MapaDeCalor`,
-//   `DespesasPorCategoria`, `UltimasDespesas`,
+//   `DespesasPorCategoria`, `UltimasDespesas`, `SaldoDoMes`,
 //   `NumeroIndisponivel`, `ui/progress` -- nenhuma assercao daqui os le, e o
 //     seletor arrasta o Radix e a mascara de digitacao;
 //   `cn`, `cva`, `Slot`  -- a fiacao de classe dos componentes de ui.
@@ -552,6 +552,9 @@ MODULOS["@/components/dashboard/DespesasPorCategoria"] = {
 };
 MODULOS["@/components/dashboard/UltimasDespesas"] = {
   UltimasDespesas: esboco("ULTIMAS-DESPESAS"),
+};
+MODULOS["@/components/dashboard/SaldoDoMes"] = {
+  SaldoDoMes: esboco("SALDO-DO-MES"),
 };
 MODULOS["@/components/SemRede"] = {
   NumeroIndisponivel: esboco("NUMERO-INDISPONIVEL"),
@@ -999,8 +1002,8 @@ for (const [chave, nome, , temCartao] of CASOS) {
     // importar e que a sonda esbocou calada -- e que pode estar justamente no
     // caminho do que as outras assercoes leem.
     //
-    // SAO CINCO (o mapa de calor e os dois widgets do Minhas Financas
-    // desenham em todo periodo), e nao os sete declarados em MODULOS: `Progress` so desenha
+    // SAO SEIS (o mapa de calor e os tres widgets do Minhas Financas
+    // desenham em todo periodo), e nao os oito declarados em MODULOS: `Progress` so desenha
     // dentro de uma meta (a rota devolve lista vazia) e `NumeroIndisponivel` so
     // quando uma rota falha em ler. (Eram cinco ate a HMO-470: o quinto era o
     // `PainelDePapel`, o outro ramo do portao, apagado com o painel.)
@@ -1010,6 +1013,7 @@ for (const [chave, nome, , temCartao] of CASOS) {
       "[ESBOCO-DESPESAS-POR-CATEGORIA]",
       "[ESBOCO-MAPA-DE-CALOR]",
       "[ESBOCO-PREVISTO-X-REALIZADO]",
+      "[ESBOCO-SALDO-DO-MES]",
       "[ESBOCO-SELETOR-DE-PERIODO]",
       "[ESBOCO-ULTIMAS-DESPESAS]",
     ]);

@@ -103,7 +103,7 @@
 //     (clsx + tailwind-merge + cva), nao comportamento, e nenhuma assercao daqui
 //     fala de classe -- quem cobra cor e `npm run check-color-tokens`. Com eles
 //     o Button de PRODUCAO entra de verdade;
-//   - os doze icones do lucide: viram `<svg>` vazio. Icone novo num dos
+//   - os treze icones do lucide: viram `<svg>` vazio. Icone novo num dos
 //     componentes estoura "ReferenceError: X is not defined" DENTRO do render
 //     -- e NAO pelo `try/catch` da pagina, que nao alcanca o render do React
 //     (HMO-487 pagou essa conta com `Sigma`). Quem o torna legivel e o teste
@@ -494,7 +494,7 @@ const Slot = React.forwardRef(function Slot(props, ref) {
 });
 
 /**
- * Os doze icones. Icone novo estoura como ReferenceError -- e quem torna esse
+ * Os treze icones. Icone novo estoura como ReferenceError -- e quem torna esse
  * estouro LEGIVEL e o teste "NENHUM erro escapou do render do React", e nao o
  * \`try/catch\` da pagina: ver o cabecalho dele. HMO-487.
  */
@@ -506,6 +506,8 @@ const CalendarClock = icone("CalendarClock");
 const CalendarDays = icone("CalendarDays");
 const Check = icone("Check");
 const CheckCircle2 = icone("CheckCircle2");
+/** O da situacao "Pendente", na primeira coluna da linha (07/11/2026). */
+const Clock = icone("Clock");
 const CreditCard = icone("CreditCard");
 const Loader2 = icone("Loader2");
 const Pencil = icone("Pencil");

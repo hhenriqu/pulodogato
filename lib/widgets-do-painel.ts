@@ -124,3 +124,65 @@ export function ultimasDespesas<T extends LancamentoDoRelatorio>(
     .slice(0, Math.max(0, Math.floor(n)))
     .map(({ l }) => l);
 }
+
+// ---------------------------------------------------------------------------
+// A LINHA DO SALDO DO MES (07/11/2026)
+// ---------------------------------------------------------------------------
+// O Resumo do Minhas Financas abre com tres numeros em sequencia: o saldo
+// inicial do mes, o atual e o previsto para o fim dele. Os tres ja existem na
+// tabela "Mes das contas" da tela Contas (/api/financial-accounts/mes); aqui
+// fica so a SOMA, com a mesma regra da linha Total daquela tabela -- as contas
+// em real que somam nos totais --, para os dois lugares dizerem o mesmo numero.
+// ---------------------------------------------------------------------------
+
+/** Uma linha de /api/financial-accounts/mes, so com o que a soma le. */
+export interface LinhaDoMesDaConta {
+  conta_id: string;
+  saldo_inicial: number;
+  saldo: number;
+  previsto: number;
+}
+
+/** A conta como o painel a conhece, so com o que decide se ela soma. */
+export interface ContaQueSoma {
+  id: string;
+  include_in_total?: boolean | null;
+  currency?: string | null;
+}
+
+export interface SaldoDoMes {
+  inicial: number;
+  atual: number;
+  previsto: number;
+}
+
+/**
+ * Os tres saldos somados das contas que entram no total.
+ *
+ * Fica fora a conta marcada fora dos totais e a conta em outra moeda (somar
+ * dolar com real daria um numero de moeda nenhuma), como na linha Total da
+ * tabela da tela Contas. `null` quando nenhuma conta soma: zero ali seria o
+ * zero confiante, um saldo que ninguem leu.
+ */
+export function saldoDoMes(
+  linhas: readonly LinhaDoMesDaConta[],
+  contas: readonly ContaQueSoma[]
+): SaldoDoMes | null {
+  const porId = new Map(contas.map((c) => [c.id, c]));
+  let inicial = 0;
+  let atual = 0;
+  let previsto = 0;
+  let alguma = false;
+  for (const linha of linhas) {
+    const conta = porId.get(linha.conta_id);
+    if (!conta) continue;
+    if (conta.include_in_total === false) continue;
+    if ((conta.currency ?? "BRL") !== "BRL") continue;
+    alguma = true;
+    inicial += centavos(linha.saldo_inicial);
+    atual += centavos(linha.saldo);
+    previsto += centavos(linha.previsto);
+  }
+  if (!alguma) return null;
+  return { inicial: inicial / 100, atual: atual / 100, previsto: previsto / 100 };
+}

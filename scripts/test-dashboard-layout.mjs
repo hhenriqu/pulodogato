@@ -352,7 +352,7 @@ test("tituloDaSecao devolve o id quando nao conhece a secao", () => {
 // Os widgets do Minhas Financas (lib/widgets-do-painel.ts)
 // ---------------------------------------------------------------------------
 
-const { fatiasDaRosca, ultimasDespesas, ID_DE_OUTRAS } = await import(
+const { fatiasDaRosca, ultimasDespesas, saldoDoMes, ID_DE_OUTRAS } = await import(
   "../.tmp-dashboard-layout/widgets-do-painel.js"
 );
 
@@ -423,4 +423,36 @@ test("ultimas despesas: da mais nova para a mais velha, so despesa, corta em n",
     ["d", "c", "b"]
   );
   assert.deepEqual(ultimasDespesas(linhas, 0), []);
+});
+
+test("saldo do mes: soma em centavos so as contas em real que somam nos totais", () => {
+  const linhas = [
+    { conta_id: "a", saldo_inicial: 0.1, saldo: 0.2, previsto: 10 },
+    { conta_id: "b", saldo_inicial: 0.2, saldo: 0.1, previsto: -3 },
+    { conta_id: "fora", saldo_inicial: 1000, saldo: 1000, previsto: 1000 },
+    { conta_id: "usd", saldo_inicial: 50, saldo: 50, previsto: 50 },
+    { conta_id: "sumiu", saldo_inicial: 7, saldo: 7, previsto: 7 },
+  ];
+  const contas = [
+    { id: "a" },
+    { id: "b", include_in_total: true, currency: "BRL" },
+    { id: "fora", include_in_total: false },
+    { id: "usd", currency: "USD" },
+  ];
+  assert.deepEqual(saldoDoMes(linhas, contas), {
+    inicial: 0.3,
+    atual: 0.3,
+    previsto: 7,
+  });
+});
+
+test("saldo do mes: sem conta que some e null, nunca zero", () => {
+  assert.equal(saldoDoMes([], [{ id: "a" }]), null);
+  assert.equal(
+    saldoDoMes(
+      [{ conta_id: "fora", saldo_inicial: 1, saldo: 1, previsto: 1 }],
+      [{ id: "fora", include_in_total: false }]
+    ),
+    null
+  );
 });

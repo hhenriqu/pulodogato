@@ -107,6 +107,7 @@ import { PrevistoXRealizado } from "@/components/dashboard/PrevistoXRealizado";
 import { MapaDeCalor } from "@/components/dashboard/MapaDeCalor";
 import { DespesasPorCategoria } from "@/components/dashboard/DespesasPorCategoria";
 import { UltimasDespesas } from "@/components/dashboard/UltimasDespesas";
+import { SaldoDoMes } from "@/components/dashboard/SaldoDoMes";
 import {
   somarMesesPrevistos,
   type PrevistoDoPeriodo,
@@ -147,6 +148,9 @@ interface Conta {
   name: string;
   account_type: string;
   current_balance: number | string;
+  /** A rota devolve a linha inteira; estes dois decidem se a conta soma. */
+  include_in_total?: boolean | null;
+  currency?: string | null;
 }
 
 interface ResumoFluxo {
@@ -1264,6 +1268,16 @@ function PainelCompleto() {
     // Os dois widgets do Resumo do Minhas Financas (06/11/2026). Buscam os
     // proprios dados, como o mapa de calor -- ver lib/widgets-do-painel.ts.
     // ------------------------------------------------------------------
+    "saldo-do-mes": (
+      <SaldoDoMes
+        mes={
+          periodo.modo === "mes" && periodo.de.slice(0, 7) === periodo.ate.slice(0, 7)
+            ? periodo.de.slice(0, 7)
+            : hoje.slice(0, 7)
+        }
+        contas={contas}
+      />
+    ),
     "despesas-por-categoria": (
       <DespesasPorCategoria de={periodo.de} ate={periodo.ate} rotulo={rotulo} />
     ),
