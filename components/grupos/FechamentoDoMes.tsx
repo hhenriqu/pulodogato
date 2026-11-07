@@ -200,7 +200,7 @@ export function FechamentoDoMes({
               <Dica rotulo="Sobre o rateio do mês">
                 Este é o rateio do mês, com o previsto contando igual ao realizado —
                 serve para combinar o acerto. O saldo de toda a vida do grupo, só com
-                o que já aconteceu, está na aba Balanços.
+                o que já aconteceu, está em &quot;Quem paga quem&quot;, no topo da tela.
               </Dica>
             </CardTitle>
             <CardDescription>
