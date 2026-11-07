@@ -882,9 +882,12 @@ test("leitura 4: o juro entra UMA vez -- nao ha linha repetida nem valor dobrado
   );
   assert.equal(comAChave.length, 1, "uma linha por parcela, nunca duas");
   assert.equal(corpo.resumo.previsto, 250);
+  // A parcela cheia aparece no painel "A pagar no MyBank" (07/11/2026), FORA
+  // do total: o `previsto` acima continua so com o juro.
+  assert.equal(corpo.parcelas_do_mybank?.length, 1, "a parcela cheia vai para o painel");
   assert.ok(
-    !d.lidas.some((l) => l.tabela === "mybank_due_entries"),
-    "a aba Despesas nao le mais a divida cheia"
+    !corpo.linhas.some((l) => l.parcela_do_mybank === true),
+    "a parcela cheia nao vira linha da lista (entraria no total)"
   );
 });
 

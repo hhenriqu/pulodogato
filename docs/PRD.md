@@ -40,6 +40,7 @@
 | 2.19 | 06/11/2026 | RN004.10 e RN004.11 novas: mover a fatura para o próximo vencimento e parcelar a fatura, como no Minhas Finanças | Helio |
 | 2.20 | 06/11/2026 | RN016.6.1 nova: tags no lançamento e "ignorar nos orçamentos", como no Minhas Finanças (migration 083) | Helio |
 | 2.21 | 06/11/2026 | RN016.6.2 nova: relatório de lançamentos com data de referência (lançamento, vencimento, efetivação) e situação, como no Minhas Finanças | Helio |
+| 2.22 | 07/11/2026 | RN019.7 nova e RN021.6 reescrita: a aba Receitas mostra quem paga o "A receber do grupo" com o botão Recebi, e a aba Despesas mostra a parcela cheia do MyBank fora do total | Helio |
 
 > **O que a versão 2.0 corrigiu.** Até aqui esta PRD descrevia um app de carteira
 > de investimentos: o problema era "investidores pessoa física", as personas eram
@@ -665,6 +666,11 @@ O Resultado de cada um fecha na responsabilidade, e a soma dá os R$ 2.000.
   cadastrada, o botão copia só o valor e a linha diz que a pessoa não
   cadastrou chave Pix. O acerto continua sendo registrado na tela do grupo. O
   painel "Pra quem pagar" do grupo sem dia de fechamento ganha o mesmo botão.
+- RN019.7 O espelho na aba Receitas: debaixo do "A receber do grupo" em
+  aberto aparecem os pares da RN019.5 em que eu recebo ("Leticia te paga
+  R$ 71,68"), cada um com o botão **Recebi**. Ele pergunta em qual conta o
+  dinheiro entrou e registra o acerto do lado de quem recebeu, que dá baixa
+  nos dois lados (RN019.3). Decisão do Helio, 07/11/2026.
 
 ### RN020 — Divisão com pessoa ✅ **(banco)** — fase 5
 
@@ -736,9 +742,12 @@ O Resultado de cada um fecha na responsabilidade, e a soma dá os R$ 2.000.
 - RN021.5 As parcelas aparecem na agenda: a pagar para quem pegou, a receber
   para quem emprestou.
 - RN021.6 Contas a Pagar e o "Quanto ainda posso gastar" continuam com a
-  parcela cheia, porque lá a pergunta é quanto sai da conta. A aba Despesas de
-  quem pegou mostra só o juro ("Juros: Moto (3/24)"), e a aba Receitas de quem
-  emprestou soma só o juro a receber.
+  parcela cheia, porque lá a pergunta é quanto sai da conta. O total da aba
+  Despesas de quem pegou soma só o juro ("Juros: Moto (3/24)"), e a aba
+  Receitas de quem emprestou soma só o juro a receber. Desde 07/11/2026 a aba
+  Despesas também mostra a parcela cheia do período num painel próprio,
+  **"A pagar no MyBank"**, com o botão de avisar que pagou, fora do total
+  (decisão do Helio: "linha a pagar, total só com juros").
 
 ### RN022 — Apagar tudo e começar do zero ✅ **(tela)**
 

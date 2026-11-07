@@ -32,8 +32,10 @@ import {
   caminhoDoGrupo,
   seloDoGrupo,
   textoDaTransferencia,
+  textoDoRecebimento,
   tituloDoGrupo,
   type GrupoNaLista,
+  type RecebimentoDoAcerto,
 } from "@/lib/despesas-do-grupo";
 
 const reais = (valor: number) =>
@@ -151,12 +153,71 @@ export function TransferenciasDoGrupo({
   );
 }
 
+/** O que a tela faz quando quem recebe confirma que o Pix chegou. */
+export type AoReceberDoGrupo = (
+  grupo: GrupoNaLista,
+  recebimento: RecebimentoDoAcerto
+) => void;
+
+/** A frase debaixo dos recebimentos: o que o botao faz. */
+export const RECEBI_REGISTRA_O_ACERTO =
+  "Quando o Pix cair, toque em Recebi: o acerto é registrado e a conta dos dois lados é quitada junto.";
+
+/**
+ * Quem me paga a conta "A receber do grupo" -- o espelho de
+ * `TransferenciasDoGrupo` na aba Receitas (07/11/2026). O pedido: a Lais nao
+ * tinha onde confirmar que recebeu o Pix da Leticia. "Recebi" registra o
+ * acerto pela MESMA rota da tela do grupo, com a Lais como quem recebeu
+ * (RN019.3: registrado por um lado, da baixa nos dois).
+ */
+export function RecebimentosDoGrupo({
+  grupo,
+  aoReceber,
+  online = true,
+}: {
+  grupo: GrupoNaLista;
+  aoReceber?: AoReceberDoGrupo;
+  online?: boolean;
+}) {
+  const recebimentos = grupo.recebimentos ?? [];
+  if (recebimentos.length === 0) return null;
+  return (
+    <div className="mt-2 space-y-1 rounded-md bg-muted/40 px-2 py-2" data-recebimentos={grupo.chave}>
+      {recebimentos.map((r) => (
+        <div
+          key={r.de_user_id}
+          className="flex items-center justify-between gap-2 text-sm"
+          data-recebimento={r.de_user_id}
+        >
+          <span>{textoDoRecebimento(r)}</span>
+          {aoReceber && (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={!online}
+              onClick={() => aoReceber(grupo, r)}
+            >
+              Recebi
+            </Button>
+          )}
+        </div>
+      ))}
+      {aoReceber && (
+        <p className="text-xs text-muted-foreground">{RECEBI_REGISTRA_O_ACERTO}</p>
+      )}
+    </div>
+  );
+}
+
 export function LinhaDoGrupo({
   grupo,
   valor,
   descricao,
   vencida = false,
   chavesPix = {},
+  aoReceber,
+  online = true,
 }: {
   grupo: GrupoNaLista;
   /** A soma das linhas da lista que esta agrega. */
@@ -165,6 +226,9 @@ export function LinhaDoGrupo({
   descricao?: string | null;
   vencida?: boolean;
   chavesPix?: Readonly<Record<string, PixParaCopiar>>;
+  /** Confirmar que o Pix de quem me deve chegou (aba Receitas). */
+  aoReceber?: AoReceberDoGrupo;
+  online?: boolean;
 }) {
   const [aberto, setAberto] = useState(false);
 
@@ -241,6 +305,10 @@ export function LinhaDoGrupo({
 
       {grupo.direcao === "expense" && (
         <TransferenciasDoGrupo grupo={grupo} chavesPix={chavesPix} />
+      )}
+
+      {grupo.direcao === "income" && (
+        <RecebimentosDoGrupo grupo={grupo} aoReceber={aoReceber} online={online} />
       )}
     </div>
   );

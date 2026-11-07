@@ -80,6 +80,22 @@ export interface TransferenciaDoAcerto {
   valor: number;
 }
 
+/**
+ * Um Pix que OUTRO membro me deve pela conta do fechamento -- o espelho de
+ * `TransferenciaDoAcerto`, na aba Receitas (07/11/2026). Sem ele a linha
+ * "A receber do grupo" nao dizia de quem vem o dinheiro, e nao havia onde
+ * confirmar que ele chegou.
+ */
+export interface RecebimentoDoAcerto {
+  de_user_id: string;
+  /** Eu: quem recebe. Vai como `to_user_id` no registro do acerto. */
+  para_user_id: string;
+  /** `full_name`, ou `null` quando o perfil nao e legivel. */
+  nome: string | null;
+  /** BRL, positivo. */
+  valor: number;
+}
+
 export type TipoDoGrupoNaLista = "estimativa" | "conta_do_fechamento" | "sem_fechamento";
 
 export interface GrupoNaLista {
@@ -102,6 +118,8 @@ export interface GrupoNaLista {
   itens: ItemDoGrupoNaLista[];
   abatimentos: AbatimentoDoGrupo[];
   transferencias: TransferenciaDoAcerto[];
+  /** So na conta do fechamento a RECEBER: quem me paga, e quanto. */
+  recebimentos?: RecebimentoDoAcerto[];
 }
 
 export const ROTULO_JA_PAGUEI = "Você já pagou";
@@ -261,6 +279,27 @@ export function transferenciasDoMembro(
       nome: nomes.get(p.para_user_id) ?? null,
       valor: p.valor,
     }));
+}
+
+/** Os pares do acerto em que EU recebo: o espelho de `transferenciasDoMembro`. */
+export function recebimentosDoMembro(
+  pares: readonly { de_user_id: string; para_user_id: string; valor: number }[],
+  userId: string,
+  nomes: ReadonlyMap<string, string>
+): RecebimentoDoAcerto[] {
+  return pares
+    .filter((p) => p.para_user_id === userId && p.de_user_id !== userId && p.valor > 0)
+    .map((p) => ({
+      de_user_id: p.de_user_id,
+      para_user_id: p.para_user_id,
+      nome: nomes.get(p.de_user_id) ?? null,
+      valor: p.valor,
+    }));
+}
+
+/** "Leticia te paga R$ 71,68" -- a frase da linha do recebimento. */
+export function textoDoRecebimento(r: Pick<RecebimentoDoAcerto, "nome" | "valor">): string {
+  return `${r.nome ?? "Outro membro do grupo"} te paga ${reais(r.valor)}`;
 }
 
 /** Uma conta de grupo de outro membro, no grupo sem dia de fechamento. */

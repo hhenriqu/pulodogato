@@ -78,8 +78,10 @@ import {
 import { CartoesDaTela } from "@/components/movimentacoes/CartoesDaTela";
 import { PainelPraQuemPagar } from "@/components/movimentacoes/PainelPraQuemPagar";
 import { PainelQuemMePaga } from "@/components/movimentacoes/PainelQuemMePaga";
+import { PainelParcelasDoMyBank } from "@/components/movimentacoes/PainelParcelasDoMyBank";
+import type { ParcelaDevidaNaAgenda } from "@/lib/leituras-do-mybank";
 import type { DestinoDoPagamento } from "@/lib/pra-quem-pagar";
-import type { GrupoNaLista } from "@/lib/despesas-do-grupo";
+import type { GrupoNaLista, RecebimentoDoAcerto } from "@/lib/despesas-do-grupo";
 import type { PixParaCopiar } from "@/components/movimentacoes/CopiarPix";
 import type { CreditoAReceber } from "@/lib/credito-de-grupo";
 import {
@@ -185,6 +187,12 @@ interface RespostaDaTela {
    * quem nao tem grupo.
    */
   pra_quem_pagar?: DestinoDoPagamento[];
+  /**
+   * A parcela cheia do MyBank que eu devo no periodo, so na aba Despesas e
+   * FORA do total (decisao de 07/11/2026). Ausente no corpo guardado de antes:
+   * o `?? []` so esconde o painel.
+   */
+  parcelas_do_mybank?: ParcelaDevidaNaAgenda[];
   /**
    * QUEM ME PAGA -- HMO-422, so na aba Receitas.
    *
@@ -296,6 +304,7 @@ export function ListaDeMovimentacao({
    * ao contrario de `semVencimento`, onde `[]` seria uma afirmacao.
    */
   const [praQuemPagar, setPraQuemPagar] = useState<DestinoDoPagamento[]>([]);
+  const [parcelasDoMyBank, setParcelasDoMyBank] = useState<ParcelaDevidaNaAgenda[]>([]);
   /**
    * QUEM ME PAGA -- HMO-422. `null` e nao `[]`, ao contrario de `praQuemPagar`:
    * ver `RespostaDaTela.quem_me_paga`. O painel devolve `null` nos dois casos,
@@ -340,6 +349,16 @@ export function ListaDeMovimentacao({
 
   /** O id do acerto cuja confirmacao esta em voo. Trava o botao DELE. */
   const [acertoSalvando, setAcertoSalvando] = useState<string | null>(null);
+
+  /**
+   * O "Recebi" debaixo do "A receber do grupo" (07/11/2026): o acerto AINDA
+   * NAO existe -- quem deve nao o registrou --, e quem recebe o registra daqui.
+   */
+  const [recebimentoEmCurso, setRecebimentoEmCurso] = useState<{
+    grupo: GrupoNaLista;
+    recebimento: RecebimentoDoAcerto;
+  } | null>(null);
+  const [recebimentoSalvando, setRecebimentoSalvando] = useState(false);
 
   /** A conta prevista aberta no formulario em linha, e os tres campos dela. */
   const [editando, setEditando] = useState<LinhaDaTela | null>(null);
@@ -420,6 +439,7 @@ export function ListaDeMovimentacao({
         // um Pix que ja esta na conta de alguem.
         setAcertos(leitura.dados.acertos_do_grupo ?? null);
         setPraQuemPagar(leitura.dados.pra_quem_pagar ?? []);
+        setParcelasDoMyBank(leitura.dados.parcelas_do_mybank ?? []);
         // `?? null` pelo motivo de `setSemVencimento` e de `setAcertos`: resposta
         // antiga do aparelho nao tem o campo.
         setQuemMePaga(leitura.dados.quem_me_paga ?? null);
@@ -435,6 +455,7 @@ export function ListaDeMovimentacao({
         // Leticia" sobrevivendo a uma leitura que falhou e uma divida afirmada
         // sobre o periodo ANTERIOR, debaixo do titulo do novo.
         setPraQuemPagar([]);
+        setParcelasDoMyBank([]);
         // Pelo MESMO motivo: um painel "a Lais te deve R$ 508,42" sobrevivendo a
         // uma leitura que falhou e um credito afirmado sobre o periodo ANTERIOR,
         // debaixo do titulo do novo.
@@ -710,6 +731,77 @@ export function ListaDeMovimentacao({
     [acertoEmCurso, carregar]
   );
 
+  /** Abre o dialogo do "Recebi", com as MINHAS contas. Nao escreve nada. */
+  const aoReceberDoGrupo = useCallback(
+    async (grupo: GrupoNaLista, recebimento: RecebimentoDoAcerto) => {
+      setRecebimentoEmCurso({ grupo, recebimento });
+      try {
+        const resposta = await fetch("/api/financial-accounts");
+        const dados = await resposta.json();
+        setContasDoAcerto(Array.isArray(dados.accounts) ? dados.accounts : []);
+      } catch (erro) {
+        console.error("Não foi possível carregar as contas do acerto:", erro);
+        setContasDoAcerto([]);
+        toast.error("Não foi possível carregar suas contas");
+      }
+    },
+    []
+  );
+
+  /**
+   * REGISTRA O ACERTO do lado de quem recebeu, pela MESMA rota da tela do
+   * grupo (`POST /api/expense-groups/[groupId]/settlements`). E ela quem da a
+   * baixa nas duas contas do fechamento numa operacao so (RN019.3) e grava a
+   * minha perna na conta escolhida. Reimplementar aqui perderia as duas coisas.
+   */
+  const registrarRecebimento = useCallback(
+    async (contaId: string) => {
+      const emCurso = recebimentoEmCurso;
+      if (!emCurso) return;
+
+      setRecebimentoSalvando(true);
+      try {
+        const resposta = await fetch(
+          `/api/expense-groups/${emCurso.grupo.group_id}/settlements`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              from_user_id: emCurso.recebimento.de_user_id,
+              to_user_id: emCurso.recebimento.para_user_id,
+              amount: emCurso.recebimento.valor,
+              currency: "BRL",
+              account_id: contaId,
+              settled_on: today(),
+            }),
+          }
+        );
+
+        const dados = await resposta.json().catch(() => ({}));
+
+        if (!resposta.ok) {
+          throw new Error(
+            dados.error || `O pedido foi recusado (HTTP ${resposta.status}).`
+          );
+        }
+
+        setRecebimentoEmCurso(null);
+        toast.success("Acerto registrado. A conta do grupo foi quitada.");
+        await carregar();
+      } catch (erro) {
+        console.error("Erro ao registrar o recebimento do grupo:", erro);
+        toast.error(
+          erro instanceof Error && erro.message
+            ? erro.message
+            : "Não foi possível registrar o acerto."
+        );
+      } finally {
+        setRecebimentoSalvando(false);
+      }
+    },
+    [recebimentoEmCurso, carregar]
+  );
+
   /** Abre o formulario em linha de uma conta prevista, com os valores de hoje. */
   const aoEditar = useCallback((linha: LinhaDaTela) => {
     setEditando(linha);
@@ -852,6 +944,15 @@ export function ListaDeMovimentacao({
           */}
           {tipo === "expense" && podeMostrarNumero(estado) && (
             <PainelPraQuemPagar destinos={praQuemPagar} chavesPix={chavesPix} />
+          )}
+
+          {/* A parcela cheia do MyBank, fora do total -- ver o cabecalho do painel. */}
+          {tipo === "expense" && podeMostrarNumero(estado) && (
+            <PainelParcelasDoMyBank
+              parcelas={parcelasDoMyBank}
+              aoAvisar={() => carregar(true)}
+              online={online}
+            />
           )}
 
           {/*
@@ -1070,6 +1171,8 @@ export function ListaDeMovimentacao({
             linhas={previstas}
             grupos={gruposNaLista}
             chavesPix={chavesPix}
+            aoReceberDoGrupo={tipo === "income" ? aoReceberDoGrupo : undefined}
+            online={online}
             carregando={carregando}
             /*
               A FRASE DE VAZIO TEM DE CONCORDAR COM O CARTAO -- HMO-379.
@@ -1347,6 +1450,23 @@ export function ListaDeMovimentacao({
               rotuloSalvando="Lançando..."
               aoConfirmar={lancarMinhaPerna}
               salvando={acertoSalvando === acertoEmCurso.settlementId}
+            />
+          )}
+          {recebimentoEmCurso && (
+            <DialogoDeAcerto
+              aberto={true}
+              aoFechar={() => setRecebimentoEmCurso(null)}
+              direcao="recebi"
+              nomeDaContraparte={recebimentoEmCurso.recebimento.nome}
+              valor={recebimentoEmCurso.recebimento.valor}
+              moeda="BRL"
+              cotacao={1}
+              contas={contasDoAcerto}
+              titulo="Confirmar o que recebi"
+              rotuloDoBotao="Recebi"
+              rotuloSalvando="Registrando..."
+              aoConfirmar={registrarRecebimento}
+              salvando={recebimentoSalvando}
             />
           )}
         </>

@@ -96,7 +96,10 @@ import {
 } from "@/lib/acoes-da-linha";
 import { caminhoDoCartaoNoMes } from "@/lib/fatura-do-cartao";
 import { EloDaFatura } from "@/components/fatura/EloDaFatura";
-import { LinhaDoGrupo } from "@/components/movimentacoes/LinhaDoGrupo";
+import {
+  LinhaDoGrupo,
+  type AoReceberDoGrupo,
+} from "@/components/movimentacoes/LinhaDoGrupo";
 import type { PixParaCopiar } from "@/components/movimentacoes/CopiarPix";
 import type { GrupoNaLista } from "@/lib/despesas-do-grupo";
 import type { LinhaDaTela } from "@/lib/telas-de-movimentacao";
@@ -859,6 +862,8 @@ export function SecaoDaTela({
   acoes,
   grupos = [],
   chavesPix = {},
+  aoReceberDoGrupo,
+  online = true,
 }: {
   titulo: string;
   subtitulo: string;
@@ -887,6 +892,10 @@ export function SecaoDaTela({
   grupos?: readonly GrupoNaLista[];
   /** A chave Pix de quem recebe, para o copia e cola das transferencias. */
   chavesPix?: Readonly<Record<string, PixParaCopiar>>;
+  /** "Recebi" debaixo do "A receber do grupo" (07/11/2026). Opcional. */
+  aoReceberDoGrupo?: AoReceberDoGrupo;
+  /** Sem rede o "Recebi" fica desligado, como as acoes da linha. */
+  online?: boolean;
 }) {
   const subtotal = linhas.reduce((soma, l) => soma + l.valor, 0);
 
@@ -966,6 +975,8 @@ export function SecaoDaTela({
                     descricao={dele.length === 1 ? linha.descricao : null}
                     vencida={dele.some((l) => l.situacao === "overdue")}
                     chavesPix={chavesPix}
+                    aoReceber={aoReceberDoGrupo}
+                    online={online}
                   />
                 );
               }
