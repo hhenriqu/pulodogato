@@ -20,6 +20,7 @@ import {
   dataValida,
   fraseDoNaoAchado,
   hojeEmSaoPaulo,
+  normalizarNome,
   valorEmReais,
 } from "@/lib/acesso-pelo-claude";
 import { categoriaEfetiva, type Categoria, type PreferenciaDeCategoria } from "@/lib/categorias";
@@ -329,6 +330,35 @@ async function lancar(
 }
 
 // ---------------------------------------------------------------------------
+// Rotas do proprio app, com a sessao da pessoa
+// ---------------------------------------------------------------------------
+
+/**
+ * POST numa rota do app com o cookie da sessao da pessoa. Para as regras que
+ * ja tem dono numa rota (parcelas, subcategoria), em vez de copia-las aqui.
+ */
+async function postarNaRota(
+  ctx: ContextoDaFerramenta,
+  caminho: string,
+  corpo: unknown
+): Promise<{ ok: boolean; corpo: Record<string, unknown> }> {
+  let cookie: string;
+  try {
+    cookie = await ctx.sessao.cookiesDaSessao();
+  } catch {
+    return { ok: false, corpo: { error: "Não consegui abrir a sessão para chamar o app." } };
+  }
+  const resposta = await fetch(`${ctx.origem}${caminho}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Cookie: cookie },
+    body: JSON.stringify(corpo),
+    cache: "no-store",
+  }).catch(() => null);
+  const json = resposta ? ((await resposta.json().catch(() => ({}))) as Record<string, unknown>) : {};
+  return { ok: Boolean(resposta?.ok), corpo: json };
+}
+
+// ---------------------------------------------------------------------------
 // Compra parcelada no cartao
 // ---------------------------------------------------------------------------
 
@@ -356,41 +386,25 @@ async function lancarParcelada(ctx: ContextoDaFerramenta, args: Args): Promise<R
   if (!r.ok) return r.resultado;
   const { conta, categoria, subcategoriaId, grupo } = r;
 
-  let cookie: string;
-  try {
-    cookie = await ctx.sessao.cookiesDaSessao();
-  } catch {
-    return erro("Não consegui abrir a sessão para lançar as parcelas.");
-  }
-
   // O MESMO corpo que `FormularioDeLancamento.criarParcelas` manda.
-  const resposta = await fetch(`${ctx.origem}/api/financial-installments`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Cookie: cookie },
-    body: JSON.stringify({
-      account_id: conta.id,
-      category_id: categoria.id,
-      subcategory_id: subcategoriaId,
-      description: descricao,
-      valor: String(valor),
-      base,
-      parcela_atual: parcelaAtual,
-      total_parcelas: parcelas,
-      vencimento: data,
-      mes_da_fatura: fatura.mes,
-      group_id: grupo?.id ?? null,
-      divisao: [],
-      notes: texto(args.observacao) || null,
-      currency: "BRL",
-      exchange_rate: 1,
-    }),
-    cache: "no-store",
-  }).catch(() => null);
-
-  const corpo = resposta ? await resposta.json().catch(() => ({})) : {};
-  if (!resposta?.ok) {
-    return erro(corpo.error || "Não consegui criar as parcelas.");
-  }
+  const { ok, corpo } = await postarNaRota(ctx, "/api/financial-installments", {
+    account_id: conta.id,
+    category_id: categoria.id,
+    subcategory_id: subcategoriaId,
+    description: descricao,
+    valor: String(valor),
+    base,
+    parcela_atual: parcelaAtual,
+    total_parcelas: parcelas,
+    vencimento: data,
+    mes_da_fatura: fatura.mes,
+    group_id: grupo?.id ?? null,
+    divisao: [],
+    notes: texto(args.observacao) || null,
+    currency: "BRL",
+    exchange_rate: 1,
+  });
+  if (!ok) return erro(String(corpo.error ?? "Não consegui criar as parcelas."));
 
   const primeira = fatura.mes ?? (await faturaAberta(ctx.sessao.supabase, conta, data));
   return {
@@ -480,6 +494,46 @@ export const FERRAMENTAS: Ferramenta[] = [
     async executar(ctx) {
       const grupos = await gruposDaPessoa(ctx.sessao.supabase, ctx.sessao.userId);
       return { texto: grupos.map((g) => `- ${g.nome} id=${g.id}`).join("\n") || "Nenhum grupo ativo." };
+    },
+  },
+  {
+    name: "criar_subcategoria",
+    title: "Criar subcategoria",
+    description:
+      "Cria uma subcategoria dentro de uma categoria existente (ex.: 'Lanche' em 'Alimentação'). Use quando a pessoa pedir uma subcategoria que não existe; confirme o nome antes. Depois, lance usando a subcategoria criada.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        categoria: { type: "string", description: "Nome (ou id) da categoria, como em listar_categorias." },
+        nome: { type: "string", description: "Nome da subcategoria nova." },
+      },
+      required: ["categoria", "nome"],
+      additionalProperties: false,
+    },
+    annotations: { destructiveHint: false, idempotentHint: true },
+    async executar(ctx, args) {
+      const pedido = texto(args.categoria);
+      const nome = texto(args.nome);
+      if (!pedido) return erro("Informe a categoria.");
+      if (!nome) return erro("Informe o nome da subcategoria.");
+
+      const categoria = acharPorNome(await categoriasDaPessoa(ctx.sessao.supabase), pedido);
+      if (!categoria.ok) return erro(fraseDoNaoAchado("categoria", pedido, categoria));
+
+      // Ja existe (sem acento e caixa)? Devolve a existente em vez de recusar:
+      // o que a pessoa queria era poder lancar nela.
+      const existente = acharPorNome(categoria.item.subcategorias, nome);
+      if (existente.ok && normalizarNome(existente.item.nome) === normalizarNome(nome)) {
+        return { texto: `A subcategoria "${existente.item.nome}" já existe em ${categoria.item.nome}.` };
+      }
+
+      // A rota da tela valida o nome e a duplicata (`validarNomeDeCategoria`).
+      const { ok, corpo } = await postarNaRota(ctx, "/api/personal-finance/subcategories", {
+        category_id: categoria.item.id,
+        name: nome,
+      });
+      if (!ok) return erro(String(corpo.error ?? "Não consegui criar a subcategoria."));
+      return { texto: `Subcategoria criada: ${categoria.item.nome} > ${nome}.` };
     },
   },
   {
