@@ -76,15 +76,64 @@ interface SessaoGuardada {
 
 const sessoes = new Map<string, SessaoGuardada>();
 
+/**
+ * A abertura EM ANDAMENTO de cada pessoa.
+ *
+ * POR QUE (falha real no primeiro uso, 07/11): o Claude chama varias
+ * ferramentas AO MESMO TEMPO (listar_contas e listar_categorias juntas). Cada
+ * chamada abria a propria sessao, e cada `generateLink` gera um token NOVO
+ * que invalida o anterior da mesma pessoa -- o `verifyOtp` da chamada que
+ * chegou primeiro batia num token ja trocado e respondia "Nao foi possivel
+ * abrir a sessao". A segunda tentativa funcionava, porque a sessao ja estava
+ * guardada. Com a promessa compartilhada, chamadas simultaneas na mesma
+ * instancia esperam UMA abertura.
+ */
+const abrindo = new Map<string, Promise<SessaoGuardada>>();
+
+/** Quantas vezes tentar, e a espera antes de cada nova tentativa (ms). */
+const ESPERAS = [0, 400, 1200];
+
 async function abrirSessao(userId: string): Promise<SessaoGuardada> {
   const guardada = sessoes.get(userId);
   if (guardada && guardada.expira_em - Date.now() > 5 * 60 * 1000) return guardada;
 
+  const emAndamento = abrindo.get(userId);
+  if (emAndamento) return emAndamento;
+
+  const promessa = (async () => {
+    // Duas instancias da Vercel ainda podem abrir ao mesmo tempo e uma
+    // invalidar o token da outra; nesse caso uma nova tentativa, com um
+    // generateLink novo, resolve -- foi o que o segundo clique fez a mao.
+    let ultimo: unknown;
+    for (const espera of ESPERAS) {
+      if (espera) await new Promise((r) => setTimeout(r, espera));
+      try {
+        const nova = await tentarAbrir(userId);
+        sessoes.set(userId, nova);
+        return nova;
+      } catch (e) {
+        ultimo = e;
+        if (e instanceof ErroDefinitivo) break;
+      }
+    }
+    console.error("[mcp] falha ao abrir a sessao", ultimo);
+    throw ultimo instanceof Error ? ultimo : new Error("Não foi possível abrir a sessão.");
+  })().finally(() => abrindo.delete(userId));
+
+  abrindo.set(userId, promessa);
+  return promessa;
+}
+
+/** Um erro que outra tentativa nao conserta (configuracao, conta sem e-mail). */
+class ErroDefinitivo extends Error {}
+
+async function tentarAbrir(userId: string): Promise<SessaoGuardada> {
   const servico = clienteDeServico();
-  if (!servico) throw new Error("Servidor sem SUPABASE_SERVICE_ROLE_KEY.");
+  if (!servico) throw new ErroDefinitivo("Servidor sem SUPABASE_SERVICE_ROLE_KEY.");
 
   const { data: alvo, error: eAlvo } = await servico.auth.admin.getUserById(userId);
-  if (eAlvo || !alvo?.user?.email) throw new Error("Conta sem e-mail de acesso.");
+  if (eAlvo) throw new Error("Não foi possível ler a conta.");
+  if (!alvo?.user?.email) throw new ErroDefinitivo("Conta sem e-mail de acesso.");
 
   // generateLink NAO envia e-mail: devolve o token, trocado por sessao aqui.
   const { data: link, error: eLink } = await servico.auth.admin.generateLink({
@@ -105,13 +154,11 @@ async function abrirSessao(userId: string): Promise<SessaoGuardada> {
   const s = troca?.session;
   if (eTroca || !s || s.user.id !== userId) throw new Error("Não foi possível abrir a sessão.");
 
-  const nova: SessaoGuardada = {
+  return {
     access_token: s.access_token,
     refresh_token: s.refresh_token,
     expira_em: (s.expires_at ?? Math.floor(Date.now() / 1000) + 3600) * 1000,
   };
-  sessoes.set(userId, nova);
-  return nova;
 }
 
 export interface SessaoDaPessoa {

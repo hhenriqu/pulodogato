@@ -41,6 +41,7 @@ claude mcp add --transport http pulodogato https://pulodogato.hmoraes.com.br/api
 | `listar_contas` | Contas e cartões ativos, com a fatura aberta de cada cartão |
 | `listar_categorias` | Categorias e subcategorias (com os apelidos da pessoa) |
 | `listar_grupos` | Grupos em que a pessoa está ativa (ex.: Casa) |
+| `criar_subcategoria` | Cria uma subcategoria numa categoria existente (ex.: Alimentação > Lanche) |
 | `listar_lancamentos` | Últimos lançamentos, para conferir e não duplicar |
 | `lancar_despesa` | Despesa à vista: conta, Pix, dinheiro ou 1x no cartão; opcionalmente num grupo ou numa fatura escolhida |
 | `lancar_receita` | Receita numa conta |
