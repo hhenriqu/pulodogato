@@ -767,8 +767,9 @@ export function consolidadoPorClasse(
   projetado?: Record<string, ValorProjetadoDoAtivo> | null
 ): Consolidado {
   const porTipo = new Map<AssetType, { valor: number; aplicado: number; ativos: number }>();
+  const abertas = posicoesAbertas(posicoes);
 
-  for (const p of posicoesAbertas(posicoes)) {
+  for (const p of abertas) {
     const proj = projetado ? projetado[p.asset_id] : undefined;
     const valor = proj ? proj.valor : p.current_value;
     const aplicado = proj ? proj.principal : p.total_invested;
