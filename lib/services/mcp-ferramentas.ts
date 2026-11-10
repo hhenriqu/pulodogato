@@ -29,6 +29,7 @@ import {
   ROTULO_TIPO,
   lancadoEmReais,
   posicoesAbertas,
+  projecaoQueVale,
   valorDaCarteiraPorConta,
   type AssetType,
   type Posicao,
@@ -467,7 +468,7 @@ async function listarInvestimentos(ctx: ContextoDaFerramenta): Promise<Resultado
   const ativoPorId = new Map(lida.assets.map((a) => [a.id, a]));
   for (const p of posicoesAbertas(lida.positions)) {
     const a = ativoPorId.get(p.asset_id);
-    const proj = projetado ? projetado[p.asset_id] : undefined;
+    const proj = projecaoQueVale(p, projetado);
     const valor = proj ? proj.valor : p.current_value;
     const conta = a?.account_id ? nomeDaConta.get(a.account_id) ?? "conta arquivada" : "sem conta";
     const qtd = lancadoEmReais(p.type) ? "" : ` · ${p.total_quantity} cotas`;

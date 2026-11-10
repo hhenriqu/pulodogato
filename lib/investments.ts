@@ -609,6 +609,28 @@ export interface ValorProjetadoDoAtivo {
   rendeu: boolean;
 }
 
+/**
+ * A projecao que vale para esta posicao, ou `undefined` quando o valor deve
+ * sair do `current_value`.
+ *
+ * Renda fixa COM projecao (indexador, prazo e boletim) vale pelo projetado e o
+ * preco informado e ignorado -- ver o cabecalho de lib/renda-fixa.ts. Mas
+ * quando a projecao NAO saiu (sem indexador, IPCA, Banco Central fora) e a
+ * pessoa informou quanto o papel vale hoje (`valor_atual`, gravado como
+ * `current_price` sobre o aplicado), esse preco e a verdade possivel e nao ha
+ * rendimento projetado para contar duas vezes. Cair para o custo ali jogava
+ * fora o numero que a pessoa digitou do extrato.
+ */
+export function projecaoQueVale(
+  p: Posicao,
+  projetado?: Record<string, ValorProjetadoDoAtivo> | null
+): ValorProjetadoDoAtivo | undefined {
+  const proj = projetado ? projetado[p.asset_id] : undefined;
+  if (!proj) return undefined;
+  if (!proj.rendeu && p.has_price) return undefined;
+  return proj;
+}
+
 /** O que uma conta vale em carteira -- uma linha por `account_id`. */
 export interface CarteiraDaConta {
   /** `investment_assets.account_id` (059). `null` = ativo sem conta atrelada. */
@@ -675,7 +697,7 @@ export function valorDaCarteiraPorConta(
       porConta.set(mapKey, linha);
     }
 
-    const proj = projetado ? projetado[p.asset_id] : undefined;
+    const proj = projecaoQueVale(p, projetado);
 
     if (proj) {
       // Renda fixa: o preco informado e IGNORADO e o valor e `principal +
@@ -770,7 +792,7 @@ export function consolidadoPorClasse(
   const abertas = posicoesAbertas(posicoes);
 
   for (const p of abertas) {
-    const proj = projetado ? projetado[p.asset_id] : undefined;
+    const proj = projecaoQueVale(p, projetado);
     const valor = proj ? proj.valor : p.current_value;
     const aplicado = proj ? proj.principal : p.total_invested;
     const atual = porTipo.get(p.type) || { valor: 0, aplicado: 0, ativos: 0 };
