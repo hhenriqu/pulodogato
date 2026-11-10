@@ -59,7 +59,7 @@ import {
 } from "@/components/ui/select";
 import { AlertTriangle, Plus } from "lucide-react";
 import { proximaMovimentacaoDeCarteira } from "@/lib/retorno-do-lancamento";
-import type { AssetType, InvestmentKind } from "@/lib/investments";
+import { lancadoEmReais, type AssetType, type InvestmentKind } from "@/lib/investments";
 
 /** O que o seletor de ativo precisa saber de cada ativo. */
 export interface AtivoParaLancar {
@@ -170,7 +170,8 @@ export function ehAtivoDeRendaFixa(
   ativos: AtivoParaLancar[],
   assetId: string
 ): boolean {
-  return ativos.some((a) => a.id === assetId && a.type === "fixed_income");
+  // Fundo entra pelo mesmo caminho em reais (ver `lancadoEmReais`).
+  return ativos.some((a) => a.id === assetId && lancadoEmReais(a.type));
 }
 
 interface CamposDaMovimentacaoProps {
@@ -435,7 +436,10 @@ export function ModalDeMovimentacao({
     <ModalDeLancamento
       titulo="Lançar movimentação"
       descricao={
-        ehRendaFixa
+        ehRendaFixa &&
+        ativos.some((a) => a.id === valores.assetId && a.type === "fund")
+          ? "Fundo é lançado em reais: informe o valor aplicado e a data. O valor de hoje você informa no preço atual do fundo, na lista de ativos."
+          : ehRendaFixa
           ? "Renda fixa não tem cota: informe o valor em reais e a data. O rendimento não entra aqui — ele é calculado pelo indexador do papel."
           : "Compra, venda ou provento de um ativo da sua carteira. Em provento, a quantidade são as cotas que receberam e o valor é o valor por cota."
       }

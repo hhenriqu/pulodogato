@@ -45,9 +45,11 @@
 // =====================================================
 
 import {
+  consolidadoPorClasse,
   posicoesAbertas,
   valorDaCarteiraPorConta,
   type CarteiraDaConta,
+  type Consolidado,
   type Posicao,
 } from "@/lib/investments";
 import { valorProjetadoPorAtivo, type Projecao } from "@/lib/renda-fixa";
@@ -186,4 +188,20 @@ export function carteiraDaConta(
 ): CarteiraDaConta | null {
   if (!accountId) return null;
   return composta.porConta.filter((l) => l.account_id === accountId)[0] ?? null;
+}
+
+/**
+ * O consolidado por classe (Acoes, FIIs, Renda Fixa, Fundos, Internacional),
+ * com a renda fixa pelo projetado -- a mesma juncao de `comporCarteiraPorConta`,
+ * agrupada por tipo. Sem o rendimento (`rendaFixa` nulo), a renda fixa entra
+ * pelo aplicado, e o bloco por conta ja avisa disso.
+ */
+export function comporConsolidado(
+  carteira: CarteiraDaRota | null | undefined,
+  rendaFixa: RendaFixaDaRota | null | undefined
+): Consolidado {
+  const projetado = rendaFixa
+    ? valorProjetadoPorAtivo(rendaFixa.projections || [])
+    : null;
+  return consolidadoPorClasse(carteira?.positions || [], projetado);
 }

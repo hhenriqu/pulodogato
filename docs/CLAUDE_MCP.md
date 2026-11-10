@@ -46,6 +46,9 @@ claude mcp add --transport http pulodogato https://pulodogato.hmoraes.com.br/api
 | `lancar_despesa` | Despesa à vista: conta, Pix, dinheiro ou 1x no cartão; opcionalmente num grupo ou numa fatura escolhida |
 | `lancar_receita` | Receita numa conta |
 | `lancar_compra_parcelada` | Compra parcelada no cartão: valor total ou da parcela, N parcelas, a partir da fatura da compra (ou de uma escolhida) |
+| `listar_investimentos` | Carteira consolidada: total, por classe, por conta/corretora e cada ativo com o valor de hoje |
+| `criar_conta_de_investimento` | Cria uma conta do tipo investimento (corretora ou banco) |
+| `lancar_investimento` | Aplicação na carteira: renda fixa e fundo em reais (com indexador ou valor atual), ação/FII/internacional em cotas; cadastra o ativo se for novo |
 
 Conta, cartão, categoria e grupo são achados pelo **nome** (sem acento e sem
 caixa). Se o nome bater com mais de um, a ferramenta devolve as opções e o

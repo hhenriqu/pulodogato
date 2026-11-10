@@ -42,7 +42,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { AlertTriangle, Calculator, Scale } from "lucide-react";
 import { formatCurrency, formatPercentage } from "@/lib/utils";
-import type { AssetType, Posicao } from "@/lib/investments";
+import { lancadoEmReais, type AssetType, type Posicao } from "@/lib/investments";
 import {
   ROTULO_DA_SITUACAO,
   ROTULO_DO_PESO,
@@ -165,7 +165,7 @@ export function RebalanceamentoDaCarteira({
         valorAtual: p?.current_value ?? 0,
         resultado: p?.profit_loss ?? 0,
         variacao: p?.profit_loss_percentage ?? 0,
-        semCota: a.type === "fixed_income",
+        semCota: lancadoEmReais(a.type),
       };
     });
   }, [ativos, posicoes, edicao]);

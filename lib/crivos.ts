@@ -473,6 +473,7 @@ export function avaliarCrivo(
 export type MotivoForaDosCrivos =
   | "fii"
   | "renda_fixa"
+  | "fundo"
   | "internacional"
   | "sem_fundamento"
   | "fonte_indisponivel";
@@ -488,6 +489,8 @@ export const EXPLICACAO_FORA_DOS_CRIVOS: Record<MotivoForaDosCrivos, string> = {
   fii: "Fundo imobiliário não publica balanço de companhia na CVM, então ROE, dívida e margem não existem para este ativo. A cotação e o patrimônio dele continuam normais na carteira.",
   renda_fixa:
     "Renda fixa não tem balanço de companhia: estes critérios são de resultado de empresa e não se aplicam a este ativo.",
+  fundo:
+    "Fundo de investimento não tem balanço de companhia: estes critérios são de resultado de empresa e não se aplicam a este ativo.",
   internacional:
     "Ativo internacional fica fora destes critérios. A fonte é a DFP anual da CVM, que cobre companhia brasileira listada.",
   sem_fundamento:
@@ -501,7 +504,7 @@ export interface AtivoParaCrivos {
   id: string;
   symbol: string;
   name: string;
-  type: "stock" | "fii" | "fixed_income" | "international";
+  type: "stock" | "fii" | "fixed_income" | "fund" | "international";
 }
 
 export interface AtivoComCrivos {
@@ -526,6 +529,7 @@ const TIPO_FORA_DOS_CRIVOS: Partial<
 > = {
   fii: "fii",
   fixed_income: "renda_fixa",
+  fund: "fundo",
   international: "internacional",
 };
 

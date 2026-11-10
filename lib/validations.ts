@@ -21,7 +21,7 @@ export const AssetSchema = z.object({
     .string()
     .min(1, "Nome é obrigatório")
     .max(100, "Nome deve ter no máximo 100 caracteres"),
-  type: z.enum(["stock", "fii", "fixed_income", "international"], {
+  type: z.enum(["stock", "fii", "fixed_income", "fund", "international"], {
     message: "Tipo de ativo é obrigatório",
   }),
   currency: z

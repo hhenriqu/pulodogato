@@ -31,7 +31,8 @@ const INSTRUCOES =
   "Ferramentas do Pulo do Gato, o app de finanças da pessoa. Para lançar, descubra os nomes com " +
   "listar_contas e listar_categorias (uma vez por conversa basta) e use os nomes exatos. Valores são " +
   "sempre positivos, em reais; a data padrão é hoje. Se a conta ou a categoria não estiver clara, " +
-  "pergunte em vez de chutar. Depois de lançar, diga o que foi gravado.";
+  "pergunte em vez de chutar. Depois de lançar, diga o que foi gravado. Para investimentos, " +
+  "confira a carteira com listar_investimentos antes de lançar, para não duplicar.";
 
 interface Pedido {
   jsonrpc?: string;

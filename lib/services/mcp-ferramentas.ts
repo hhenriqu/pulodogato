@@ -25,6 +25,16 @@ import {
 } from "@/lib/acesso-pelo-claude";
 import { categoriaEfetiva, type Categoria, type PreferenciaDeCategoria } from "@/lib/categorias";
 import { valorGravado, type TipoLancamento } from "@/lib/lancamento";
+import {
+  ROTULO_TIPO,
+  lancadoEmReais,
+  posicoesAbertas,
+  valorDaCarteiraPorConta,
+  type AssetType,
+  type Posicao,
+} from "@/lib/investments";
+import { comporConsolidado, type RendaFixaDaRota } from "@/lib/carteira-na-tela";
+import { valorProjetadoPorAtivo } from "@/lib/renda-fixa";
 import type { SessaoDaPessoa } from "@/lib/services/mcp-sessao";
 
 export interface ContextoDaFerramenta {
@@ -358,6 +368,258 @@ async function postarNaRota(
   return { ok: Boolean(resposta?.ok), corpo: json };
 }
 
+/** GET numa rota do app com o cookie da sessao da pessoa. */
+async function lerDaRota(
+  ctx: ContextoDaFerramenta,
+  caminho: string
+): Promise<{ ok: boolean; corpo: Record<string, unknown> }> {
+  let cookie: string;
+  try {
+    cookie = await ctx.sessao.cookiesDaSessao();
+  } catch {
+    return { ok: false, corpo: { error: "Não consegui abrir a sessão para chamar o app." } };
+  }
+  const resposta = await fetch(`${ctx.origem}${caminho}`, {
+    headers: { Cookie: cookie },
+    cache: "no-store",
+  }).catch(() => null);
+  const json = resposta ? ((await resposta.json().catch(() => ({}))) as Record<string, unknown>) : {};
+  return { ok: Boolean(resposta?.ok), corpo: json };
+}
+
+// ---------------------------------------------------------------------------
+// Investimentos -- pelas MESMAS rotas da tela de investimentos
+// ---------------------------------------------------------------------------
+
+interface AtivoDaRota {
+  id: string;
+  symbol: string;
+  name: string;
+  type: AssetType;
+  account_id?: string | null;
+  index_kind?: string | null;
+  index_percentage?: number | string | null;
+}
+
+interface CarteiraLida {
+  assets: AtivoDaRota[];
+  positions: Posicao[];
+  rendaFixa: RendaFixaDaRota | null;
+}
+
+async function carteiraDaPessoa(ctx: ContextoDaFerramenta): Promise<CarteiraLida | string> {
+  const [carteira, rendaFixa] = await Promise.all([
+    lerDaRota(ctx, "/api/investments"),
+    lerDaRota(ctx, "/api/investments/renda-fixa"),
+  ]);
+  if (!carteira.ok) return String(carteira.corpo.error ?? "Não consegui ler a carteira.");
+  return {
+    assets: (carteira.corpo.assets as AtivoDaRota[]) ?? [],
+    positions: (carteira.corpo.positions as Posicao[]) ?? [],
+    rendaFixa: rendaFixa.ok ? (rendaFixa.corpo as unknown as RendaFixaDaRota) : null,
+  };
+}
+
+const TIPO_PEDIDO: Record<string, AssetType> = {
+  acao: "stock",
+  fii: "fii",
+  renda_fixa: "fixed_income",
+  fundo: "fund",
+  internacional: "international",
+};
+
+/** Numero com virgula ou ponto; `null` se ausente, NaN se ilegivel. */
+function numeroOpcional(v: unknown): number | null {
+  if (v === undefined || v === null || v === "") return null;
+  if (v === 0 || v === "0") return 0;
+  return valorEmReais(v) ?? NaN;
+}
+
+async function listarInvestimentos(ctx: ContextoDaFerramenta): Promise<ResultadoDaFerramenta> {
+  const lida = await carteiraDaPessoa(ctx);
+  if (typeof lida === "string") return erro(lida);
+
+  const consolidado = comporConsolidado(lida, lida.rendaFixa);
+  if (consolidado.classes.length === 0) return { texto: "Nenhum investimento lançado ainda." };
+
+  const contas = await contasDaPessoa(ctx.sessao.supabase, ctx.sessao.userId);
+  const nomeDaConta = new Map(contas.map((c) => [c.id, c.nome]));
+  const contaPorAtivo: Record<string, string | null> = {};
+  for (const a of lida.assets) contaPorAtivo[a.id] = a.account_id ?? null;
+  const projetado = lida.rendaFixa ? valorProjetadoPorAtivo(lida.rendaFixa.projections || []) : null;
+
+  const linhas: string[] = [
+    `Total investido hoje: ${reais(consolidado.total)} (aplicado ${reais(consolidado.aplicado)}, rendimento ${reais(consolidado.rendimento)})`,
+    "",
+    "Por classe:",
+    ...consolidado.classes.map(
+      (c) => `- ${c.rotulo}: ${reais(c.valor)} (${c.percentual}%; aplicado ${reais(c.aplicado)})`
+    ),
+    "",
+    "Por conta:",
+    ...valorDaCarteiraPorConta(lida.positions, contaPorAtivo, projetado).map(
+      (l) =>
+        `- ${l.account_id ? nomeDaConta.get(l.account_id) ?? "Conta arquivada" : "Sem conta atrelada"}: ${reais(l.valor)} (${l.ativos} ativo(s))`
+    ),
+    "",
+    "Ativos:",
+  ];
+  const ativoPorId = new Map(lida.assets.map((a) => [a.id, a]));
+  for (const p of posicoesAbertas(lida.positions)) {
+    const a = ativoPorId.get(p.asset_id);
+    const proj = projetado ? projetado[p.asset_id] : undefined;
+    const valor = proj ? proj.valor : p.current_value;
+    const conta = a?.account_id ? nomeDaConta.get(a.account_id) ?? "conta arquivada" : "sem conta";
+    const qtd = lancadoEmReais(p.type) ? "" : ` · ${p.total_quantity} cotas`;
+    linhas.push(
+      `- ${p.symbol} (${ROTULO_TIPO[p.type] ?? p.type}; ${conta})${qtd}: aplicado ${reais(p.total_invested)}, hoje ${reais(valor)} id=${p.asset_id}`
+    );
+  }
+  if (!lida.rendaFixa) linhas.push("", "Aviso: o rendimento da renda fixa não veio agora; ela aparece pelo valor aplicado.");
+  return { texto: linhas.join("\n") };
+}
+
+async function criarContaDeInvestimento(ctx: ContextoDaFerramenta, args: Args): Promise<ResultadoDaFerramenta> {
+  const nome = texto(args.nome);
+  if (!nome) return erro("Informe o nome da conta (ex.: 'C6 Investimentos').");
+  const contas = await contasDaPessoa(ctx.sessao.supabase, ctx.sessao.userId);
+  const igual = contas.find((c) => normalizarNome(c.nome) === normalizarNome(nome));
+  if (igual) return { texto: `A conta "${igual.nome}" já existe (${igual.tipo}). id=${igual.id}` };
+
+  const { ok, corpo } = await postarNaRota(ctx, "/api/financial-accounts", {
+    name: nome,
+    account_type: "investment",
+    bank_name: texto(args.instituicao) || undefined,
+    icon: "trending-up",
+    color_hex: "#10B981",
+  });
+  if (!ok) return erro(String(corpo.error ?? "Não consegui criar a conta."));
+  const criada = (corpo.account ?? corpo.data) as { id?: string } | undefined;
+  return { texto: `Conta de investimento criada: ${nome}.${criada?.id ? ` id=${criada.id}` : ""}` };
+}
+
+async function lancarInvestimento(ctx: ContextoDaFerramenta, args: Args): Promise<ResultadoDaFerramenta> {
+  const tipo = TIPO_PEDIDO[texto(args.tipo)];
+  if (!tipo) return erro(`tipo deve ser um de: ${Object.keys(TIPO_PEDIDO).join(", ")}.`);
+  const codigo = texto(args.codigo).toUpperCase();
+  if (!codigo || codigo.length > 16) return erro("Informe o código do ativo (até 16 caracteres, ex.: 'CDB-C6' ou 'PETR4').");
+  const data = texto(args.data) || hojeEmSaoPaulo();
+  if (!dataValida(data)) return erro(`A data deve ser 'AAAA-MM-DD' (veio "${data}").`);
+  const emReais = lancadoEmReais(tipo);
+
+  // O par que vai para `investment_transactions` -- a mesma convencao da tela
+  // (`lancamentoDeCarteiraParaGravar`): em reais, quantity = valor e preco 1.
+  let quantidade: number;
+  let preco: number;
+  if (emReais) {
+    const valor = valorEmReais(args.valor);
+    if (valor === null) return erro("Informe o valor aplicado, em reais, maior que zero.");
+    quantidade = valor;
+    preco = 1;
+  } else {
+    quantidade = Number(args.quantidade);
+    const p = valorEmReais(args.preco);
+    if (!Number.isFinite(quantidade) || quantidade <= 0) return erro("Informe a quantidade de cotas, maior que zero.");
+    if (p === null) return erro("Informe o preço por cota, em reais.");
+    preco = p;
+  }
+  const taxas = numeroOpcional(args.taxas);
+  if (taxas !== null && (!Number.isFinite(taxas) || taxas < 0)) return erro("taxas deve ser um valor em reais.");
+  const valorAtual = numeroOpcional(args.valor_atual);
+  if (valorAtual !== null && (!Number.isFinite(valorAtual) || valorAtual <= 0)) {
+    return erro("valor_atual deve ser um valor em reais maior que zero.");
+  }
+  if (valorAtual !== null && !emReais) {
+    return erro("valor_atual vale só para renda fixa e fundo. Para ação e FII, o preço é cotado todo dia útil.");
+  }
+
+  const lida = await carteiraDaPessoa(ctx);
+  if (typeof lida === "string") return erro(lida);
+  let ativo = lida.assets.find((a) => a.symbol === codigo);
+  let criouAtivo = false;
+  let contaNome = "sem conta";
+
+  if (ativo) {
+    if (ativo.type !== tipo) {
+      return erro(`${codigo} já está na carteira como ${ROTULO_TIPO[ativo.type]}, não como ${ROTULO_TIPO[tipo]}.`);
+    }
+  } else {
+    const nome = texto(args.nome);
+    if (!nome) return erro(`${codigo} ainda não está na carteira: informe também o nome do ativo.`);
+
+    let accountId: string | null = null;
+    const pedidoDaConta = texto(args.conta);
+    if (pedidoDaConta) {
+      const contas = (await contasDaPessoa(ctx.sessao.supabase, ctx.sessao.userId)).filter((c) => c.tipo === "investment");
+      const conta = acharPorNome(contas, pedidoDaConta);
+      if (!conta.ok) return erro(fraseDoNaoAchado("conta de investimento", pedidoDaConta, conta));
+      accountId = conta.item.id;
+      contaNome = conta.item.nome;
+    }
+
+    const corpoDoAtivo: Record<string, unknown> = {
+      symbol: codigo,
+      name: nome,
+      type: tipo,
+      currency: "BRL",
+      account_id: accountId,
+    };
+    if (valorAtual !== null) {
+      corpoDoAtivo.currentPrice = Number((valorAtual / quantidade).toFixed(8));
+    }
+    if (tipo === "fixed_income") {
+      Object.assign(corpoDoAtivo, {
+        fixedIncomeProduct: texto(args.produto) || null,
+        indexKind: texto(args.indexador) || null,
+        indexPercentage: args.percentual ?? null,
+        spreadAnnual: args.taxa_ao_ano ?? null,
+        appliedDate: data,
+        maturityDate: texto(args.vencimento) || null,
+      });
+    }
+    const criado = await postarNaRota(ctx, "/api/investments/assets", corpoDoAtivo);
+    if (!criado.ok) return erro(String(criado.corpo.error ?? "Não consegui cadastrar o ativo."));
+    ativo = criado.corpo.asset as AtivoDaRota;
+    criouAtivo = true;
+  }
+
+  const mov = await postarNaRota(ctx, "/api/investments/transactions", {
+    assetId: ativo.id,
+    kind: "buy",
+    quantity: quantidade,
+    unitPrice: preco,
+    fees: taxas ?? 0,
+    tradeDate: data,
+    notes: texto(args.observacao) || null,
+  });
+  if (!mov.ok) {
+    return erro(
+      `${criouAtivo ? `Cadastrei ${codigo}, mas n` : "N"}ão consegui lançar a aplicação: ${String(mov.corpo.error ?? "erro")}.`
+    );
+  }
+
+  // Ativo que ja existia e ganhou `valor_atual`: o fator e sobre o aplicado
+  // TOTAL depois deste aporte, nao so sobre ele.
+  if (!criouAtivo && valorAtual !== null) {
+    const anterior = lida.positions.find((p) => p.asset_id === ativo!.id)?.total_invested ?? 0;
+    const aplicado = anterior + quantidade * preco + (taxas ?? 0);
+    const r = await fetch(`${ctx.origem}/api/investments/assets/${ativo.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Cookie: await ctx.sessao.cookiesDaSessao() },
+      body: JSON.stringify({ currentPrice: Number((valorAtual / aplicado).toFixed(8)) }),
+      cache: "no-store",
+    }).catch(() => null);
+    if (!r?.ok) return { texto: `Aplicação lançada em ${codigo}, mas não consegui gravar o valor atual.` };
+  }
+
+  const quanto = emReais ? reais(quantidade) : `${quantidade} cotas a ${reais(preco)}`;
+  return {
+    texto:
+      `${criouAtivo ? `Ativo cadastrado (${ROTULO_TIPO[tipo]}, ${contaNome}) e a` : "A"}plicação lançada: ` +
+      `${codigo}, ${quanto} em ${data}${valorAtual !== null ? `, valendo hoje ${reais(valorAtual)}` : ""}. id=${ativo.id}`,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Compra parcelada no cartao
 // ---------------------------------------------------------------------------
@@ -644,6 +906,69 @@ export const FERRAMENTAS: Ferramenta[] = [
     executar: lancarParcelada,
   },
 ];
+
+FERRAMENTAS.push(
+  {
+    name: "listar_investimentos",
+    title: "Listar investimentos",
+    description:
+      "Mostra a carteira de investimentos consolidada: total, por classe (Ações, FIIs, Renda Fixa, Fundos, Internacional), por conta/corretora e cada ativo com o valor de hoje. Use antes de lançar para não duplicar.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    annotations: { readOnlyHint: true },
+    executar: (ctx) => listarInvestimentos(ctx),
+  },
+  {
+    name: "criar_conta_de_investimento",
+    title: "Criar conta de investimento",
+    description:
+      "Cria uma conta do tipo investimento (corretora ou banco, ex.: 'C6 Investimentos'), onde os ativos ficam atrelados. Se já existir uma com o mesmo nome, devolve a existente.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        nome: { type: "string", description: "Nome da conta, como vai aparecer no app." },
+        instituicao: { type: "string", description: "Opcional. Nome do banco ou corretora." },
+      },
+      required: ["nome"],
+      additionalProperties: false,
+    },
+    annotations: { destructiveHint: false, idempotentHint: true },
+    executar: criarContaDeInvestimento,
+  },
+  {
+    name: "lancar_investimento",
+    title: "Lançar aplicação em investimento",
+    description:
+      "Lança uma aplicação (compra) na carteira de investimentos. Se o código ainda não existe, cadastra o ativo na conta de investimento informada. Renda fixa e fundo são lançados em reais (valor); ação, FII e internacional em cotas (quantidade e preço). Confira antes com listar_investimentos.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tipo: { type: "string", enum: Object.keys(TIPO_PEDIDO), description: "Classe do ativo." },
+        codigo: { type: "string", description: "Código curto e único do ativo na carteira (ex.: 'PETR4', 'CDB-C6', 'MP-COFRINHO')." },
+        nome: { type: "string", description: "Nome do ativo. Obrigatório quando o código é novo." },
+        conta: { type: "string", description: "Conta de investimento (corretora/banco) onde o ativo fica, para ativo novo." },
+        valor: { type: ["number", "string"], description: "Renda fixa e fundo: valor aplicado em reais." },
+        quantidade: { type: "number", description: "Ação, FII, internacional: quantidade de cotas." },
+        preco: { type: ["number", "string"], description: "Ação, FII, internacional: preço por cota em reais." },
+        taxas: { type: ["number", "string"], description: "Opcional. Corretagem e emolumentos." },
+        valor_atual: {
+          type: ["number", "string"],
+          description: "Opcional, renda fixa sem indexador e fundo: quanto a posição vale hoje (o app guarda o fator sobre o aplicado).",
+        },
+        produto: { type: "string", description: "Opcional, renda fixa: cdb, rdb, lc, lci, lca, cri, cra, debenture, debenture_incentivada, poupanca, outro." },
+        indexador: { type: "string", description: "Opcional, renda fixa: cdi, selic, ipca, igpm, prefixado, poupanca." },
+        percentual: { type: "number", description: "Opcional, renda fixa: percentual do indexador (120 = 120% do CDI)." },
+        taxa_ao_ano: { type: "number", description: "Opcional, renda fixa: taxa ao ano (IPCA + 6 -> 6; prefixado 13% -> 13)." },
+        vencimento: { type: "string", description: "Opcional, renda fixa: 'AAAA-MM-DD'." },
+        data: { type: "string", description: "Opcional. 'AAAA-MM-DD' da aplicação. Padrão: hoje." },
+        observacao: { type: "string", description: "Opcional." },
+      },
+      required: ["tipo", "codigo"],
+      additionalProperties: false,
+    },
+    annotations: { destructiveHint: false, idempotentHint: false },
+    executar: lancarInvestimento,
+  }
+);
 
 export function acharFerramenta(nome: unknown): Ferramenta | undefined {
   return FERRAMENTAS.find((f) => f.name === nome);
