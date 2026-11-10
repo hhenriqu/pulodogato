@@ -2740,7 +2740,7 @@ jobs:
           #    --, e esta aqui para provar que o oraculo esta ligado no que a
           #    issue pediu.
           node /tmp/mutar-aporte.mjs $CAMPOS \
-            '  return ativos.some((a) => a.id === assetId && a.type === "fixed_income");' \
+            '  return ativos.some((a) => a.id === assetId && lancadoEmReais(a.type));' \
             '  return false;'
           reprovaTela "Verde com o CDB pedindo quantidade e preco unitario."
 
@@ -2749,7 +2749,7 @@ jobs:
           #    aporte (R$)" para lancar uma compra de PETR4 -- e o campo de
           #    quantidade de acoes desaparece do app.
           node /tmp/mutar-aporte.mjs $CAMPOS \
-            '  return ativos.some((a) => a.id === assetId && a.type === "fixed_income");' \
+            '  return ativos.some((a) => a.id === assetId && lancadoEmReais(a.type));' \
             '  return true;'
           reprovaTela "Verde com a tela de acao pedindo valor de aporte."
 
