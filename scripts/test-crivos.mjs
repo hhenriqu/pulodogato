@@ -577,18 +577,23 @@ test("FII na carteira mostra a explicacao, e nem um campo vazio nem um zero", ()
   assert.ok(t.includes("cotação"), "falta dizer que a cotacao segue normal");
 });
 
-test("os cinco motivos de ficar fora dos crivos tem textos DIFERENTES", () => {
+test("os seis motivos de ficar fora dos crivos tem textos DIFERENTES", () => {
   // Eles pedem acoes opostas: FII nunca vai ter esse dado, balanco nao importado
   // pode ter amanha, fonte indisponivel e problema nosso. Um texto unico para os
   // tres faria a pessoa esperar por algo que nao vem -- ou desistir do que vem.
   const textos = Object.values(EXPLICACAO_FORA_DOS_CRIVOS);
-  assert.equal(new Set(textos).size, 5);
+  assert.equal(new Set(textos).size, 6);
   for (const frase of textos) {
     assert.ok(frase.length > 40, `"${frase}" e curta demais para explicar`);
   }
   // As duas que podem ser confundidas com reprovacao dizem que nao sao.
   assert.ok(EXPLICACAO_FORA_DOS_CRIVOS.sem_fundamento.includes("não é reprovação"));
   assert.ok(EXPLICACAO_FORA_DOS_CRIVOS.fonte_indisponivel.includes("não é reprovação"));
+});
+
+test("fundo fica fora dos crivos com o motivo proprio (086)", () => {
+  const blocos = montarCrivosDaCarteira([ativo("C6-FUNDOS", "fund")], [], PADRAO);
+  assert.equal(blocos[0].foraDosCrivos, "fundo");
 });
 
 test("acao sem balanco importado NAO recebe o texto do FII", () => {
