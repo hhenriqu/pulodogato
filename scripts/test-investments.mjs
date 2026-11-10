@@ -704,6 +704,35 @@ test("projecao que nao saiu conta em semRendimento e vale o principal", () => {
   assert.equal(a.semPreco, 0, "nao e falta de preco: e falta de boletim");
 });
 
+test("renda fixa SEM projecao e COM valor informado vale o informado", () => {
+  // O "Renda Fixa C6" do Helio: R$ 50.600 aplicados, sem indexador, e o
+  // extrato dizendo R$ 52.684,06 hoje. O MCP grava o fator sobre o aplicado em
+  // `current_price`. Sem projecao nao ha rendimento para contar duas vezes, e
+  // cair para o custo jogava fora o numero do extrato.
+  const posicoes = calcularPosicoes(
+    [ativo("rf", "C6-RENDA-FIXA", "fixed_income", 52684.06 / 50600)],
+    [lanc("rf", "buy", 50600, 1, "2026-11-10")]
+  );
+  const semIndexador = {
+    rf: { valor: 50600, valorLiquido: 50600, principal: 50600, rendimento: 0, rendeu: false },
+  };
+
+  const [linha] = valorDaCarteiraPorConta(posicoes, { rf: "c6" }, semIndexador);
+  perto(linha.valor, 52684.06, "o valor do extrato");
+  perto(linha.principal, 50600, "o aplicado");
+  assert.equal(linha.semRendimento, 0, "nao ha o que avisar: o valor foi informado");
+
+  const c = consolidadoPorClasse(posicoes, semIndexador);
+  perto(c.total, 52684.06, "consolidado pelo informado");
+  perto(c.rendimento, 2084.06, "rendimento do extrato");
+
+  // Com projecao que SAIU o preco informado continua ignorado.
+  const rendeu = {
+    rf: { valor: 50700, valorLiquido: 50680, principal: 50600, rendimento: 100, rendeu: true },
+  };
+  perto(consolidadoPorClasse(posicoes, rendeu).total, 50700, "projetado vence o informado");
+});
+
 test("a posicao ZERADA nao entra no valor da conta", () => {
   // Um CDB resgatado por inteiro nao e mais patrimonio. O resultado realizado
   // dele continua no resumo da carteira, que e outra pergunta.
