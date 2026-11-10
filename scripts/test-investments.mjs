@@ -53,6 +53,8 @@ const {
   quantidadeDisponivel,
   lancamentoDeCarteiraParaGravar,
   valorDaCarteiraPorConta,
+  consolidadoPorClasse,
+  lancadoEmReais,
   PRECO_UNITARIO_DA_RENDA_FIXA,
   ROTULO_TIPO,
 } = await import("../.tmp-investments/investments.js");
@@ -741,4 +743,69 @@ test("duas contas saem em ordem determinista, cada uma com o seu total", () => {
 
 test("carteira vazia devolve lista vazia, e nao uma linha de zeros", () => {
   assert.deepEqual(valorDaCarteiraPorConta([], {}, null), []);
+});
+
+// =====================================================
+// Consolidado por classe (renda fixa + fundos + acoes)
+// =====================================================
+// A mao, com a carteira do print do C6:
+//   renda fixa: aplicado 50.600, projetado 52.684,06 (rendimento 2.084,06)
+//   fundo:      aplicado 5.213,46 em reais, fator 5.215,51/5.213,46 -> 5.215,51
+//   acao:       100 x 132,6725 = 13.267,25 aplicado, preco 130,9589 -> 13.095,89
+//   total = 52.684,06 + 5.215,51 + 13.095,89 = 70.995,46
+test("consolidado: renda fixa pelo projetado, fundo e acao pelo valor de hoje", () => {
+  const fator = 5215.51 / 5213.46;
+  const posicoes = calcularPosicoes(
+    [
+      ativo("rf", "C6-RF", "fixed_income"),
+      ativo("fu", "C6-FUNDOS", "fund", fator),
+      ativo("ac", "PETR4", "stock", 130.9589),
+    ],
+    [
+      lanc("rf", "buy", 50600, 1, "2026-01-10"),
+      lanc("fu", "buy", 5213.46, 1, "2026-01-10"),
+      lanc("ac", "buy", 100, 132.6725, "2026-01-10"),
+    ]
+  );
+  const projetado = {
+    rf: { valor: 52684.06, valorLiquido: 52371.45, principal: 50600, rendimento: 2084.06, rendeu: true },
+  };
+
+  const c = consolidadoPorClasse(posicoes, projetado);
+  perto(c.total, 70995.46, "total");
+  perto(c.aplicado, 50600 + 5213.46 + 13267.25, "aplicado");
+  perto(c.rendimento, 2084.06 + 2.05 - 171.36, "rendimento");
+
+  assert.deepEqual(c.classes.map((l) => l.rotulo), ["Renda Fixa", "Ações", "Fundos"]);
+  perto(c.classes[0].rendimento, 2084.06, "rendimento da renda fixa");
+  perto(c.classes[2].valor, 5215.51, "fundos");
+  perto(c.classes[1].rendimento, -171.36, "acoes");
+  perto(c.classes.reduce((s, l) => s + l.percentual, 0), 100, "as classes somam 100%");
+
+  // O total por classe e o total por conta sao a mesma conta.
+  const porConta = valorDaCarteiraPorConta(posicoes, { rf: "c6", fu: "c6", ac: null }, projetado);
+  perto(porConta.reduce((s, l) => s + l.valor, 0), c.total, "por conta == por classe");
+});
+
+test("consolidado: sem projecao a renda fixa entra pelo custo, e vazio da zeros", () => {
+  const posicoes = calcularPosicoes(
+    [ativo("rf", "CDB", "fixed_income")],
+    [lanc("rf", "buy", 1000, 1, "2026-01-10")]
+  );
+  const c = consolidadoPorClasse(posicoes, null);
+  perto(c.total, 1000, "pelo custo");
+  perto(c.rendimento, 0, "sem rendimento");
+
+  const vazio = consolidadoPorClasse([], null);
+  assert.deepEqual(vazio, { total: 0, aplicado: 0, rendimento: 0, rendimentoPercentual: 0, classes: [] });
+});
+
+test("fundo e renda fixa sao lancados em reais; acao, FII e internacional em cotas", () => {
+  assert.equal(lancadoEmReais("fixed_income"), true);
+  assert.equal(lancadoEmReais("fund"), true);
+  assert.equal(lancadoEmReais("stock"), false);
+  assert.equal(lancadoEmReais("fii"), false);
+  assert.equal(lancadoEmReais("international"), false);
+  assert.equal(lancadoEmReais(undefined), false);
+  assert.equal(ROTULO_TIPO.fund, "Fundos");
 });

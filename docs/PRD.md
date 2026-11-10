@@ -214,7 +214,16 @@ Bruto, descontos em folha e líquido — o lançamento gerado é o **líquido**.
 ### Investimentos 🚧
 
 `investment_assets` e `investment_transactions`: registro de ativos e operações
-para compor o patrimônio. Sem cálculo de rentabilidade consolidada.
+para compor o patrimônio.
+
+**Classes e consolidado** (migration 086): cinco classes de ativo, Ações, FIIs,
+Renda Fixa, Fundos e Internacional. Renda fixa e fundos são lançados **em
+reais** (valor aplicado), não em cotas. O topo da tela mostra o consolidado
+("Minha carteira"): total de hoje, aplicado e rendimento bruto, e uma linha por
+classe com a fatia no total. Renda fixa com indexador entra pelo valor
+projetado (CDI/IPCA); fundo e renda fixa sem indexador, pelo valor atual que o
+usuário informa; ações e FIIs, pela cotação. O mesmo total aparece na carteira
+por conta.
 
 **Cotação** (migration 074): ações e FIIs em BRL têm o preço atualizado por um
 cron diário (dias úteis, depois do fechamento da B3) pela brapi, no plano

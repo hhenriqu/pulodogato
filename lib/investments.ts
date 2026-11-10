@@ -79,7 +79,7 @@
 // e o certo neste modelo: o rendimento ja esta sendo contado do outro lado, e
 // soma-lo aqui tambem seria o contar duas vezes.
 
-export type AssetType = "stock" | "fii" | "fixed_income" | "international";
+export type AssetType = "stock" | "fii" | "fixed_income" | "fund" | "international";
 export type InvestmentKind = "buy" | "sell" | "dividend";
 
 /** Linha de public.investment_assets, como o PostgREST devolve. */
@@ -168,6 +168,7 @@ export const ROTULO_TIPO: Record<AssetType, string> = {
   stock: "Ações",
   fii: "FIIs",
   fixed_income: "Renda Fixa",
+  fund: "Fundos",
   international: "Internacional",
 };
 
@@ -175,8 +176,26 @@ export const TIPOS_DE_ATIVO: AssetType[] = [
   "stock",
   "fii",
   "fixed_income",
+  "fund",
   "international",
 ];
+
+/**
+ * Tipos lancados EM REAIS, e nao em cotas (HMO-439, estendido aos fundos).
+ *
+ * Renda fixa nao tem cota; fundo tem, mas quem aplica ve o extrato em reais e
+ * nao sabe a quantidade de cotas de cabeca. Os dois gravam `quantity = valor do
+ * aporte` e `unit_price = 1` (ver `lancamentoDeCarteiraParaGravar`), e o preco
+ * atual, quando informado, e o FATOR sobre o aplicado (valor de hoje / valor
+ * aplicado). A diferenca entre os dois e so a projecao: renda fixa com
+ * indexador rende sozinha (lib/renda-fixa.ts); fundo depende do valor que a
+ * pessoa informa, como uma acao sem cotacao.
+ */
+export const TIPOS_LANCADOS_EM_REAIS: AssetType[] = ["fixed_income", "fund"];
+
+export function lancadoEmReais(tipo: string | null | undefined): boolean {
+  return TIPOS_LANCADOS_EM_REAIS.some((t) => t === tipo);
+}
 
 /**
  * `numeric` do Postgres chega como STRING no supabase-js, para nao perder
@@ -707,4 +726,84 @@ export function valorDaCarteiraPorConta(
   );
 
   return solto ? comConta.concat([solto]) : comConta;
+}
+
+// ---------------------------------------------------------------------------
+// O CONSOLIDADO POR CLASSE
+// ---------------------------------------------------------------------------
+// "Quanto eu tenho em renda fixa, em fundos, em acoes" -- o quadro "Minha
+// carteira" das corretoras. A regra de valor e a MESMA de
+// `valorDaCarteiraPorConta` (renda fixa pelo projetado quando ha projecao, o
+// resto pelo `current_value`), so que agrupada por TIPO em vez de por conta.
+// As duas somadas por inteiro dao o mesmo total, e e isso que mantem o topo da
+// tela e o bloco por conta dizendo o mesmo numero.
+
+export interface ClasseConsolidada {
+  tipo: AssetType;
+  rotulo: string;
+  /** O valor de hoje (renda fixa pelo projetado). */
+  valor: number;
+  /** O custo das posicoes abertas da classe. */
+  aplicado: number;
+  /** `valor - aplicado`: o rendimento bruto da classe. */
+  rendimento: number;
+  /** Fatia da classe no total, 0-100. */
+  percentual: number;
+  ativos: number;
+}
+
+export interface Consolidado {
+  total: number;
+  aplicado: number;
+  rendimento: number;
+  /** `rendimento / aplicado * 100`; 0 sem aplicado. */
+  rendimentoPercentual: number;
+  /** Uma linha por classe que tem posicao aberta, da maior para a menor. */
+  classes: ClasseConsolidada[];
+}
+
+export function consolidadoPorClasse(
+  posicoes: Posicao[],
+  projetado?: Record<string, ValorProjetadoDoAtivo> | null
+): Consolidado {
+  const porTipo = new Map<AssetType, { valor: number; aplicado: number; ativos: number }>();
+
+  for (const p of posicoesAbertas(posicoes)) {
+    const proj = projetado ? projetado[p.asset_id] : undefined;
+    const valor = proj ? proj.valor : p.current_value;
+    const aplicado = proj ? proj.principal : p.total_invested;
+    const atual = porTipo.get(p.type) || { valor: 0, aplicado: 0, ativos: 0 };
+    atual.valor += valor;
+    atual.aplicado += aplicado;
+    atual.ativos++;
+    porTipo.set(p.type, atual);
+  }
+
+  let total = 0;
+  let aplicado = 0;
+  for (const linha of Array.from(porTipo.values())) {
+    total += linha.valor;
+    aplicado += linha.aplicado;
+  }
+
+  const classes: ClasseConsolidada[] = Array.from(porTipo.entries())
+    .map(([tipo, l]) => ({
+      tipo,
+      rotulo: ROTULO_TIPO[tipo] || tipo,
+      valor: arredondar(l.valor),
+      aplicado: arredondar(l.aplicado),
+      rendimento: arredondar(l.valor - l.aplicado),
+      percentual: total > 0 ? arredondar((l.valor / total) * 100) : 0,
+      ativos: l.ativos,
+    }))
+    .sort((a, b) => b.valor - a.valor);
+
+  return {
+    total: arredondar(total),
+    aplicado: arredondar(aplicado),
+    rendimento: arredondar(total - aplicado),
+    rendimentoPercentual:
+      aplicado > 0 ? arredondar(((total - aplicado) / aplicado) * 100) : 0,
+    classes,
+  };
 }

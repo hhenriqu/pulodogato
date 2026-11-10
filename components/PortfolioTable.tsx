@@ -32,6 +32,7 @@ const getAssetTypeBadge = (type: string) => {
     stock: "default",
     fii: "secondary",
     fixed_income: "outline",
+    fund: "outline",
     international: "destructive",
   } as const;
 
@@ -39,6 +40,7 @@ const getAssetTypeBadge = (type: string) => {
     stock: "Ação",
     fii: "FII",
     fixed_income: "Renda Fixa",
+    fund: "Fundo",
     international: "Internacional",
   } as const;
 

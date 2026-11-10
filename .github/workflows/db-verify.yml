@@ -6353,6 +6353,18 @@ jobs:
       - name: As regras puras do acesso pelo Claude
         run: npm run test:acesso-pelo-claude
 
+      # =====================================================================
+      # 086 -- fundos na carteira (quinto tipo de ativo)
+      # =====================================================================
+      - name: 086_fundos_na_carteira
+        run: $PSQL -f database/migrations/086_fundos_na_carteira.sql
+
+      - name: 086 e idempotente
+        run: $PSQL -f database/migrations/086_fundos_na_carteira.sql
+
+      - name: O fundo entra na carteira e tipo inventado continua barrado
+        run: $PSQL -f database/tests/086_fundos_na_carteira_test.sql
+
       - name: schema-columns.json em dia com as migrations
         run: node scripts/gen-schema-columns.mjs --check
 

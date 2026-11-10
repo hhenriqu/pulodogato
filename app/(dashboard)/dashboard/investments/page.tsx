@@ -56,11 +56,16 @@ import {
 } from "@/components/investments/ModalDeCadastroDeAtivo";
 import { CarteiraPorConta } from "@/components/investments/CarteiraPorConta";
 import { RebalanceamentoDaCarteira } from "@/components/investments/RebalanceamentoDaCarteira";
-import { comporCarteiraPorConta } from "@/lib/carteira-na-tela";
+import { ConsolidadoDaCarteira } from "@/components/investments/ConsolidadoDaCarteira";
+import {
+  comporCarteiraPorConta,
+  comporConsolidado,
+} from "@/lib/carteira-na-tela";
 import type { LimitesDosCrivos } from "@/lib/crivos";
 import {
   ROTULO_TIPO,
   lancamentoDeCarteiraParaGravar,
+  lancadoEmReais,
   type AssetType,
   type InvestmentKind,
   type Posicao,
@@ -302,6 +307,15 @@ export default function InvestmentsPage() {
     [carteira, rendaFixa]
   );
 
+  // O CONSOLIDADO POR CLASSE, com a renda fixa pelo valor de hoje. E ele que
+  // alimenta o resumo do topo e o grafico de alocacao: o `summary` da rota
+  // avalia a renda fixa pelo custo (a rota nao fala com o Banco Central), e o
+  // topo diria um total diferente do bloco por conta logo abaixo.
+  const consolidado = useMemo(
+    () => comporConsolidado(carteira, rendaFixa),
+    [carteira, rendaFixa]
+  );
+
   /**
    * Grava o ativo. Devolve a frase de erro, ou `null` quando gravou.
    *
@@ -393,8 +407,10 @@ export default function InvestmentsPage() {
     // converte com `Number`, onde `Number("")` e ZERO. Sem esta guarda, o aporte
     // vazio chegaria la como "Quantidade precisa ser um numero positivo" -- uma
     // frase sobre um campo que esta tela nao mostra.
-    const ehRendaFixa =
-      ativos.find((a) => a.id === valores.assetId)?.type === "fixed_income";
+    // Fundo tambem e lancado em reais (ver `lancadoEmReais`).
+    const ehRendaFixa = lancadoEmReais(
+      ativos.find((a) => a.id === valores.assetId)?.type
+    );
 
     if (ehRendaFixa) {
       const valor = Number.parseFloat(valores.valorDoAporte);
@@ -652,13 +668,15 @@ export default function InvestmentsPage() {
 
         {resumo && (
           <DashboardSummary
-            totalInvested={resumo.totalInvested}
-            currentValue={resumo.currentValue}
-            totalProfitLoss={resumo.totalProfitLoss}
-            totalProfitLossPercentage={resumo.totalProfitLossPercentage}
+            totalInvested={consolidado.aplicado}
+            currentValue={consolidado.total}
+            totalProfitLoss={consolidado.rendimento}
+            totalProfitLossPercentage={consolidado.rendimentoPercentual}
             totalDividends={resumo.totalDividends}
           />
         )}
+
+        <ConsolidadoDaCarteira dados={consolidado} />
 
         {resumo && resumo.realizedProfitLoss !== 0 && (
           <Card>
@@ -690,8 +708,14 @@ export default function InvestmentsPage() {
             como piso e cresce além do container em vez de apertar, e foi assim
             que oito telas ganharam scroll horizontal no celular (HMO-168). */}
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          {carteira && carteira.allocation.length > 0 && (
-            <AssetAllocationChart data={carteira.allocation} />
+          {consolidado.classes.length > 0 && (
+            <AssetAllocationChart
+              data={consolidado.classes.map((c) => ({
+                name: c.rotulo,
+                value: c.valor,
+                percentage: c.percentual,
+              }))}
+            />
           )}
           {carteira && carteira.evolution.length > 0 && (
             <PerformanceChart

@@ -38,6 +38,7 @@ const COLORS = {
   Ações: "#3b82f6", // blue-500
   FIIs: "#10b981", // emerald-500
   "Renda Fixa": "#f59e0b", // amber-500
+  Fundos: "#ec4899", // pink-500
   Internacional: "#8b5cf6", // violet-500
 };
 
