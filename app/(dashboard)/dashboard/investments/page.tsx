@@ -28,6 +28,7 @@ import { DashboardSummary } from "@/components/DashboardSummary";
 import { PortfolioTable } from "@/components/PortfolioTable";
 import { AssetAllocationChart } from "@/components/charts/AssetAllocationChart";
 import { PerformanceChart } from "@/components/charts/PerformanceChart";
+import { MercadoDoDia } from "@/components/investments/MercadoDoDia";
 import {
   Card,
   CardContent,
@@ -377,6 +378,16 @@ export default function InvestmentsPage() {
             setLancKind("buy");
           }}
         />
+
+        {/* --- O mercado do dia (HMO-193) -----------------------------------
+
+            Fica DEPOIS da carteira de proposito. O que a pessoa veio ver aqui
+            e o dinheiro dela, que vem do nosso banco; as maiores altas sao
+            informacao publica sobre o dia, nao um numero da conta dela.
+
+            O bloco se vira sozinho: busca o proprio dado, e nao derruba nada
+            quando a brapi nao responde. */}
+        <MercadoDoDia />
 
         {/* --- Ativos cadastrados, com o preço atual editável ---------------- */}
         <Card>

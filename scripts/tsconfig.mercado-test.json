@@ -1,0 +1,22 @@
+{
+  "//": "Build so do teste da HMO-193. lib/mercado.ts e a parte PURA da entrega e nao importa nada do projeto -- nao usa o alias @/ --, entao este build NAO precisa do passo resolve-aliases.mjs que test:moeda e test:safe-to-spend usam. lib/brapi.ts fica de fora de proposito: ele so faz rede, e a regra que o teste precisa provar (o filtro de liquidez) mora inteira em lib/mercado.ts.",
+  "compilerOptions": {
+    "outDir": "../.tmp-mercado",
+    "rootDir": "../lib",
+    "module": "es2020",
+    "target": "es2020",
+    "moduleResolution": "node",
+    "strict": true,
+    "skipLibCheck": true,
+    "types": ["node"],
+    "baseUrl": "..",
+    "paths": {
+      "@/*": [
+        "./*"
+      ]
+    }
+  },
+  "include": [
+    "../lib/mercado.ts"
+  ]
+}

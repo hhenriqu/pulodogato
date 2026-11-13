@@ -1,0 +1,13 @@
+{
+ "_procedencia": "NAO e captura da API. Sao as cinco linhas que o enunciado da HMO-193 publica, transcritas dos dois quadros do texto, medidas pelo Helio em data anterior a 2026-09-30. Existem separadas de brapi-altas-2026-09-30.json / brapi-baixas-2026-09-30.json (essas sim sao resposta crua da brapi, gravada em 2026-09-30) por uma razao so: RCFA11 nao aparece na captura de 2026-09-30 -- nao negociou naquele dia -- e o enunciado exige RCFA11 como controle negativo. Misturar as duas fontes num arquivo so faria a captura mentir sobre o que ela e.",
+ "_close_nulo": "O enunciado publica a variacao e a quantidade de acoes, nunca o preco. Onde o preco nao foi publicado, o campo e null em vez de um numero inventado -- e o teste exige que a linha sem preco seja RECUSADA, porque sem preco nao ha como provar liquidez. AZZA3 tem preco porque ele veio da captura de 2026-09-30 (mesmo ticker, dia diferente): esta ali para o teste ter conteudo legitimo a afirmar, e o numero de acoes e o do enunciado.",
+ "altas": [
+  { "stock": "TXRX3F", "name": "TEXTIL RENAUXVIEW S.A.", "close": null, "change": 33.78, "volume": 14, "type": "stock" },
+  { "stock": "MSPA3F", "name": "CIA MELHORAMENTOS DE SAO PAULO", "close": null, "change": 30.54, "volume": 36, "type": "stock" },
+  { "stock": "IGTI4F", "name": "JEREISSATI PARTICIPACOES S.A.", "close": null, "change": 16.82, "volume": 3, "type": "stock" },
+  { "stock": "AZZA3", "name": "AZZAS 2154 S.A.", "close": 17.32, "change": 10.5, "volume": 6522400, "type": "stock" }
+ ],
+ "baixas": [
+  { "stock": "RCFA11", "name": "RCFA11", "close": null, "change": -76.67, "volume": 100, "type": "stock" }
+ ]
+}
