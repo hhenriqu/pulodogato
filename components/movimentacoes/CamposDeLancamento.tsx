@@ -199,6 +199,23 @@ interface CamposDeLancamentoProps {
    * "pela data da compra", que e honesto, em vez de oferecer o ano 0.
    */
   mesPadraoDaFatura?: string;
+  /**
+   * Qual daqueles meses e a fatura EM ABERTO do cartao escolhido (HMO-456).
+   *
+   * "Apesar do usuario poder escolher pra qual fatura vai lancar a conta,
+   * devemos sugerir a fatura em aberto."
+   *
+   * PROP SEPARADA DE `mesPadraoDaFatura`, e nao a mesma: o padrao e sempre
+   * algum mes (ele tem de marcar uma opcao), e a fatura em aberto pode nao
+   * existir -- antes de haver cartao escolhido, e em cartao cadastrado sem
+   * `closing_day`. Um marcador "em aberto" colado no padrao AFIRMARIA que o mes
+   * do calendario e a fatura aberta daquele cartao, que e justamente o que esta
+   * issue conserta. Vazia, nenhuma opcao leva o marcador.
+   *
+   * Quem calcula e `faturaAbertaDoCartao`, em lib/fatura-do-cartao.ts: este
+   * componente e de proposito sem relogio e sem banco.
+   */
+  mesDaFaturaEmAberto?: string;
 }
 
 export function CamposDeLancamento({
@@ -217,6 +234,7 @@ export function CamposDeLancamento({
   moedaOficial = MOEDA_PADRAO,
   cartaoFixado = null,
   mesPadraoDaFatura = "",
+  mesDaFaturaEmAberto = "",
 }: CamposDeLancamentoProps) {
   // `valores.confirmado` entra aqui desde a HMO-188: e ele que decide se o campo
   // da data real existe e se a data prevista e obrigatoria. Esquece-lo deixaria
@@ -882,6 +900,19 @@ export function CamposDeLancamento({
                   (mes) => (
                     <option key={mes} value={mes}>
                       {rotuloDaFatura(mes) ?? mes}
+                      {/* O MARCADOR DA FATURA EM ABERTO (HMO-456)
+
+                          A sugestao sem o marcador e muda: o seletor abre em
+                          "novembro de 2026" e nada na tela diz POR QUE -- e
+                          quem compra no dia 20 de um cartao que fecha dia 5
+                          espera ver outubro, le novembro e corrige a sugestao
+                          CERTA para a fatura que ja fechou. O rotulo e que
+                          torna a sugestao uma resposta.
+
+                          Concatenado ao `rotuloDaFatura`, e nao em lugar dele:
+                          o nome do mes continua saindo de uma fonte so (ver o
+                          comentario acima), e o marcador e um sufixo. */}
+                      {mes === mesDaFaturaEmAberto ? " · em aberto" : ""}
                     </option>
                   )
                 )}

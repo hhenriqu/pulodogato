@@ -34,6 +34,7 @@ import {
   caminhoDoCartaoNoMes,
   cartaoDaTela,
   estadoDaTela,
+  faturaAbertaDoCartao,
   faturaDoCartao,
   faturaPadraoDoLancamento,
   gastosDaFatura,
@@ -537,19 +538,19 @@ test("o padrao sai do periodo da tela de origem", () => {
   // Quem esta olhando outubro e clica em "Nova Despesa" esta lancando em
   // outubro. Perguntar de novo seria ignorar a resposta que ela acabou de dar.
   assert.equal(
-    faturaPadraoDoLancamento(
-      "/dashboard/movimentacoes?de=2026-10-01&ate=2026-10-31"
-    ),
+    faturaPadraoDoLancamento({
+      origem: "/dashboard/movimentacoes?de=2026-10-01&ate=2026-10-31",
+    }),
     "2026-10"
   );
 
   // E NAO e o mes do relogio: este caso passaria por acaso se o periodo fosse o
   // mes corrente, entao o periodo e de um ano que nao e o de hoje.
   assert.equal(
-    faturaPadraoDoLancamento(
-      "/dashboard/movimentacoes?de=2024-03-01&ate=2024-03-31",
-      new Date("2026-10-04T12:00:00Z")
-    ),
+    faturaPadraoDoLancamento({
+      origem: "/dashboard/movimentacoes?de=2024-03-01&ate=2024-03-31",
+      agora: new Date("2026-10-04T12:00:00Z"),
+    }),
     "2024-03",
     "o relogio congelado diz outubro de 2026; a origem tem de vencer"
   );
@@ -561,37 +562,37 @@ test("periodo de VARIOS meses: a regra e o PRIMEIRO mes, e esta escrita", () => 
   // implicita, cada caminho que precisasse dela escolheria um, e a mesma tela
   // lancaria em faturas diferentes.
   assert.equal(
-    faturaPadraoDoLancamento(
-      "/dashboard/movimentacoes?de=2026-08-01&ate=2026-10-31",
-      new Date("2026-10-04T12:00:00Z")
-    ),
+    faturaPadraoDoLancamento({
+      origem: "/dashboard/movimentacoes?de=2026-08-01&ate=2026-10-31",
+      agora: new Date("2026-10-04T12:00:00Z"),
+    }),
     "2026-08"
   );
 
   // AS DUAS ALTERNATIVAS PLAUSIVEIS SAO NOMEADAS, para que o teste reprove quem
   // trocar `[0]` por uma delas -- as duas se defendem em prosa.
   assert.notEqual(
-    faturaPadraoDoLancamento(
-      "/dashboard/movimentacoes?de=2026-08-01&ate=2026-10-31",
-      new Date("2026-10-04T12:00:00Z")
-    ),
+    faturaPadraoDoLancamento({
+      origem: "/dashboard/movimentacoes?de=2026-08-01&ate=2026-10-31",
+      agora: new Date("2026-10-04T12:00:00Z"),
+    }),
     "2026-10",
     "nao e o ULTIMO mes do intervalo"
   );
   assert.notEqual(
-    faturaPadraoDoLancamento(
-      "/dashboard/movimentacoes?de=2026-08-01&ate=2026-10-31",
-      new Date("2026-09-15T12:00:00Z")
-    ),
+    faturaPadraoDoLancamento({
+      origem: "/dashboard/movimentacoes?de=2026-08-01&ate=2026-10-31",
+      agora: new Date("2026-09-15T12:00:00Z"),
+    }),
     "2026-09",
     "nem o mes que contem HOJE dentro do intervalo"
   );
 
   // Intervalo que atravessa o ano: o primeiro continua sendo o primeiro.
   assert.equal(
-    faturaPadraoDoLancamento(
-      "/dashboard/movimentacoes?de=2025-11-15&ate=2026-02-10"
-    ),
+    faturaPadraoDoLancamento({
+      origem: "/dashboard/movimentacoes?de=2025-11-15&ate=2026-02-10",
+    }),
     "2025-11"
   );
 });
@@ -605,7 +606,7 @@ test("sem origem legivel o padrao e o mes de SAO PAULO, com o relogio congelado"
   // dia 1 -- e a afirmacao vale nos dois fusos, porque `mesCorrenteDaFatura` pede
   // ao `Intl` o fuso EXPLICITO e nao o do ambiente.
   assert.equal(
-    faturaPadraoDoLancamento(null, new Date("2026-11-01T01:00:00Z")),
+    faturaPadraoDoLancamento({ agora: new Date("2026-11-01T01:00:00Z") }),
     "2026-10",
     "01/11 01:00 UTC e 31/10 22:00 em Sao Paulo: a fatura e de OUTUBRO"
   );
@@ -613,7 +614,7 @@ test("sem origem legivel o padrao e o mes de SAO PAULO, com o relogio congelado"
   // E o outro lado da meia-noite, para o caso nao passar por um off-by-one que
   // simplesmente subtrai um mes de tudo.
   assert.equal(
-    faturaPadraoDoLancamento(null, new Date("2026-11-01T04:00:00Z")),
+    faturaPadraoDoLancamento({ agora: new Date("2026-11-01T04:00:00Z") }),
     "2026-11",
     "01/11 04:00 UTC ja e 01/11 em Sao Paulo"
   );
@@ -633,7 +634,7 @@ test("sem origem legivel o padrao e o mes de SAO PAULO, com o relogio congelado"
     "/dashboard/movimentacoes?de=outubro&ate=2026-10-31",
   ]) {
     assert.equal(
-      faturaPadraoDoLancamento(origem, congelado),
+      faturaPadraoDoLancamento({ origem, agora: congelado }),
       "2026-10",
       `origem ${JSON.stringify(origem)} tinha de cair no mes corrente`
     );
@@ -645,14 +646,196 @@ test("a origem chega PERCENT-ENCODED, e o padrao a le assim", () => {
   // chegam como %3F e %26 quando a origem vem de outra origem. Quem lesse a
   // string crua acharia `de=` so no caso facil.
   const cru = "/dashboard/movimentacoes?de=2026-07-01&ate=2026-07-31";
-  assert.equal(faturaPadraoDoLancamento(cru), "2026-07");
+  assert.equal(faturaPadraoDoLancamento({ origem: cru }), "2026-07");
 
   // O caso que o `URLSearchParams` resolve: valor do parametro codificado.
   assert.equal(
-    faturaPadraoDoLancamento(
-      `/dashboard/movimentacoes?de=${encodeURIComponent("2026-07-01")}&ate=${encodeURIComponent("2026-07-31")}`
-    ),
+    faturaPadraoDoLancamento({
+      origem: `/dashboard/movimentacoes?de=${encodeURIComponent("2026-07-01")}&ate=${encodeURIComponent("2026-07-31")}`,
+    }),
     "2026-07"
+  );
+});
+
+// =====================================================
+// A FATURA EM ABERTO DO CARTAO (HMO-456)
+// =====================================================
+// "Apesar do usuario poder escolher pra qual fatura vai lancar a conta, devemos
+// sugerir a fatura em aberto."
+//
+// POR QUE OS SEIS PRIMEIROS CASOS SAO COPIA DE UM TESTE SQL
+// ---------------------------------------------------------
+// `faturaAbertaDoCartao` e a unica aritmetica de fatura em TypeScript do
+// repositorio, e o risco dela e DISCORDAR do Postgres -- o formulario grava o
+// mes sugerido em `invoice_month_override`, entao a divergencia nao sai como
+// numero estranho: sai como a compra de hoje forcada para uma fatura que nao e
+// a que o cartao abriria, sem erro nenhum.
+//
+// Os casos abaixo repetem, com os MESMOS valores esperados,
+// `database/tests/budget_invoice_test.sql:313-333`, que afirma o mesmo sobre
+// `public.card_invoice_month`. Os dois lados comparam com um numero cravado: um
+// teste que medisse uma implementacao contra a outra provaria so que eu repeti a
+// mesma conta duas vezes (a nota esta no cabecalho de
+// `database/tests/ajuste_de_fatura_test.sql`).
+//
+// NENHUM `new Date()` NESTES CASOS. A fatura aberta sai da data que esta no
+// campo e do `closing_day` -- as duas vem de fora. O relogio so entra no
+// fallback de `faturaPadraoDoLancamento`, que ja tem caso proprio acima.
+
+test("a borda do fechamento: o dia do fechamento ainda e do mes, o seguinte nao", () => {
+  // budget_invoice_test.sql:313 e :316. Errar esta borda por um dia joga a
+  // compra para o mes errado -- e o numero continua plausivel na tela.
+  assert.equal(faturaAbertaDoCartao("2026-03-28", 28), "2026-03");
+  assert.equal(faturaAbertaDoCartao("2026-03-29", 28), "2026-04");
+});
+
+test("dezembro vira o ano, e nao vira mes 13", () => {
+  // budget_invoice_test.sql:321. `EXTRACT(MONTH)+1` daria 13 no SQL; em JS o
+  // equivalente seria `${ano}-${mes + 1}` -- a mesma pegadinha, por isso
+  // `andarMeses` conta em meses desde o ano 0.
+  assert.equal(faturaAbertaDoCartao("2026-12-30", 28), "2027-01");
+  assert.equal(faturaAbertaDoCartao("2026-12-28", 28), "2026-12");
+});
+
+test("fechamento dia 31 em fevereiro: a fatura e a do PROPRIO mes", () => {
+  // budget_invoice_test.sql:326 e :329, o par que lá cobre o `LEAST`. ESTES DOIS
+  // CASOS NAO MATAM O `Math.min`, e isso esta medido: para toda data real o
+  // `LEAST` nao muda resposta nenhuma (o argumento esta no corpo de
+  // `faturaAbertaDoCartao`, que por isso nao o copia). O que eles provam e a
+  // PARIDADE com o valor que o teste SQL exige -- que e a unica coisa que esta
+  // copia de regra precisa garantir.
+  assert.equal(faturaAbertaDoCartao("2026-02-28", 31), "2026-02");
+  assert.equal(faturaAbertaDoCartao("2024-02-29", 31), "2024-02");
+
+  // E o ano bissexto nao e um `% 4` solto: 2100 nao e bissexto (a regra do
+  // `% 400`), e com `% 4` sozinho o dia 29 de fevereiro de 2100 -- que nao
+  // existe -- seria aceito como data.
+  assert.equal(faturaAbertaDoCartao("2100-02-28", 31), "2100-02");
+  assert.equal(faturaAbertaDoCartao("2100-02-29", 31), null);
+  assert.equal(faturaAbertaDoCartao("2000-02-29", 31), "2000-02");
+});
+
+test("sem `closing_day` NAO ha fatura em aberto a sugerir", () => {
+  // budget_invoice_test.sql:333 diz que no banco a compra cai no proprio mes --
+  // e ela cai mesmo, porque o override fica NULO. O que esta funcao devolve e
+  // outra pergunta ("que fatura esta ABERTA neste cartao?"), e um cartao sem
+  // ciclo nao tem resposta. Devolver '2026-05' aqui daria a MESMA resposta para
+  // "fecha hoje" e "nao fecha", e a tela marcaria a opcao afirmando um
+  // fechamento que nao existe.
+  assert.equal(faturaAbertaDoCartao("2026-05-20", null), null);
+  assert.equal(faturaAbertaDoCartao("2026-05-20", undefined), null);
+
+  // Dia de fechamento que nao e dia: o valor chega de `fetch` e do catalogo
+  // guardado no aparelho, nao do CHECK do banco.
+  for (const ruim of [0, -1, 32, 5.5, Number.NaN, "5"]) {
+    assert.equal(
+      faturaAbertaDoCartao("2026-05-20", ruim),
+      null,
+      `closing_day ${JSON.stringify(ruim)} tinha de ser recusado`
+    );
+  }
+});
+
+test("data que nao da para ler nao vira fatura", () => {
+  for (const ruim of [
+    null,
+    undefined,
+    "",
+    "2026-10",
+    "20/10/2026",
+    "2026-13-01",
+    "2026-00-10",
+    "2026-02-30",
+    "hoje",
+  ]) {
+    assert.equal(
+      faturaAbertaDoCartao(ruim, 5),
+      null,
+      `data ${JSON.stringify(ruim)} tinha de ser recusada`
+    );
+  }
+});
+
+test("a FATURA EM ABERTO vence o periodo da tela de origem", () => {
+  // O CASO DA ISSUE, inteiro: dia 20, cartao que fecha dia 5. A compra de hoje
+  // e da fatura de NOVEMBRO, e era outubro que o seletor abria marcado -- uma
+  // fatura que ja fechou e pode ja estar paga.
+  assert.equal(
+    faturaPadraoDoLancamento({
+      origem: "/dashboard/movimentacoes?de=2026-10-01&ate=2026-10-31",
+      dataDaCompra: "2026-10-20",
+      closingDay: 5,
+      agora: new Date("2026-10-20T12:00:00Z"),
+    }),
+    "2026-11"
+  );
+
+  // E a mesma pessoa, no mesmo dia, com um cartao que fecha dia 28: a fatura
+  // aberta e a de outubro. O caso existe para o teste nao passar por um
+  // "sempre o mes seguinte".
+  assert.equal(
+    faturaPadraoDoLancamento({
+      origem: "/dashboard/movimentacoes?de=2026-10-01&ate=2026-10-31",
+      dataDaCompra: "2026-10-20",
+      closingDay: 28,
+      agora: new Date("2026-10-20T12:00:00Z"),
+    }),
+    "2026-10"
+  );
+});
+
+test("sem cartao (ou sem fechamento) o padrao e o de ANTES da HMO-456", () => {
+  // AS FONTES 2 E 3 NAO VIRARAM CODIGO MORTO, e e isso que mantem a decisao da
+  // HMO-289 viva: o seletor de fatura aparece junto com a natureza, ANTES de
+  // haver cartao escolhido.
+  const congelado = new Date("2026-10-20T12:00:00Z");
+
+  assert.equal(
+    faturaPadraoDoLancamento({
+      origem: "/dashboard/movimentacoes?de=2026-08-01&ate=2026-08-31",
+      dataDaCompra: "2026-10-20",
+      agora: congelado,
+    }),
+    "2026-08",
+    "sem closing_day quem responde e o periodo da origem"
+  );
+
+  assert.equal(
+    faturaPadraoDoLancamento({
+      dataDaCompra: "2026-10-20",
+      closingDay: null,
+      agora: congelado,
+    }),
+    "2026-10",
+    "sem origem e sem fechamento, o relogio de Sao Paulo"
+  );
+
+  // A DATA ilegivel tambem cai no padrao antigo, e nao num mes qualquer: o campo
+  // de data e livre e pode estar pela metade enquanto a pessoa digita.
+  assert.equal(
+    faturaPadraoDoLancamento({
+      origem: "/dashboard/movimentacoes?de=2026-08-01&ate=2026-08-31",
+      dataDaCompra: "2026-10",
+      closingDay: 5,
+      agora: congelado,
+    }),
+    "2026-08"
+  );
+});
+
+test("a compra RETROATIVA e sugerida na fatura dela, nao na que esta aberta hoje", () => {
+  // A funcao recebe a DATA DA COMPRA, nao `hoje`, e e isso que faz o caso
+  // retroativo sair certo: quem lanca em 20/10 uma compra de 02/08 num cartao
+  // que fecha dia 5 esta falando da fatura de AGOSTO (dia 2 <= dia 5), e nao da
+  // aberta agora. Sugerir a aberta ali moveria uma compra antiga para o mes
+  // corrente -- com a fatura do banco deixando de bater nos dois meses.
+  assert.equal(
+    faturaPadraoDoLancamento({
+      dataDaCompra: "2026-08-02",
+      closingDay: 5,
+      agora: new Date("2026-10-20T12:00:00Z"),
+    }),
+    "2026-08"
   );
 });
 

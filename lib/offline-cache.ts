@@ -39,6 +39,19 @@ export interface ContaEmCache {
    * campo, e `moedaSugerida` trata ausente como BRL.
    */
   currency?: string;
+  /**
+   * O dia de fechamento do cartao (006), guardado pela MESMA razao da moeda
+   * (HMO-456): offline o formulario ainda precisa sugerir a fatura em aberto, e
+   * sem o fechamento ele voltaria a sugerir o mes do calendario -- que no dia 20
+   * de um cartao que fecha dia 5 e uma fatura ja fechada, e o lancamento entra
+   * na fila com `invoice_month_override` apontando para ela.
+   *
+   * Opcional pelo mesmo motivo: o catalogo guardado por uma versao anterior do
+   * app nao tem o campo, e `faturaAbertaDoCartao` trata ausente como "nao ha
+   * fatura em aberto a sugerir" -- o padrao de antes desta issue, nao um dia
+   * inventado.
+   */
+  closing_day?: number | null;
 }
 
 export interface CatalogoDeLancamento {

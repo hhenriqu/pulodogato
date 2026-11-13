@@ -90,6 +90,19 @@ const ROTAS = [
   "/dashboard/movimentacoes/receita",
   "/dashboard/movimentacoes/despesa",
   "/dashboard/movimentacoes/transferencia",
+  // AS TRES TELAS DE LISTA DA HMO-246, e elas entram aqui pelo MESMO motivo
+  // que as tres de cima entraram: nasceram depois da varredura da HMO-168 e
+  // ninguem as acrescentou. Achado na HMO-457 -- ate ali a lista dizia "as
+  // rotas do painel" e nao tinha as tres telas que o menu chama de Receitas,
+  // Despesas e Transferencias.
+  //
+  // Elas sao as que mais merecem a medicao: a linha delas poe TRES botoes de
+  // 44px (o minimo de `.device-mobile button`) a direita do valor, e e a
+  // unica lista do app com essa densidade. `probe-acoes-da-linha-no-iphone.mjs`
+  // mede POR BOTAO, dentro da linha; esta aqui continua medindo o documento.
+  "/dashboard/receitas",
+  "/dashboard/despesas",
+  "/dashboard/transferencias",
 ];
 
 const LARGURAS = [390, 320];

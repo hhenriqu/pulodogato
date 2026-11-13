@@ -49,6 +49,11 @@ function renderizar({
   contas = [CARTAO, CORRENTE],
   editando = false,
   cartaoFixado = null,
+  // As duas props do seletor de fatura (HMO-289 / HMO-456). Ficam FORA do
+  // default porque o padrao delas no componente -- a string vazia -- e o que
+  // os outros casos exercitam: janela sem mes nenhum e nenhuma opcao marcada.
+  mesPadraoDaFatura,
+  mesDaFaturaEmAberto,
 } = {}) {
   return renderToStaticMarkup(
     h(CamposDeLancamento, {
@@ -59,6 +64,8 @@ function renderizar({
       contas,
       editando,
       cartaoFixado,
+      mesPadraoDaFatura,
+      mesDaFaturaEmAberto,
       rateio: h("div", null, MARCADOR_DE_RATEIO),
     })
   );
@@ -1533,4 +1540,114 @@ test("trocar de lugar com a Fixa DESMARCADA nao liga a regra", () => {
   assert.equal(props.value, "conta");
   props.onValueChange("cartao");
   assert.equal(mudancas[0].natureza, "card");
+});
+
+// ---------------------------------------------------------------------------
+// O SELETOR DE FATURA SUGERE A FATURA EM ABERTO (HMO-456)
+// ---------------------------------------------------------------------------
+// "Apesar do usuario poder escolher pra qual fatura vai lancar a conta, devemos
+// sugerir a fatura em aberto."
+//
+// A REGRA ja tem teste proprio (`faturaAbertaDoCartao`, em
+// scripts/test-fatura-do-cartao.mjs, inclusive contra os casos que o teste SQL
+// de `card_invoice_month` afirma). O que falta e o que a regra certa nao prova:
+// que o mes em aberto chega ao JSX e MARCA a opcao certa. Um `mesDaFaturaEmAberto`
+// que nao fosse lido deixaria o seletor exatamente como ele era.
+
+/** As `<option>` do seletor de fatura, na ordem em que saem. */
+function opcoesDeFatura(html) {
+  const bloco =
+    html.match(/<select[^>]*id="invoice-month"[\s\S]*?<\/select>/)?.[0] ?? "";
+  return [
+    ...bloco.matchAll(/<option([^>]*)value="([^"]*)"([^>]*)>([\s\S]*?)<\/option>/g),
+  ].map((casou) => ({
+    value: casou[2],
+    texto: casou[4],
+    // O `selected` do SSR do React: e ele que diz qual fatura a tela AFIRMA.
+    marcada: /selected/.test(casou[1] + casou[3]),
+  }));
+}
+
+const VALORES_DE_COMPRA_NO_CARTAO = {
+  natureza: "card",
+  contaId: CARTAO.id,
+  data: "2026-10-20",
+};
+
+test("a fatura em aberto chega ao seletor MARCADA e com o rotulo dizendo isso", () => {
+  // O caso da issue: dia 20, cartao que fecha dia 5 -> a compra de hoje e da
+  // fatura de NOVEMBRO. Quem calcula e `faturaAbertaDoCartao`; aqui as duas
+  // props chegam prontas, como o formulario as manda.
+  const html = renderizar({
+    tipo: "expense",
+    valores: { ...VALORES_DE_COMPRA_NO_CARTAO, mesDaFatura: "2026-11" },
+    mesPadraoDaFatura: "2026-11",
+    mesDaFaturaEmAberto: "2026-11",
+  });
+
+  const opcoes = opcoesDeFatura(html);
+  const novembro = opcoes.find((o) => o.value === "2026-11");
+
+  assert.ok(novembro, "novembro nao saiu na janela do seletor");
+  assert.ok(
+    novembro.marcada,
+    "novembro saiu na lista mas nao e a opcao marcada -- a tela sugeriria outra fatura"
+  );
+  // O MARCADOR, e nao so a opcao marcada. Sem ele a sugestao e muda: quem compra
+  // no dia 20 ESPERA ver outubro, le novembro sem explicacao e "corrige" a
+  // sugestao certa para a fatura que ja fechou.
+  assert.match(novembro.texto, /novembro de 2026/);
+  assert.match(novembro.texto, /em aberto/);
+
+  // E ele vai em UMA opcao so: um marcador em todas nao distingue nada.
+  assert.equal(
+    opcoes.filter((o) => /em aberto/.test(o.texto)).length,
+    1,
+    "o marcador 'em aberto' apareceu em mais de uma fatura"
+  );
+});
+
+test("sem fatura em aberto NENHUMA opcao leva o marcador", () => {
+  // O CONTROLE NEGATIVO da prop. Sem ele, um marcador colado no `mesPadrao` --
+  // ou na primeira opcao -- passaria pelo caso de cima: lá os dois meses sao o
+  // mesmo. Aqui a janela e a mesma e a prop esta vazia, que e o estado real de
+  // todo cartao sem `closing_day` e de todo formulario antes de a conta ser
+  // escolhida.
+  const html = renderizar({
+    tipo: "expense",
+    valores: { ...VALORES_DE_COMPRA_NO_CARTAO, mesDaFatura: "2026-11" },
+    mesPadraoDaFatura: "2026-11",
+  });
+
+  const opcoes = opcoesDeFatura(html);
+
+  assert.ok(opcoes.length > 1, "a janela do seletor saiu vazia");
+  assert.equal(
+    opcoes.filter((o) => /em aberto/.test(o.texto)).length,
+    0,
+    "sem `mesDaFaturaEmAberto` alguma opcao ainda se diz em aberto"
+  );
+});
+
+test("a pessoa pode MOVER a compra: o marcador fica na fatura aberta, nao na escolhida", () => {
+  // O par do primeiro caso, e o que prova que o marcador nao e "a opcao
+  // marcada" com outro nome. Quem escolheu dezembro continua vendo qual era a
+  // fatura em aberto -- e e assim que ela percebe que moveu.
+  const html = renderizar({
+    tipo: "expense",
+    valores: { ...VALORES_DE_COMPRA_NO_CARTAO, mesDaFatura: "2026-12" },
+    mesPadraoDaFatura: "2026-11",
+    mesDaFaturaEmAberto: "2026-11",
+  });
+
+  const opcoes = opcoesDeFatura(html);
+  const novembro = opcoes.find((o) => o.value === "2026-11");
+  const dezembro = opcoes.find((o) => o.value === "2026-12");
+
+  assert.match(novembro.texto, /em aberto/);
+  assert.ok(dezembro.marcada, "a escolha da pessoa deixou de ser a marcada");
+  assert.ok(
+    !/em aberto/.test(dezembro.texto),
+    "a fatura escolhida herdou o marcador de 'em aberto'"
+  );
 });

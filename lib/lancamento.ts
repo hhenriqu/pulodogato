@@ -243,6 +243,16 @@ export interface ContaDeLancamento {
    * conta e o proprio lancamento.
    */
   currency?: string | null;
+  /**
+   * O dia de fechamento do cartao (006). Ele SUGERE a fatura do lancamento --
+   * ver `faturaAbertaDoCartao` em lib/fatura-do-cartao.ts (HMO-456).
+   *
+   * OPCIONAL, e os dois motivos de ele faltar levam a mesma resposta ("nao ha
+   * fatura em aberto a sugerir"): a conta pode nao ser cartao, e o cartao pode
+   * estar cadastrado sem fechamento. Quem le trata ausente como ausente, nunca
+   * como um dia qualquer.
+   */
+  closing_day?: number | null;
 }
 
 /** Quais blocos do formulario existem para este tipo e esta natureza. */

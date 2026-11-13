@@ -210,14 +210,21 @@ export function mesInicialDaFatura(
 }
 
 // ---------------------------------------------------------------------------
-// EM QUAL FATURA A COMPRA CAI, NO LANCAMENTO (HMO-281 / HMO-289)
+// EM QUAL FATURA A COMPRA CAI, NO LANCAMENTO (HMO-281 / HMO-289 / HMO-456)
 // ---------------------------------------------------------------------------
 // "compro hoje e vai para a fatura que fecha semana que vem, indiferente da
 // data que estou lancando."
 //
-// As duas funcoes abaixo sao PURAS e moram aqui, fora do componente, porque e
-// isso que permite medi-las sem navegador -- e o que ha para medir e justamente
-// a escolha do padrao, que depende de FUSO e de TELA DE ORIGEM.
+// A frase e da HMO-281, e o seletor que ela pediu nasceu com um padrao que NAO
+// a cumpria: ele abria no mes do calendario, e "a fatura que fecha semana que
+// vem" so se descobre com o `closing_day` do cartao na mao. A HMO-456 e isso --
+// "devemos sugerir a fatura em aberto" -- e e `faturaAbertaDoCartao` quem
+// responde.
+//
+// As funcoes abaixo sao PURAS e moram aqui, fora do componente, porque e isso
+// que permite medi-las sem navegador -- e o que ha para medir e justamente a
+// escolha do padrao, que depende de FUSO, de TELA DE ORIGEM e do CICLO do
+// cartao.
 // ---------------------------------------------------------------------------
 
 /** Quantas faturas para tras o seletor oferece, a contar do padrao. */
@@ -252,19 +259,146 @@ function andarMeses(mes: string, passo: number): string {
 }
 
 /**
+ * O ultimo dia daquele mes, por ARITMETICA e nao por `Date`.
+ *
+ * SERVE PARA RECUSAR DATA IMPOSSIVEL, e e so para isso: '2026-02-30' casa com
+ * o regex de 'AAAA-MM-DD' e, lido como dia 30, seria tratado como "depois do
+ * fechamento" -- a tela sugeriria marco para uma data que nao existe.
+ *
+ * Fevereiro e o unico caso que pensa, e a regra bissexta vai inteira (o `% 400`)
+ * porque e ela que separa 2000 de 2100: com `% 4` sozinho, 29/02/2100 passaria
+ * por data.
+ *
+ * `new Date(ano, mes, 0)` daria o mesmo numero e traria o fuso do ambiente para
+ * dentro de um modulo que decide dinheiro -- a pegadinha de
+ * `primeiroDiaDoMesDaFatura` em lib/ajuste-de-fatura.ts.
+ */
+function ultimoDiaDoMes(ano: number, mes: number): number {
+  if (mes === 2) {
+    const bissexto = (ano % 4 === 0 && ano % 100 !== 0) || ano % 400 === 0;
+    return bissexto ? 29 : 28;
+  }
+  return [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][mes - 1];
+}
+
+/**
+ * A FATURA EM ABERTO daquele cartao para uma compra nesta data (HMO-456).
+ *
+ * "Apesar do usuario poder escolher pra qual fatura vai lancar a conta, devemos
+ * sugerir a fatura em aberto."
+ *
+ * ESTA FUNCAO E A UNICA ARITMETICA DE FATURA EM TYPESCRIPT DO REPOSITORIO, e a
+ * razao de ela poder existir e estreita: ela nao decide onde a compra CAI --
+ * quem decide e `card_invoice_lines` (006), por
+ * `COALESCE(invoice_month_override, card_invoice_month(transaction_date,
+ * closing_day))`. Ela decide o que o seletor abre MARCADO, e sem ela nao ha como
+ * ESCREVER na tela o nome do mes que esta em aberto: o que o cabecalho de
+ * lib/fatura-do-periodo.ts proibe e uma segunda copia da SOMA da fatura, que
+ * faria tela e relatorio discordarem sobre o mesmo cartao.
+ *
+ * O PRECO DE ELA DISCORDAR DO POSTGRES E REAL, e por isso o teste
+ * (`scripts/test-fatura-do-cartao.mjs`) repete, com os MESMOS valores
+ * esperados, os casos que `database/tests/budget_invoice_test.sql:313-333` ja
+ * afirma sobre `card_invoice_month` -- inclusive os dois que o `LEAST` existe
+ * para cobrir (fecha dia 31 em fevereiro, com e sem ano bissexto). O formulario
+ * grava o mes sugerido em `invoice_month_override`, entao uma divergencia aqui
+ * nao sai como numero estranho: sai como a compra de hoje FORCADA para uma
+ * fatura que nao e a que o cartao abriria.
+ *
+ * `null` E "NAO HA FATURA EM ABERTO A SUGERIR", e sao dois casos:
+ *
+ *   - a data nao da para ler (nao e 'AAAA-MM-DD', mes 13, dia 31 de fevereiro);
+ *   - o cartao nao tem `closing_day`. Sem o dia de fechamento a 006 trata toda
+ *     compra como do proprio mes -- nao existe ciclo, e portanto nao existe "a
+ *     que esta aberta". Inventar o mes da data aqui seria dar a MESMA resposta
+ *     para "este cartao fecha hoje" e "este cartao nao fecha"; quem recebe
+ *     `null` cai no padrao de antes desta issue. A tela de cartoes ja tem tarja
+ *     de aviso para esse cadastro pela metade (`rotuloDoCiclo`).
+ *
+ * @param dataDaCompra 'AAAA-MM-DD' -- a data da COMPRA, nao a de hoje. Com a
+ *   data de hoje (o padrao de `valoresIniciais`) a resposta e a fatura aberta
+ *   agora, que e o pedido da issue; com uma compra retroativa e a fatura em que
+ *   ela entra, que e a resposta certa para o outro caso.
+ */
+export function faturaAbertaDoCartao(
+  dataDaCompra: string | null | undefined,
+  closingDay: number | null | undefined
+): string | null {
+  if (!dataDaCompra || !/^\d{4}-\d{2}-\d{2}$/.test(dataDaCompra)) return null;
+
+  const ano = Number(dataDaCompra.slice(0, 4));
+  const mes = Number(dataDaCompra.slice(5, 7));
+  const dia = Number(dataDaCompra.slice(8, 10));
+
+  if (mes < 1 || mes > 12) return null;
+  // Dia impossivel NAO vira fatura: '2026-02-31' casa com o regex, e tratar o
+  // dia 31 de fevereiro como "depois do fechamento" sugeriria marco para uma
+  // data que nao existe.
+  if (dia < 1 || dia > ultimoDiaDoMes(ano, mes)) return null;
+
+  // O CHECK `financial_accounts_closing_day_check` garante 1..31 no banco; aqui
+  // a peneira existe porque o valor chega de `fetch` (ou do catalogo guardado no
+  // aparelho por uma versao anterior do app, onde a coluna nem existia).
+  if (
+    closingDay === null ||
+    closingDay === undefined ||
+    !Number.isInteger(closingDay) ||
+    closingDay < 1 ||
+    closingDay > 31
+  ) {
+    return null;
+  }
+
+  // O `LEAST(closing_day, ultimo dia do mes)` DA 006 NAO TEM EQUIVALENTE AQUI,
+  // e a ausencia e deliberada -- nao e um pedaco esquecido da regra.
+  //
+  // Medido: para toda data que esta funcao aceita, os dois ramos dao a MESMA
+  // resposta. `LEAST(c, L)` so difere de `c` quando `c > L`, e nesse caso
+  // `dia <= L < c` faz as duas comparacoes verdadeiras -- a peneira do dia
+  // impossivel, logo acima, e o que garante `dia <= L`. Copiar o `Math.min`
+  // daria uma linha que nenhum caso de teste consegue matar, e uma linha
+  // inobservavel num modulo que decide dinheiro e pior que uma linha a menos:
+  // ela se le como load-bearing e convida a proxima pessoa a "consertar" em
+  // volta dela. (No SQL o `LEAST` e igualmente inocuo para um `date` de
+  // verdade, pelo mesmo argumento -- e por isso TIRA-LO daqui nao faz as duas
+  // implementacoes divergirem. Nao mexa no `LEAST` de la por causa desta nota:
+  // o custo dele e zero e o parametro de `card_invoice_month` e um `date`
+  // qualquer, inclusive de chamador futuro que nao e a view.)
+  const mesDaCompra = dataDaCompra.slice(0, 7);
+
+  return dia <= closingDay ? mesDaCompra : andarMeses(mesDaCompra, 1);
+}
+
+/**
  * A fatura que o seletor abre marcada.
  *
- * DUAS FONTES, NESTA ORDEM:
+ * TRES FONTES, NESTA ORDEM:
  *
- *   1. o mes do periodo da TELA DE ORIGEM (`?de=&ate=`, levado pelo `origem` de
+ *   1. a FATURA EM ABERTO do cartao escolhido (HMO-456) -- a data da compra
+ *      passada pelo `closing_day` daquele cartao, que e a regra da 006. Ela vem
+ *      primeiro porque e a unica das tres que sabe do CICLO: no dia 20, num
+ *      cartao que fecha dia 5, a compra de hoje e da fatura de NOVEMBRO, e as
+ *      duas fontes abaixo sugeririam outubro -- uma fatura que ja fechou e pode
+ *      ja estar paga. Era esse o defeito da issue.
+ *   2. o mes do periodo da TELA DE ORIGEM (`?de=&ate=`, levado pelo `origem` de
  *      lib/retorno-do-lancamento.ts). Quem esta olhando outubro e clica em "Nova
  *      Despesa" esta lancando em outubro, e perguntar de novo seria ignorar a
  *      resposta que ela acabou de dar.
- *   2. sem origem legivel, `mesCorrenteDaFatura()` -- que pega o mes no fuso de
+ *   3. sem origem legivel, `mesCorrenteDaFatura()` -- que pega o mes no fuso de
  *      SAO PAULO, onde o cartao fecha. `new Date().getMonth()` aqui erraria o mes
  *      inteiro para quem lanca depois das 21h do dia 30 (em UTC ja e dia 1 do mes
  *      seguinte), e o teste disso passa numa maquina em SP e reprova no CI em
  *      UTC sem uma linha de codigo mudar.
+ *
+ * AS FONTES 2 E 3 NAO VIRARAM CODIGO MORTO com a chegada da 1, e e isso que
+ * mantem a decisao da HMO-289 viva: `faturaAbertaDoCartao` devolve `null`
+ * enquanto NAO HA CARTAO escolhido (o seletor de fatura aparece antes, pela
+ * natureza) e em todo cartao sem `closing_day` cadastrado. Nos dois casos o
+ * padrao continua sendo o de antes.
+ *
+ * PARAMETRO NOMEADO, e nao quatro posicionais. Os quatro sao opcionais e tres
+ * deles sao string/numero -- `faturaPadraoDoLancamento(origem, agora, data)`
+ * convida exatamente ao erro que nao da erro: trocar duas datas de lugar.
  *
  * O PRIMEIRO MES DO INTERVALO, QUANDO O PERIODO TEM VARIOS
  * --------------------------------------------------------
@@ -283,13 +417,26 @@ function andarMeses(mes: string, passo: number): string {
  * `agora` e parametro com default para que o teste CONGELE o relogio. Sem isso o
  * caso do padrao nao e afirmavel: ele muda de resposta todo dia 1.
  */
-export function faturaPadraoDoLancamento(
-  origem: string | null | undefined,
-  agora: Date = new Date()
-): string {
-  const doPeriodo = mesDoPeriodoDaOrigem(origem);
+export function faturaPadraoDoLancamento(params: {
+  /** O `?de=&ate=` da tela de onde o formulario foi aberto. */
+  origem?: string | null;
+  /** 'AAAA-MM-DD' -- a data que esta no campo de data da compra. */
+  dataDaCompra?: string | null;
+  /** `financial_accounts.closing_day` do cartao escolhido. */
+  closingDay?: number | null;
+  /** O relogio, para o teste congelar. */
+  agora?: Date;
+}): string {
+  const emAberto = faturaAbertaDoCartao(
+    params.dataDaCompra,
+    params.closingDay
+  );
+  if (emAberto) return emAberto;
+
+  const doPeriodo = mesDoPeriodoDaOrigem(params.origem);
   if (doPeriodo) return doPeriodo;
-  return mesCorrenteDaFatura(agora);
+
+  return mesCorrenteDaFatura(params.agora ?? new Date());
 }
 
 /**
