@@ -194,16 +194,23 @@ protege os dados e a RLS, aplicada em producao em 21/09 (HMO-120, HMO-125).
 #### As variaveis dos crons: o build passa sem elas, os avisos nao saem
 
 As duas acima quebram o build quando faltam, entao e impossivel esquecer delas.
-Estas duas **nao**:
+Estas **nao**:
 
 | Variavel | Valor |
 | --- | --- |
 | `CRON_SECRET` | frase longa e aleatoria -- `openssl rand -base64 32` |
 | `SUPABASE_SERVICE_ROLE_KEY` | chave `service_role` do projeto Supabase |
+| `BRAPI_TOKEN` | chave do plano gratuito da brapi.dev -- so o cron de cotacao |
 
-Sem elas o deploy sobe verde, o site funciona inteiro e **os tres crons de
+Sem elas o deploy sobe verde, o site funciona inteiro e **os crons de
 `vercel.json` respondem 503 todo dia, para sempre**: o de vencimento de contas
 (11:00 UTC), a varredura de assinaturas (09:00) e o aviso de assinatura (09:30).
+
+O `BRAPI_TOKEN` e o unico dos tres que falta a so UM cron: sem ele o
+`/api/cron/cotacoes` (HMO-191) responde 503 e o preco dos ativos da carteira
+continua vindo da mao do usuario -- que e como o app funcionava antes daquela
+entrega. Os outros quatro jobs seguem normais. A conta e de graca em brapi.dev
+e da 15.000 chamadas por mes, uma por ticker.
 Foi exatamente o que aconteceu -- `CRON_SECRET` nunca foi definida, entao desde
 a HMO-141 nenhum aviso de vencimento chegou a ninguem, e ninguem percebeu,
 porque uma rota que nunca roda com sucesso tambem nao gera erro nenhum no

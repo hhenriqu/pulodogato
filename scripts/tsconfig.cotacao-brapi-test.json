@@ -1,0 +1,22 @@
+{
+  "//": "Build so do teste da HMO-191. lib/cotacao-brapi.ts nao importa nada do projeto -- nao usa o alias @/ -- entao este build NAO precisa do passo resolve-aliases.mjs que test:moeda e test:safe-to-spend usam.",
+  "compilerOptions": {
+    "outDir": "../.tmp-cotacao-brapi",
+    "rootDir": "../lib",
+    "module": "es2020",
+    "target": "es2020",
+    "moduleResolution": "node",
+    "strict": true,
+    "skipLibCheck": true,
+    "types": ["node"],
+    "baseUrl": "..",
+    "paths": {
+      "@/*": [
+        "./*"
+      ]
+    }
+  },
+  "include": [
+    "../lib/cotacao-brapi.ts"
+  ]
+}
