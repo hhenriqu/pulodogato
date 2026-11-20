@@ -75,10 +75,24 @@ export interface Match {
   dayGap: number | null;
   /** 0..1, quanto as descricoes se parecem. null quando nao casou. */
   similarity: number | null;
+  /**
+   * Diferenca de valor em reais (lancamento existente menos linha do extrato).
+   * 0 no casamento exato; null quando nao casou. Diferente de 0 so ate
+   * `toleranciaCentavos` -- ver `conciliar`.
+   */
+  amountGap: number | null;
 }
 
 /** Quantos dias de folga entre a compra e a data que o banco registrou. */
 export const TOLERANCIA_DIAS_PADRAO = 3;
+
+/**
+ * Folga de valor da conciliacao, em centavos. A compra lancada a mao com
+ * R$ 47,41 e a fatura com R$ 47,39 (arredondamento da parcela, IOF, cambio) e
+ * o mesmo gasto. Sem folga nenhuma a conciliacao nao sugeria nada, o usuario
+ * clicava Confirmar e a fatura ficava com o gasto em dobro.
+ */
+export const TOLERANCIA_CENTAVOS_PADRAO = 10;
 
 // =====================================================
 // Texto
@@ -618,9 +632,11 @@ function semelhanca(a: string, b: string): number {
  *
  * Tres regras, e a terceira e a que custa dinheiro se faltar:
  *
- *   1. O valor tem que bater EXATAMENTE, com sinal. Casar por aproximacao
- *      ligaria um almoco de R$ 32,00 a um de R$ 32,50 e o usuario perderia o
- *      lancamento certo sem ver.
+ *   1. O valor tem que bater, com sinal, com no maximo `toleranciaCentavos`
+ *      de diferenca (padrao R$ 0,10). Uma folga maior ligaria um almoco de
+ *      R$ 32,00 a um de R$ 32,50 e o usuario perderia o lancamento certo sem
+ *      ver. O par exato sempre ganha do aproximado, e a diferenca vai em
+ *      `amountGap` para a tela mostrar antes de o usuario aceitar.
  *   2. A data pode ter ate `toleranciaDias` de folga: a compra no cartao e de
  *      sexta e o banco registra na segunda.
  *   3. Cada lancamento existente e reivindicado por NO MAXIMO UMA linha. Sem
@@ -636,13 +652,16 @@ function semelhanca(a: string, b: string): number {
 export function conciliar(
   entries: StatementEntry[],
   existentes: ExistingTransaction[],
-  opcoes: { toleranciaDias?: number } = {}
+  opcoes: { toleranciaDias?: number; toleranciaCentavos?: number } = {}
 ): Match[] {
   const tolerancia = opcoes.toleranciaDias ?? TOLERANCIA_DIAS_PADRAO;
+  const toleranciaCentavos = opcoes.toleranciaCentavos ?? TOLERANCIA_CENTAVOS_PADRAO;
 
   interface Par {
     iEntrada: number;
     iExistente: number;
+    /** existente - entrada, em centavos inteiros */
+    centavos: number;
     dias: number;
     sim: number;
   }
@@ -651,7 +670,12 @@ export function conciliar(
   entries.forEach((entrada, iEntrada) => {
     existentes.forEach((existente, iExistente) => {
       // centavos inteiros: 32.00 !== 32.000000000000004 em float
-      if (Math.round(entrada.amount * 100) !== Math.round(existente.amount * 100)) return;
+      const centavosEntrada = Math.round(entrada.amount * 100);
+      const centavosExistente = Math.round(existente.amount * 100);
+      // O sinal tem que ser o mesmo: R$ 0,05 de despesa nao e R$ 0,05 de receita.
+      if (Math.sign(centavosEntrada) !== Math.sign(centavosExistente)) return;
+      const centavos = centavosExistente - centavosEntrada;
+      if (Math.abs(centavos) > toleranciaCentavos) return;
 
       const dias = distanciaEmDias(entrada.postedAt, existente.transaction_date);
       if (dias > tolerancia) return;
@@ -659,14 +683,22 @@ export function conciliar(
       pares.push({
         iEntrada,
         iExistente,
+        centavos,
         dias,
         sim: semelhanca(entrada.description, existente.description),
       });
     });
   });
 
+  // Valor exato primeiro: um par aproximado so leva o lancamento que nenhuma
+  // linha casava em cheio.
   pares.sort(
-    (a, b) => a.dias - b.dias || b.sim - a.sim || a.iEntrada - b.iEntrada || a.iExistente - b.iExistente
+    (a, b) =>
+      Math.abs(a.centavos) - Math.abs(b.centavos) ||
+      a.dias - b.dias ||
+      b.sim - a.sim ||
+      a.iEntrada - b.iEntrada ||
+      a.iExistente - b.iExistente
   );
 
   const entradaUsada = new Set<number>();
@@ -687,6 +719,7 @@ export function conciliar(
       transactionId: par ? existentes[par.iExistente].id : null,
       dayGap: par ? par.dias : null,
       similarity: par ? Number(par.sim.toFixed(2)) : null,
+      amountGap: par ? par.centavos / 100 : null,
     };
   });
 }

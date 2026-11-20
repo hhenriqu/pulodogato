@@ -75,7 +75,10 @@ export async function GET(
     // Os lancamentos ja existentes na MESMA conta e dentro do periodo, com a
     // folga de dias dos dois lados. Filtrar pela conta importa: um almoco de
     // R$ 32 no cartao nao concilia com um almoco de R$ 32 na conta corrente.
-    let sugestoes = new Map<string, { transactionId: string; dayGap: number; similarity: number }>();
+    let sugestoes = new Map<
+      string,
+      { transactionId: string; dayGap: number; similarity: number; amountGap: number }
+    >();
 
     if (pendentes.length > 0) {
       const datas = pendentes.map((l) => l.posted_at).sort();
@@ -129,6 +132,7 @@ export async function GET(
               transactionId: c.transactionId as string,
               dayGap: c.dayGap as number,
               similarity: c.similarity as number,
+              amountGap: c.amountGap as number,
             },
           ])
       );
@@ -251,6 +255,9 @@ export async function GET(
                 transaction: sugeridoPorId.get(s.transactionId) ?? null,
                 day_gap: s.dayGap,
                 similarity: s.similarity,
+                // existente - extrato, em reais. Diferente de 0 so por centavos
+                // (TOLERANCIA_CENTAVOS_PADRAO): a tela mostra antes do "É o mesmo".
+                amount_gap: s.amountGap,
               }
             : null,
           // Possivel duplicata de uma linha de OUTRO extrato da mesma conta.

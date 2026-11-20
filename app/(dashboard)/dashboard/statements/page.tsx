@@ -104,6 +104,8 @@ interface Sugestao {
   transaction: { id: string; description: string; amount: number; transaction_date: string } | null;
   day_gap: number;
   similarity: number;
+  /** existente - extrato, em reais; 0 no casamento exato, centavos no aproximado */
+  amount_gap?: number;
 }
 
 interface StatementEntry {
@@ -358,6 +360,8 @@ export default function StatementsPage() {
       // criada. `link` aponta para lancamento que ja existia e `ignore` nao
       // toca em nada: varrer depois deles seria trabalho garantidamente inutil.
       if (action === "import" || action === "reset") extratoMexido.current = true;
+      // O `link` com centavos de diferenca corrige o valor do lancamento.
+      if (action === "link" && dados.adjusted_amount != null) extratoMexido.current = true;
 
       // A regra nasceu escondida atras de um "Lançar". Se o app nao contar
       // agora, o usuario nunca vai saber que ela existe -- e vai continuar
@@ -372,7 +376,9 @@ export default function StatementsPage() {
           action === "import"
             ? "Lançamento criado"
             : action === "link"
-              ? "Vinculado ao lançamento que já existia"
+              ? dados.adjusted_amount != null
+                ? `Vinculado. O lançamento ficou com o valor do banco, R$ ${valorNaTela(dados.adjusted_amount)}`
+                : "Vinculado ao lançamento que já existia"
               : action === "ignore"
                 ? "Linha cancelada"
                 : "Desfeito"
@@ -386,6 +392,13 @@ export default function StatementsPage() {
   };
 
   const descartar = async (id: string) => {
+    // Um clique apagava a fila inteira, com as edicoes feitas nela (QA B3).
+    if (
+      !window.confirm(
+        "Descartar este extrato? As linhas que ainda estão na fila e as edições feitas nelas serão perdidas. Os lançamentos já confirmados continuam."
+      )
+    )
+      return;
     const r = await fetch(`/api/statements/${id}`, { method: "DELETE" });
     const dados = await r.json().catch(() => ({}));
 
@@ -660,10 +673,14 @@ export default function StatementsPage() {
                         {linha.suggestion.day_gap > 0
                           ? ` (${linha.suggestion.day_gap} dia${linha.suggestion.day_gap > 1 ? "s" : ""} de diferença)`
                           : " (mesmo dia)"}
+                        {linha.suggestion.amount_gap
+                          ? `, R$ ${valorNaTela(linha.suggestion.transaction.amount)} no app: o lançamento fica com o valor do banco`
+                          : ""}
                       </span>
+                      {/* Botao principal da linha quando ha casamento: o Confirmar
+                          ao lado criava o gasto em dobro com um clique distraido (QA B2). */}
                       <Button
                         size="sm"
-                        variant="secondary"
                         disabled={ocupado}
                         onClick={() =>
                           agir(linha, "link", {
@@ -762,8 +779,17 @@ export default function StatementsPage() {
 
                     <Button
                       size="sm"
+                      variant={linha.suggestion?.transaction ? "outline" : "default"}
                       disabled={ocupado || !categoriaPorLinha[linha.id]}
                       onClick={() => {
+                        const ja = linha.suggestion?.transaction;
+                        if (
+                          ja &&
+                          !window.confirm(
+                            `Esta linha parece já lançada como "${ja.description}". Criar outro lançamento mesmo assim?`
+                          )
+                        )
+                          return;
                         const ed = edicaoPorLinha[linha.id];
                         const extra: Record<string, string> = { category_id: categoriaPorLinha[linha.id] };
                         if (ed) {
