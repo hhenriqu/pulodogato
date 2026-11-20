@@ -45,6 +45,9 @@ import {
   X,
 } from "lucide-react";
 import type { FinancialAccount, TransactionCategory } from "@/types/financial";
+import { CampoDeData } from "@/components/ui/campo-de-data";
+import { lerValor } from "@/lib/statement";
+import { mesDaFaturaPeloNome } from "@/lib/extrato-c6";
 
 import { Dica } from "@/components/ui/dica";
 const moeda = (valor: number) =>
@@ -58,8 +61,33 @@ const dataCurta = (iso: string | null) => {
   return `${dia}/${mes}/${ano.slice(2)}`;
 };
 
+// De onde e o arquivo (087, issue #447). A conta e a fatura do C6 tem formatos
+// diferentes, e um lido como o outro erra o sinal ou a data das parcelas.
+type Origem = "auto" | "c6_conta" | "c6_cartao";
+
+const ROTULO_DA_ORIGEM: Record<Origem, string> = {
+  auto: "OFX ou CSV (detectar sozinho)",
+  c6_conta: "C6 Bank: conta corrente",
+  c6_cartao: "C6 Bank: fatura do cartão",
+};
+
+/** 'AAAA-MM' do mes corrente, no fuso do aparelho. */
+const mesAtual = () => {
+  const hoje = new Date();
+  return `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, "0")}`;
+};
+
+/** O que o usuario mudou na linha antes de confirmar. */
+interface Edicao {
+  data: string;
+  valor: string;
+  descricao: string;
+}
+
 interface StatementImport {
   id: string;
+  source?: Origem;
+  invoice_month?: string | null;
   account_id: string;
   file_name: string;
   file_format: "ofx" | "csv";
@@ -89,7 +117,22 @@ interface StatementEntry {
   transaction_id: string | null;
   suggestion: Sugestao | null;
   category_suggestion: SugestaoCategoria | null;
+  // 087: o que a fatura do C6 traz alem do basico
+  installment_number?: number | null;
+  installment_total?: number | null;
+  purchase_date?: string | null;
+  card_last4?: string | null;
+  bank_category?: string | null;
+  suggested_action?: "ignore" | null;
+  // a mesma linha ja veio em OUTRO extrato desta conta
+  duplicate_of?: {
+    entry: { id: string; description: string; posted_at: string; status: string };
+    day_gap: number;
+  } | null;
 }
+
+const valorNaTela = (v: number) =>
+  Math.abs(v).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 // A categoria sugerida para a linha. `origin` distingue a REGRA do usuario
 // ("voce ja disse que isto e X") do palpite do catalogo ("acho que e X"), e a
@@ -108,6 +151,12 @@ export default function StatementsPage() {
   const [carregando, setCarregando] = useState(true);
 
   const [contaEscolhida, setContaEscolhida] = useState("");
+  const [origem, setOrigem] = useState<Origem>("auto");
+  const [mesDaFatura, setMesDaFatura] = useState(mesAtual());
+  // Enquanto o usuario nao mexer no mes, o nome do arquivo do C6
+  // ("Fatura_2026-11-20.csv") decide. Depois que ele mexeu, a escolha dele vale.
+  const mesTocado = useRef(false);
+  const [edicaoPorLinha, setEdicaoPorLinha] = useState<Record<string, Edicao>>({});
   const [enviando, setEnviando] = useState(false);
   const inputArquivo = useRef<HTMLInputElement>(null);
 
@@ -214,6 +263,19 @@ export default function StatementsPage() {
         }
       }
       setCategoriaPorLinha((m) => ({ ...m, ...novas }));
+
+      // Os campos editaveis abrem com o que o banco mandou.
+      const edicoes: Record<string, Edicao> = {};
+      for (const linha of entradas) {
+        if (linha.status === "pending") {
+          edicoes[linha.id] = {
+            data: String(linha.posted_at).slice(0, 10),
+            valor: valorNaTela(Number(linha.amount)),
+            descricao: linha.description,
+          };
+        }
+      }
+      setEdicaoPorLinha((m) => ({ ...m, ...edicoes }));
     } finally {
       setCarregandoLinhas(false);
     }
@@ -225,6 +287,15 @@ export default function StatementsPage() {
       return;
     }
 
+    let mes = mesDaFatura;
+    if (origem === "c6_cartao" && !mesTocado.current) {
+      const peloNome = mesDaFaturaPeloNome(arquivo.name);
+      if (peloNome) {
+        mes = peloNome;
+        setMesDaFatura(peloNome);
+      }
+    }
+
     setEnviando(true);
     setAvisos([]);
     try {
@@ -234,7 +305,13 @@ export default function StatementsPage() {
       const r = await fetch("/api/statements", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ accountId: contaEscolhida, fileName: arquivo.name, content: conteudo }),
+        body: JSON.stringify({
+          accountId: contaEscolhida,
+          fileName: arquivo.name,
+          content: conteudo,
+          source: origem,
+          invoiceMonth: origem === "c6_cartao" ? mes : undefined,
+        }),
       });
       const dados = await r.json().catch(() => ({}));
 
@@ -297,7 +374,7 @@ export default function StatementsPage() {
             : action === "link"
               ? "Vinculado ao lançamento que já existia"
               : action === "ignore"
-                ? "Linha ignorada"
+                ? "Linha cancelada"
                 : "Desfeito"
         );
 
@@ -352,7 +429,7 @@ export default function StatementsPage() {
         <h1 className="flex items-center gap-1.5 text-2xl font-bold tracking-tight">
           Importar extrato
           <Dica rotulo="Como funciona a importação">
-            Mande o OFX ou CSV do banco. O app separa o que já está lançado do que é novo —
+            Mande o OFX ou CSV do banco (ou o CSV do C6, da conta ou da fatura). O app separa o que já está lançado do que é novo —
             nada entra sem você confirmar.
           </Dica>
         </h1>
@@ -397,6 +474,43 @@ export default function StatementsPage() {
                 </SelectContent>
               </Select>
             </div>
+
+            <div className="space-y-2">
+              <Label>De onde é o arquivo</Label>
+              <Select value={origem} onValueChange={(v) => setOrigem(v as Origem)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(Object.keys(ROTULO_DA_ORIGEM) as Origem[]).map((o) => (
+                    <SelectItem key={o} value={o}>
+                      {ROTULO_DA_ORIGEM[o]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {origem === "c6_cartao" && (
+              <div className="space-y-2">
+                <Label htmlFor="mes-da-fatura-importada" className="flex items-center gap-1.5">
+                  Mês da fatura
+                  <Dica rotulo="Por que o mês da fatura">
+                    O C6 repete a data da compra original em cada parcela. A parcela 6/12 de uma
+                    compra de maio entra no dia 1 deste mês, e cada linha fica na fatura deste mês.
+                  </Dica>
+                </Label>
+                <Input
+                  id="mes-da-fatura-importada"
+                  type="month"
+                  value={mesDaFatura}
+                  onChange={(e) => {
+                    mesTocado.current = true;
+                    setMesDaFatura(e.target.value);
+                  }}
+                />
+              </div>
+            )}
 
             <div className="space-y-2">
               <Label>Arquivo</Label>
@@ -482,6 +596,58 @@ export default function StatementsPage() {
                     </p>
                   </div>
 
+                  {(linha.card_last4 || linha.installment_number || linha.bank_category) && (
+                    <div className="mt-2 flex flex-wrap gap-1.5 text-xs">
+                      {linha.card_last4 && <Badge variant="outline">cartão final {linha.card_last4}</Badge>}
+                      {linha.installment_number && (
+                        <Badge variant="outline">
+                          parcela {linha.installment_number}/{linha.installment_total}
+                        </Badge>
+                      )}
+                      {linha.purchase_date && (
+                        <Badge variant="outline">compra em {dataCurta(linha.purchase_date)}</Badge>
+                      )}
+                      {linha.bank_category && <Badge variant="outline">C6: {linha.bank_category}</Badge>}
+                    </div>
+                  )}
+
+                  {/* O pagamento da fatura ja aparece no extrato da conta: chega
+                      sugerido para cancelar, mas quem decide e o usuario. */}
+                  {linha.suggested_action === "ignore" && (
+                    <div className="mt-3 flex flex-wrap items-center gap-2 rounded-md border border-warning/30 bg-warning/10 p-2 text-sm">
+                      <AlertTriangle className="h-4 w-4 shrink-0 text-warning" />
+                      <span>
+                        Pagamento da fatura. Ele já aparece no extrato da conta; lançar aqui contaria
+                        duas vezes.
+                      </span>
+                      <Button size="sm" variant="secondary" disabled={ocupado} onClick={() => agir(linha, "ignore")}>
+                        Cancelar esta linha
+                      </Button>
+                    </div>
+                  )}
+
+                  {/* Possivel duplicata de outro extrato da mesma conta (OFX e
+                      depois CSV do mesmo mes, por exemplo). */}
+                  {linha.duplicate_of && (
+                    <div className="mt-3 flex flex-wrap items-center gap-2 rounded-md border border-warning/30 bg-warning/10 p-2 text-sm">
+                      <AlertTriangle className="h-4 w-4 shrink-0 text-warning" />
+                      <span className="text-muted-foreground">Possível duplicata: já veio em outro extrato como</span>
+                      <strong>{linha.duplicate_of.entry.description}</strong>
+                      <span className="text-muted-foreground">
+                        em {dataCurta(linha.duplicate_of.entry.posted_at)} (
+                        {linha.duplicate_of.entry.status === "pending"
+                          ? "ainda pendente lá"
+                          : linha.duplicate_of.entry.status === "imported"
+                            ? "lançada"
+                            : "vinculada"}
+                        )
+                      </span>
+                      <Button size="sm" variant="secondary" disabled={ocupado} onClick={() => agir(linha, "ignore")}>
+                        Cancelar esta linha
+                      </Button>
+                    </div>
+                  )}
+
                   {/* A sugestao da conciliacao, com o que ela encontrou a vista.
                       Sem mostrar COM O QUE casou, confirmar e um voto de fe. */}
                   {linha.suggestion?.transaction && (
@@ -512,6 +678,46 @@ export default function StatementsPage() {
                         )}
                         É o mesmo
                       </Button>
+                    </div>
+                  )}
+
+                  {edicaoPorLinha[linha.id] && (
+                    <div className="mt-3 grid gap-2 sm:grid-cols-[150px_120px_1fr]">
+                      <div className="space-y-1">
+                        <Label className="text-xs" htmlFor={`data-${linha.id}`}>Data</Label>
+                        <CampoDeData
+                          id={`data-${linha.id}`}
+                          value={edicaoPorLinha[linha.id].data}
+                          onChange={(v) =>
+                            setEdicaoPorLinha((m) => ({ ...m, [linha.id]: { ...m[linha.id], data: v } }))
+                          }
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs" htmlFor={`valor-${linha.id}`}>
+                          Valor ({despesa ? "saída" : "entrada"})
+                        </Label>
+                        <Input
+                          id={`valor-${linha.id}`}
+                          inputMode="decimal"
+                          className="h-9"
+                          value={edicaoPorLinha[linha.id].valor}
+                          onChange={(e) =>
+                            setEdicaoPorLinha((m) => ({ ...m, [linha.id]: { ...m[linha.id], valor: e.target.value } }))
+                          }
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs" htmlFor={`descricao-${linha.id}`}>Descrição</Label>
+                        <Input
+                          id={`descricao-${linha.id}`}
+                          className="h-9"
+                          value={edicaoPorLinha[linha.id].descricao}
+                          onChange={(e) =>
+                            setEdicaoPorLinha((m) => ({ ...m, [linha.id]: { ...m[linha.id], descricao: e.target.value } }))
+                          }
+                        />
+                      </div>
                     </div>
                   )}
 
@@ -557,16 +763,29 @@ export default function StatementsPage() {
                     <Button
                       size="sm"
                       disabled={ocupado || !categoriaPorLinha[linha.id]}
-                      onClick={() =>
-                        agir(linha, "import", { category_id: categoriaPorLinha[linha.id] })
-                      }
+                      onClick={() => {
+                        const ed = edicaoPorLinha[linha.id];
+                        const extra: Record<string, string> = { category_id: categoriaPorLinha[linha.id] };
+                        if (ed) {
+                          // O valor vai sem sinal: o sinal e o do banco (ver a rota).
+                          const v = lerValor(ed.valor);
+                          if (v === null || v === 0) {
+                            toast.error("Valor inválido");
+                            return;
+                          }
+                          extra.amount = String(Math.abs(v));
+                          if (ed.data) extra.transaction_date = ed.data;
+                          if (ed.descricao.trim()) extra.description = ed.descricao.trim();
+                        }
+                        agir(linha, "import", extra);
+                      }}
                     >
                       {ocupado ? (
                         <Loader2 className="mr-1 h-4 w-4 animate-spin" />
                       ) : (
                         <ArrowRight className="mr-1 h-4 w-4" />
                       )}
-                      Lançar
+                      Confirmar
                     </Button>
 
                     <Button
@@ -575,7 +794,7 @@ export default function StatementsPage() {
                       disabled={ocupado}
                       onClick={() => agir(linha, "ignore")}
                     >
-                      Ignorar
+                      Cancelar
                     </Button>
                   </div>
                 </div>
@@ -602,7 +821,7 @@ export default function StatementsPage() {
                             ? "lançada"
                             : linha.status === "linked"
                               ? "já existia"
-                              : "ignorada"}
+                              : "cancelada"}
                         </Badge>
                         <Button
                           size="sm"

@@ -1,0 +1,18 @@
+﻿Extrato personalizado
+
+Agência: 1 / Conta: 1234567
+"Categorias exportadas: Entradas, Saídas, Transferências, Pix"
+Extrato gerado em 20/11/2026 - as 15:05:59
+
+Extrato de 01/10/2026 a 20/11/2026
+
+
+Data Lançamento,Data Contábil,Título,Descrição,Entrada(R$),Saída(R$)
+01/10/2026,01/10/2026,Pix recebido de FULANO DE TAL,Pix recebido de FULANO DE TAL,1500.00,0.00
+05/10/2026,05/10/2026,"Pix enviado para BELTRANO DA SILVA                ",TRANSF ENVIADA PIX,0.00,2000.00
+13/10/2026,14/10/2026,Pix enviado para MERCADO EXEMPLO LTDA,TRANSF ENVIADA PIX,0.00,87.35
+25/10/2026,26/10/2026,Pix recusado,Pix recusado,0.00,20.00
+25/10/2026,26/10/2026,Pix estornado,Pix estornado,20.00,0.00
+25/10/2026,26/10/2026,Pix recusado,Pix recusado,0.00,20.00
+25/10/2026,26/10/2026,Pix estornado,Pix estornado,20.00,0.00
+03/11/2026,03/11/2026,Pix recebido de FULANO DE TAL,Pix recebido de FULANO DE TAL,25328.47,0.00

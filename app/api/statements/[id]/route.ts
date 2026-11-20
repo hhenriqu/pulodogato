@@ -18,7 +18,11 @@
 
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
-import { conciliar, TOLERANCIA_DIAS_PADRAO } from "@/lib/statement";
+import {
+  conciliar,
+  duplicadasEntreImportacoes,
+  TOLERANCIA_DIAS_PADRAO,
+} from "@/lib/statement";
 import { sugerirParaLinhas } from "@/lib/services/categorization";
 
 function somarDias(iso: string, dias: number): string {
@@ -130,6 +134,82 @@ export async function GET(
       );
     }
 
+    // DUPLICIDADE ENTRE IMPORTACOES (087, issue #447)
+    // ------------------------------------------------
+    // O fingerprint so reconhece o MESMO arquivo reenviado. O mesmo Pix lido de
+    // um OFX e depois do CSV do C6 tem fingerprints diferentes, e o lancamento
+    // que o primeiro criou esta fora da conciliacao acima (ja tem dono). Sem
+    // esta segunda comparacao o segundo arquivo dobraria o mes sem aviso.
+    //
+    // Entram as linhas JA RESOLVIDAS de qualquer outro extrato da conta, e as
+    // pendentes so de extratos enviados ANTES deste -- senao dois extratos
+    // pendentes apontariam um para o outro e o usuario cancelaria os dois.
+    // Linha ignorada nao entra: ela nunca virou dinheiro.
+    const duplicatas = new Map<
+      string,
+      { entry: { id: string; description: string; posted_at: string; status: string }; day_gap: number }
+    >();
+
+    if (pendentes.length > 0) {
+      const datas = pendentes.map((l) => String(l.posted_at).slice(0, 10)).sort();
+      const { data: outras } = await supabase
+        .from("statement_entries")
+        .select("id, import_id, posted_at, amount, description, status, installment_number, installment_total")
+        .eq("account_id", extrato.account_id)
+        .neq("import_id", extrato.id)
+        .neq("status", "ignored")
+        .gte("posted_at", somarDias(datas[0], -TOLERANCIA_DIAS_PADRAO))
+        .lte("posted_at", somarDias(datas[datas.length - 1], TOLERANCIA_DIAS_PADRAO));
+
+      const importsDasPendentes = Array.from(
+        new Set((outras ?? []).filter((o) => o.status === "pending").map((o) => o.import_id))
+      );
+      const { data: anteriores } = importsDasPendentes.length
+        ? await supabase
+            .from("statement_imports")
+            .select("id")
+            .in("id", importsDasPendentes)
+            .lt("created_at", extrato.created_at)
+        : { data: [] };
+      const importAnterior = new Set((anteriores ?? []).map((i) => i.id));
+
+      const candidatas = (outras ?? []).filter(
+        (o) => o.status !== "pending" || importAnterior.has(o.import_id)
+      );
+      const porId = new Map(candidatas.map((o) => [o.id, o]));
+
+      const achadas = duplicadasEntreImportacoes(
+        pendentes.map((l) => ({
+          id: l.id,
+          postedAt: String(l.posted_at).slice(0, 10),
+          amount: Number(l.amount),
+          installmentNumber: l.installment_number ?? null,
+          installmentTotal: l.installment_total ?? null,
+        })),
+        candidatas.map((o) => ({
+          id: o.id,
+          postedAt: String(o.posted_at).slice(0, 10),
+          amount: Number(o.amount),
+          installmentNumber: o.installment_number ?? null,
+          installmentTotal: o.installment_total ?? null,
+        }))
+      );
+
+      achadas.forEach((d, idLinha) => {
+        const o = porId.get(d.entryId);
+        if (!o) return;
+        duplicatas.set(idLinha, {
+          entry: {
+            id: o.id,
+            description: o.description,
+            posted_at: String(o.posted_at).slice(0, 10),
+            status: o.status,
+          },
+          day_gap: d.dayGap,
+        });
+      });
+    }
+
     // A descricao do lancamento sugerido, para a tela dizer COM O QUE a linha
     // casou. Sem ela o usuario confirma no escuro.
     const idsSugeridos = Array.from(sugestoes.values()).map((s) => s.transactionId);
@@ -173,6 +253,8 @@ export async function GET(
                 similarity: s.similarity,
               }
             : null,
+          // Possivel duplicata de uma linha de OUTRO extrato da mesma conta.
+          duplicate_of: duplicatas.get(l.id) ?? null,
           // `origin` viaja junto de proposito: e o que permite a tela tratar a
           // regra ("voce ja disse que isto e X") diferente do palpite ("acho
           // que e X"). Sem o campo, as duas teriam a mesma cara e o usuario

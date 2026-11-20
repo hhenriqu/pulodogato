@@ -115,8 +115,11 @@ const PERMITIDO = "components/ui/campo-de-data.tsx";
  * 16 -> 18: o relatorio de lancamentos com data de referencia (comparacao com
  * o Minhas Financas, 06/11/2026) tem data inicial e data final
  * (components/relatorios/RelatorioDeLancamentos.tsx).
+ *
+ * 18 -> 19: a fila de importacao de extrato deixa corrigir a data de cada
+ * linha antes de confirmar (issue #447, app/(dashboard)/dashboard/statements).
  */
-const CHAMADAS_ESPERADAS = 18;
+const CHAMADAS_ESPERADAS = 19;
 
 const ATRIBUTO_DE_DATA = /type\s*=\s*(?:["']date["']|\{\s*["']date["']\s*\})/gi;
 

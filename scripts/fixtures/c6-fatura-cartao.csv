@@ -1,0 +1,10 @@
+Data de Compra;Nome no Cartão;Final do Cartão;Categoria;Descrição;Parcela;Valor (em US$);Cotação (em R$);Valor (em R$)
+26/05/2026;FULANO D TAL;1111;Serviços Profissionais;MP *LOJAEXEMPLO;6/12;0;0;50.82
+15/10/2026;FULANO D TAL;1111;Marketing Direto;CONTABIL EXEMPLO;Única;0;0;255.00
+21/10/2026;FULANO D TAL;1111;Elétrico;SOFTWARE* ASSINATURA  SA;Única;109.20;5.28;576.20
+19/10/2026;FULANO D TAL;2222;-;"Inclusao de Pagamento    ";Única;0;0;-9063.51
+30/10/2026;FULANO D TAL;2222;Supermercados / Mercearia / Padarias / Lojas de Conveniência;PADARIA EXEMPLO;1/2;0;0;98.43
+03/11/2026;FULANO D TAL;2222;Estacionamento;PEDAGIO EXEMPLO;Única;0;0;16.10
+03/11/2026;FULANO D TAL;2222;Estacionamento;PEDAGIO EXEMPLO;Única;0;0;16.10
+08/11/2026;FULANO D TAL;2222;-;Anuidade Diferenciada;7/12;0;0;98.00
+08/11/2026;FULANO D TAL;2222;-;Estorno Tarifa;Única;0;0;-98.00

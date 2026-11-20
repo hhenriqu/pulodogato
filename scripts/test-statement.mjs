@@ -31,6 +31,7 @@ const {
   normalizarDescricao,
   conciliar,
   tipoPeloSinal,
+  duplicadasEntreImportacoes,
 } = await import("../.tmp-statement/statement.js");
 
 // =====================================================
@@ -413,4 +414,68 @@ test("negativo e despesa, positivo e receita", () => {
   assert.equal(tipoPeloSinal(-250), "expense");
   assert.equal(tipoPeloSinal(5000), "income");
   assert.equal(tipoPeloSinal(-0.01), "expense");
+});
+
+// =====================================================
+// 8. Duplicidade entre importacoes da mesma conta
+// =====================================================
+// O fingerprint so pega o MESMO arquivo reenviado. Um OFX de outubro e depois
+// o CSV de outubro da mesma conta tem fingerprints diferentes para o mesmo Pix
+// -- e o lancamento criado pelo primeiro e excluido da conciliacao porque ja
+// tem dono. Sem esta segunda regra o mes entraria dobrado.
+const linha = (id, d, v, extra = {}) => ({ id, postedAt: d, amount: v, installmentNumber: null, installmentTotal: null, ...extra });
+
+test("mesmo valor e data proxima em outra importacao: possivel duplicata", () => {
+  const r = duplicadasEntreImportacoes(
+    [linha("novo", "2026-10-13", -87.35)],
+    [linha("velho", "2026-10-14", -87.35)]
+  );
+  assert.deepEqual(r.get("novo"), { entryId: "velho", dayGap: 1 });
+});
+
+test("valor diferente ou data longe demais nao e duplicata", () => {
+  const r = duplicadasEntreImportacoes(
+    [linha("a", "2026-10-13", -87.35), linha("b", "2026-10-13", -50)],
+    [linha("x", "2026-10-13", -87.36), linha("y", "2026-10-20", -50)]
+  );
+  assert.equal(r.size, 0);
+});
+
+test("o sinal conta: uma entrada nao e duplicata de uma saida do mesmo valor", () => {
+  const r = duplicadasEntreImportacoes([linha("a", "2026-10-25", 20)], [linha("x", "2026-10-25", -20)]);
+  assert.equal(r.size, 0);
+});
+
+test("cada linha antiga e reivindicada uma vez so: o segundo Pix igual e novo", () => {
+  const r = duplicadasEntreImportacoes(
+    [linha("a", "2026-10-25", -20), linha("b", "2026-10-25", -20)],
+    [linha("x", "2026-10-25", -20)]
+  );
+  assert.equal(r.size, 1);
+  assert.equal(r.get("a").entryId, "x");
+  assert.equal(r.has("b"), false);
+});
+
+test("parcela diferente da mesma compra nunca e duplicata", () => {
+  const r = duplicadasEntreImportacoes(
+    [linha("seis", "2026-11-01", -50.82, { installmentNumber: 6, installmentTotal: 12 })],
+    [linha("cinco", "2026-11-01", -50.82, { installmentNumber: 5, installmentTotal: 12 })]
+  );
+  assert.equal(r.size, 0);
+});
+
+test("a mesma parcela importada de novo e duplicata", () => {
+  const r = duplicadasEntreImportacoes(
+    [linha("seis", "2026-11-01", -50.82, { installmentNumber: 6, installmentTotal: 12 })],
+    [linha("seis-antes", "2026-11-01", -50.82, { installmentNumber: 6, installmentTotal: 12 })]
+  );
+  assert.equal(r.get("seis").entryId, "seis-antes");
+});
+
+test("a data mais proxima ganha quando ha dois candidatos", () => {
+  const r = duplicadasEntreImportacoes(
+    [linha("a", "2026-10-10", -30)],
+    [linha("longe", "2026-10-13", -30), linha("perto", "2026-10-10", -30)]
+  );
+  assert.equal(r.get("a").entryId, "perto");
 });
