@@ -695,3 +695,85 @@ export function conciliar(
 export function tipoPeloSinal(amount: number): "expense" | "income" {
   return amount < 0 ? "expense" : "income";
 }
+
+// =====================================================
+// Duplicidade entre importacoes da mesma conta
+// =====================================================
+
+/** Uma linha de extrato, de qualquer importacao, para comparar com outra. */
+export interface LinhaParaDuplicidade {
+  id: string;
+  /** 'YYYY-MM-DD' */
+  postedAt: string;
+  /** sinal preservado */
+  amount: number;
+  /** k/N da parcela do cartao; null fora do cartao ou em compra a vista. */
+  installmentNumber: number | null;
+  installmentTotal: number | null;
+}
+
+export interface Duplicidade {
+  /** a linha da OUTRA importacao que parece ser a mesma */
+  entryId: string;
+  dayGap: number;
+}
+
+function mesmaParcela(a: LinhaParaDuplicidade, b: LinhaParaDuplicidade): boolean {
+  // So compara quando os dois lados sabem a parcela. Um OFX nao sabe, e nao
+  // pode impedir o casamento com a mesma compra lida do CSV.
+  if (a.installmentNumber == null || b.installmentNumber == null) return true;
+  return a.installmentNumber === b.installmentNumber && a.installmentTotal === b.installmentTotal;
+}
+
+/**
+ * Acha, para cada linha nova, a linha de OUTRA importacao da mesma conta que
+ * parece ser o mesmo fato.
+ *
+ * O fingerprint so pega o mesmo arquivo reenviado. O mesmo Pix lido de um OFX
+ * e depois de um CSV tem fingerprints diferentes, e o lancamento criado pelo
+ * primeiro fica fora da `conciliar` porque ja tem dono -- sem esta funcao, o
+ * segundo arquivo dobraria o mes sem aviso nenhum.
+ *
+ * Mesmas regras da `conciliar`, pelos mesmos motivos: valor exato com sinal,
+ * folga de dias, cada linha antiga reivindicada no maximo uma vez (dois Pix
+ * iguais contra um ja importado: um e duplicata, o outro e dinheiro de
+ * verdade), e atribuicao gulosa pela menor distancia. Mais uma: a parcela tem
+ * que ser a mesma, porque a 6/12 desta fatura e a 5/12 da passada tem o mesmo
+ * valor e a 6/12 nao pode sumir.
+ *
+ * E SUGESTAO: a tela marca a linha, quem decide e o usuario.
+ */
+export function duplicadasEntreImportacoes(
+  novas: LinhaParaDuplicidade[],
+  outras: LinhaParaDuplicidade[],
+  opcoes: { toleranciaDias?: number } = {}
+): Map<string, Duplicidade> {
+  const tolerancia = opcoes.toleranciaDias ?? TOLERANCIA_DIAS_PADRAO;
+  const pares: Array<{ iNova: number; iOutra: number; dias: number }> = [];
+
+  novas.forEach((nova, iNova) => {
+    outras.forEach((outra, iOutra) => {
+      if (nova.id === outra.id) return;
+      if (Math.round(nova.amount * 100) !== Math.round(outra.amount * 100)) return;
+      if (!mesmaParcela(nova, outra)) return;
+      const dias = distanciaEmDias(nova.postedAt, outra.postedAt);
+      if (dias > tolerancia) return;
+      pares.push({ iNova, iOutra, dias });
+    });
+  });
+
+  pares.sort((a, b) => a.dias - b.dias || a.iNova - b.iNova || a.iOutra - b.iOutra);
+
+  const novaUsada = new Set<number>();
+  const outraUsada = new Set<number>();
+  const resultado = new Map<string, Duplicidade>();
+
+  for (const par of pares) {
+    if (novaUsada.has(par.iNova) || outraUsada.has(par.iOutra)) continue;
+    novaUsada.add(par.iNova);
+    outraUsada.add(par.iOutra);
+    resultado.set(novas[par.iNova].id, { entryId: outras[par.iOutra].id, dayGap: par.dias });
+  }
+
+  return resultado;
+}

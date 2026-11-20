@@ -2,7 +2,8 @@
 //
 // Quatro acoes, e so a primeira cria dinheiro:
 //
-//   import  -> cria a financial_transaction com a categoria escolhida
+//   import  -> cria a financial_transaction com a categoria escolhida (e,
+//              desde a 087, com data, valor e descricao editados na fila)
 //   link    -> aponta a linha para um lancamento que JA existia (a conciliacao)
 //   ignore  -> a linha nao interessa (tarifa ja contabilizada, saldo, etc.)
 //   reset   -> desfaz, devolvendo a linha para 'pending'
@@ -239,7 +240,39 @@ export async function PATCH(
       );
     }
 
-    const valor = Number(linha.amount);
+    // --- o que o usuario editou na fila (087, issue #447) ------------------
+    // Data, valor e descricao podem ser corrigidos antes de confirmar. O VALOR
+    // chega sem sinal e o sinal continua sendo o do banco: editar "87,35" para
+    // "90,00" numa saida grava -90,00. Deixar o sinal vir da tela abriria a
+    // porta para o estorno digitado virar gasto -- ver o topo do arquivo.
+    const sinal = Number(linha.amount) < 0 ? -1 : 1;
+    let valor = Number(linha.amount);
+    if (body?.amount != null && body.amount !== "") {
+      const editado = Math.round(Math.abs(Number(body.amount)) * 100) / 100;
+      if (!Number.isFinite(editado) || editado === 0) {
+        return NextResponse.json({ error: "Valor inválido" }, { status: 400 });
+      }
+      valor = sinal * editado;
+    }
+
+    let data = String(linha.posted_at).slice(0, 10);
+    if (body?.transaction_date) {
+      const editada = String(body.transaction_date).trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(editada) || Number.isNaN(Date.parse(`${editada}T00:00:00Z`))) {
+        return NextResponse.json({ error: "Data inválida" }, { status: 400 });
+      }
+      data = editada;
+    }
+
+    // Na fatura do C6, o lancamento leva a parcela e o mes da fatura de onde
+    // veio. Sem o override, uma compra feita depois do fechamento cairia na
+    // fatura SEGUINTE pela data, e nao na fatura que o usuario importou.
+    const { data: extratoDaLinha } = await supabase
+      .from("statement_imports")
+      .select("source, invoice_month")
+      .eq("id", linha.import_id)
+      .single();
+    const daFatura = extratoDaLinha?.source === "c6_cartao";
 
     const { data: transacao, error: erroTransacao } = await supabase
       .from("financial_transactions")
@@ -251,9 +284,16 @@ export async function PATCH(
         // O usuario pode corrigir a descricao do banco ("PAG*IFD3947") na tela.
         description: (body?.description || linha.description || "Lançamento importado").slice(0, 500),
         amount: valor,
-        transaction_date: linha.posted_at,
+        transaction_date: data,
         transaction_type: tipoPeloSinal(valor),
         notes: linha.memo,
+        ...(daFatura
+          ? {
+              installment_number: linha.installment_number ?? null,
+              installment_total: linha.installment_total ?? null,
+              invoice_month_override: extratoDaLinha?.invoice_month ?? null,
+            }
+          : {}),
       })
       .select()
       .single();

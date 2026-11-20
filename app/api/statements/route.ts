@@ -13,7 +13,14 @@
 
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
-import { parseStatement } from "@/lib/statement";
+import { parseStatement, type ParseResult } from "@/lib/statement";
+import { lerExtratoC6, type EntradaC6 } from "@/lib/extrato-c6";
+
+// De onde e o arquivo (087, issue #447). 'auto' e o OFX/CSV generico de sempre;
+// os do C6 sao lidos pelo formato proprio, que o usuario escolhe na tela porque
+// a conta e a fatura do C6 tem formatos diferentes.
+const ORIGENS = ["auto", "c6_conta", "c6_cartao"] as const;
+type Origem = (typeof ORIGENS)[number];
 
 /** 5 MB de texto: um ano de extrato em OFX raramente passa de 1 MB. */
 const TAMANHO_MAXIMO = 5 * 1024 * 1024;
@@ -99,11 +106,29 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { accountId, fileName, content } = body as {
+    const { accountId, fileName, content, source, invoiceMonth } = body as {
       accountId?: string;
       fileName?: string;
       content?: string;
+      source?: string;
+      invoiceMonth?: string;
     };
+
+    const origem: Origem = ORIGENS.includes(source as Origem) ? (source as Origem) : "auto";
+    if (source != null && source !== origem) {
+      return NextResponse.json({ error: "Origem do arquivo inválida" }, { status: 400 });
+    }
+
+    // O mes da fatura decide em que mes caem as parcelas 2+ e vira o
+    // invoice_month_override do lancamento. Sem ele a fatura sairia espalhada
+    // pelos meses das compras originais.
+    const mesDaFatura = String(invoiceMonth ?? "").trim();
+    if (origem === "c6_cartao" && !/^\d{4}-(0[1-9]|1[0-2])$/.test(mesDaFatura)) {
+      return NextResponse.json(
+        { error: "Informe o mês da fatura (AAAA-MM)" },
+        { status: 400 }
+      );
+    }
 
     if (!accountId) {
       return NextResponse.json(
@@ -127,7 +152,7 @@ export async function POST(request: NextRequest) {
     // um erro do Postgres; aqui o usuario le uma frase.
     const { data: conta } = await supabase
       .from("financial_accounts")
-      .select("id, name")
+      .select("id, name, account_type")
       .eq("id", accountId)
       .eq("user_id", user.id)
       .single();
@@ -136,13 +161,37 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Conta não encontrada" }, { status: 404 });
     }
 
-    const resultado = parseStatement(content);
+    // A fatura so faz sentido num cartao, e o extrato da conta so fora dele:
+    // trocar os dois gravaria compras do cartao no saldo da conta corrente.
+    const ehCartao = conta.account_type === "credit_card";
+    if (origem === "c6_cartao" && !ehCartao) {
+      return NextResponse.json(
+        { error: "A fatura do cartão precisa ir para uma conta do tipo cartão de crédito" },
+        { status: 400 }
+      );
+    }
+    if (origem === "c6_conta" && ehCartao) {
+      return NextResponse.json(
+        { error: "O extrato da conta corrente não pode ir para um cartão de crédito" },
+        { status: 400 }
+      );
+    }
+
+    const resultado: Omit<ParseResult, "entries"> & { entries: Array<Partial<EntradaC6> & ParseResult["entries"][number]> } =
+      origem === "auto"
+        ? parseStatement(content)
+        : lerExtratoC6(content, {
+            tipo: origem === "c6_cartao" ? "cartao" : "conta",
+            mesDaFatura: origem === "c6_cartao" ? mesDaFatura : null,
+          });
 
     if (resultado.entries.length === 0) {
       return NextResponse.json(
         {
           error:
-            "Não encontrei nenhum lançamento neste arquivo. Confira se é o extrato em OFX ou CSV exportado pelo banco.",
+            origem === "auto"
+              ? "Não encontrei nenhum lançamento neste arquivo. Confira se é o extrato em OFX ou CSV exportado pelo banco."
+              : "Não encontrei nenhum lançamento do C6 neste arquivo.",
           warnings: resultado.warnings,
         },
         { status: 422 }
@@ -166,6 +215,8 @@ export async function POST(request: NextRequest) {
         period_start: resultado.periodStart,
         period_end: resultado.periodEnd,
         entry_count: resultado.entries.length,
+        source: origem,
+        invoice_month: origem === "c6_cartao" ? `${mesDaFatura}-01` : null,
       })
       .select()
       .single();
@@ -193,6 +244,12 @@ export async function POST(request: NextRequest) {
           amount: e.amount,
           description: e.description.slice(0, 500),
           memo: e.memo?.slice(0, 500) ?? null,
+          installment_number: e.installmentNumber ?? null,
+          installment_total: e.installmentTotal ?? null,
+          purchase_date: e.purchaseDate ?? null,
+          card_last4: e.cardLast4?.slice(0, 8) ?? null,
+          bank_category: e.bankCategory?.slice(0, 200) ?? null,
+          suggested_action: e.suggestedAction ?? null,
         })),
         { onConflict: "account_id,fingerprint", ignoreDuplicates: true }
       )
