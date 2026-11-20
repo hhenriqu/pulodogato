@@ -341,12 +341,41 @@ test("a folga de dias cobre a compra que o banco registra depois", () => {
   assert.equal(fora[0].transactionId, null, "4 dias nao entra");
 });
 
-test("valor diferente nunca casa, nem por um centavo", () => {
+test("valor diferente alem da folga de centavos nao casa", () => {
   const m = conciliar(
     extrato([{ d: "2026-09-10", v: -32.0, t: "ALMOCO" }]),
     [{ id: "t1", amount: -32.5, transaction_date: "2026-09-10", description: "Almoco" }]
   );
   assert.equal(m[0].transactionId, null);
+
+  const onze = conciliar(
+    extrato([{ d: "2026-09-10", v: -32.0, t: "ALMOCO" }]),
+    [{ id: "t1", amount: -32.11, transaction_date: "2026-09-10", description: "Almoco" }]
+  );
+  assert.equal(onze[0].transactionId, null, "R$ 0,11 ja passa da folga");
+});
+
+test("alguns centavos de diferenca casam, e a diferenca vai junto", () => {
+  // O caso real da fatura do C6: Steam lancado a mao com 47,41, a fatura com
+  // 47,39. Sem folga, o Confirmar criava o gasto em dobro.
+  const m = conciliar(
+    extrato([{ d: "2026-11-01", v: -47.39, t: "PAG*STEAM (2/3)" }]),
+    [{ id: "t1", amount: -47.41, transaction_date: "2026-11-01", description: "Steam" }]
+  );
+  assert.equal(m[0].transactionId, "t1");
+  assert.equal(m[0].amountGap, -0.02);
+});
+
+test("o valor exato ganha do aproximado", () => {
+  const m = conciliar(
+    extrato([{ d: "2026-09-10", v: -50, t: "SAQUE" }]),
+    [
+      { id: "quase", amount: -50.05, transaction_date: "2026-09-10", description: "Saque" },
+      { id: "exato", amount: -50, transaction_date: "2026-09-12", description: "Saque" },
+    ]
+  );
+  assert.equal(m[0].transactionId, "exato");
+  assert.equal(m[0].amountGap, 0);
 });
 
 test("o SINAL faz parte do casamento", () => {
@@ -404,7 +433,7 @@ test("a semelhanca de descricao desempata entre candidatos iguais", () => {
 
 test("sem nenhum candidato, a linha e nova", () => {
   const m = conciliar(extrato([{ d: "2026-09-10", v: -250, t: "MERCADO" }]), []);
-  assert.deepEqual(m[0], { fingerprint: "fp0", transactionId: null, dayGap: null, similarity: null });
+  assert.deepEqual(m[0], { fingerprint: "fp0", transactionId: null, dayGap: null, similarity: null, amountGap: null });
 });
 
 // =====================================================

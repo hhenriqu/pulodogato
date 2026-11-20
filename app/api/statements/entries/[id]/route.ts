@@ -19,7 +19,7 @@
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { getServiceId } from "@/lib/services/scheduled";
-import { tipoPeloSinal } from "@/lib/statement";
+import { TOLERANCIA_CENTAVOS_PADRAO, tipoPeloSinal } from "@/lib/statement";
 import {
   aprenderRegra,
   regraParaLinha,
@@ -140,10 +140,18 @@ export async function PATCH(
         return NextResponse.json({ error: "Lançamento não encontrado" }, { status: 404 });
       }
 
-      // O valor tem que bater exatamente. Vincular valores diferentes faria a
-      // linha sumir do extrato sem que o lancamento correspondente existisse --
-      // e a diferenca nunca mais apareceria em lugar nenhum.
-      if (Math.round(Number(alvo.amount) * 100) !== Math.round(Number(linha.amount) * 100)) {
+      // O valor tem que bater, com no maximo alguns centavos de diferenca (a
+      // mesma folga da conciliacao). Vincular valores diferentes faria a linha
+      // sumir do extrato sem que o lancamento correspondente existisse -- e a
+      // diferenca nunca mais apareceria em lugar nenhum. Por isso, quando ha
+      // diferenca de centavos, o lancamento passa a ter o valor do BANCO, que
+      // e o que de fato saiu da conta (mais abaixo).
+      const centavosAlvo = Math.round(Number(alvo.amount) * 100);
+      const centavosLinha = Math.round(Number(linha.amount) * 100);
+      if (
+        Math.sign(centavosAlvo) !== Math.sign(centavosLinha) ||
+        Math.abs(centavosAlvo - centavosLinha) > TOLERANCIA_CENTAVOS_PADRAO
+      ) {
         return NextResponse.json(
           { error: "O valor do lançamento escolhido é diferente do valor do extrato" },
           { status: 409 }
@@ -166,6 +174,21 @@ export async function PATCH(
         );
       }
 
+      // Centavos de diferenca: o lancamento fica com o valor do extrato. Assim
+      // a fatura e o saldo batem com o banco, e a diferenca nao some calada.
+      const valorAjustado = centavosAlvo !== centavosLinha ? centavosLinha / 100 : null;
+      if (valorAjustado !== null) {
+        const { error: erroValor } = await supabase
+          .from("financial_transactions")
+          .update({ amount: valorAjustado })
+          .eq("id", transactionId)
+          .eq("user_id", user.id);
+        if (erroValor) {
+          console.error("Erro ao ajustar o valor ao vincular:", erroValor);
+          return NextResponse.json({ error: "Não foi possível vincular" }, { status: 500 });
+        }
+      }
+
       const { error } = await supabase
         .from("statement_entries")
         .update({ status: "linked", transaction_id: transactionId })
@@ -176,7 +199,7 @@ export async function PATCH(
         return NextResponse.json({ error: "Não foi possível vincular" }, { status: 500 });
       }
 
-      return NextResponse.json({ ok: true, transaction_id: transactionId });
+      return NextResponse.json({ ok: true, transaction_id: transactionId, adjusted_amount: valorAjustado });
     }
 
     // ---------------------------------------------------------------
