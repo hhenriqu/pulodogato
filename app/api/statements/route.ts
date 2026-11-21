@@ -15,11 +15,13 @@ import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { parseStatement, type ParseResult } from "@/lib/statement";
 import { lerExtratoC6, type EntradaC6 } from "@/lib/extrato-c6";
+import { lerExtratoMercadoPago } from "@/lib/extrato-mercadopago";
 
 // De onde e o arquivo (087, issue #447). 'auto' e o OFX/CSV generico de sempre;
 // os do C6 sao lidos pelo formato proprio, que o usuario escolhe na tela porque
-// a conta e a fatura do C6 tem formatos diferentes.
-const ORIGENS = ["auto", "c6_conta", "c6_cartao"] as const;
+// a conta e a fatura do C6 tem formatos diferentes. O Mercado Pago (088) tem
+// o formato dele, com o resumo de saldo no topo.
+const ORIGENS = ["auto", "c6_conta", "c6_cartao", "mercadopago_conta"] as const;
 type Origem = (typeof ORIGENS)[number];
 
 /** 5 MB de texto: um ano de extrato em OFX raramente passa de 1 MB. */
@@ -170,9 +172,9 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
-    if (origem === "c6_conta" && ehCartao) {
+    if ((origem === "c6_conta" || origem === "mercadopago_conta") && ehCartao) {
       return NextResponse.json(
-        { error: "O extrato da conta corrente não pode ir para um cartão de crédito" },
+        { error: "O extrato da conta não pode ir para um cartão de crédito" },
         { status: 400 }
       );
     }
@@ -180,18 +182,22 @@ export async function POST(request: NextRequest) {
     const resultado: Omit<ParseResult, "entries"> & { entries: Array<Partial<EntradaC6> & ParseResult["entries"][number]> } =
       origem === "auto"
         ? parseStatement(content)
-        : lerExtratoC6(content, {
-            tipo: origem === "c6_cartao" ? "cartao" : "conta",
-            mesDaFatura: origem === "c6_cartao" ? mesDaFatura : null,
-          });
+        : origem === "mercadopago_conta"
+          ? lerExtratoMercadoPago(content)
+          : lerExtratoC6(content, {
+              tipo: origem === "c6_cartao" ? "cartao" : "conta",
+              mesDaFatura: origem === "c6_cartao" ? mesDaFatura : null,
+            });
 
     if (resultado.entries.length === 0) {
+      // O motivo vai no proprio erro: o toast dizia so "nenhum lancamento do
+      // C6" enquanto o quadro amarelo explicava o porque (QA B5).
       return NextResponse.json(
         {
           error:
             origem === "auto"
               ? "Não encontrei nenhum lançamento neste arquivo. Confira se é o extrato em OFX ou CSV exportado pelo banco."
-              : "Não encontrei nenhum lançamento do C6 neste arquivo.",
+              : resultado.warnings[0] ?? "Não encontrei nenhum lançamento neste arquivo.",
           warnings: resultado.warnings,
         },
         { status: 422 }
@@ -267,6 +273,20 @@ export async function POST(request: NextRequest) {
 
     const novas = inseridas?.length ?? 0;
     const duplicadas = resultado.entries.length - novas;
+
+    // Tudo repetido: o registro nao fica no historico como uma importacao
+    // vazia ("0 novo(s) · 47 repetido(s)", QA B1). So o aviso volta.
+    if (novas === 0) {
+      await supabase.from("statement_imports").delete().eq("id", novoImport.id);
+      return NextResponse.json({
+        import: null,
+        parsed: resultado.entries.length,
+        inserted: 0,
+        duplicates: duplicadas,
+        warnings: resultado.warnings,
+        message: `Nada novo: as ${duplicadas} linha(s) deste arquivo já estavam importadas.`,
+      });
+    }
 
     const { data: atualizado } = await supabase
       .from("statement_imports")

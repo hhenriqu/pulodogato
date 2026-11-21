@@ -1,5 +1,5 @@
 {
-  "//": "Build so do teste da leitura do CSV do C6 (lib/extrato-c6.ts). O arquivo importa @/lib/statement, entao os dois entram e o alias e reescrito por resolve-aliases depois da emissao -- mesmo desenho do tsconfig.card-invoice-test.json.",
+  "//": "Build so do teste da leitura do CSV do C6 (lib/extrato-c6.ts). O arquivo importa @/lib/statement, entao os dois entram e o alias e reescrito por resolve-aliases depois da emissao -- mesmo desenho do tsconfig.card-invoice-test.json. Inclui a leitura do Mercado Pago (lib/extrato-mercadopago.ts), que usa os mesmos helpers.",
   "compilerOptions": {
     "outDir": "../.tmp-extrato-c6",
     "rootDir": "../lib",
@@ -17,6 +17,7 @@
   },
   "include": [
     "../lib/extrato-c6.ts",
-    "../lib/statement.ts"
+    "../lib/statement.ts",
+    "../lib/extrato-mercadopago.ts"
   ]
 }

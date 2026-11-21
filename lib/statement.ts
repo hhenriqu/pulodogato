@@ -724,6 +724,61 @@ export function conciliar(
   });
 }
 
+// =====================================================
+// Dinheiro que so trocou de bolso
+// =====================================================
+
+/**
+ * Por que a linha parece ser dinheiro do proprio usuario mudando de lugar:
+ *
+ *   'titular'  Pix/TED/transferencia de ou para alguem com o nome do titular
+ *              ("Pix enviado para Fulano de Tal", "Pix recebido de FULANO TAL")
+ *   'reserva'  dinheiro guardado ou resgatado dentro do mesmo banco
+ *              ("Dinheiro reservado" do Mercado Pago)
+ *
+ * Confirmada como esta, essa linha vira receita OU despesa e infla o resultado
+ * do mes -- no extrato real do QA, 50 de 111 linhas eram isso. A tela usa a
+ * resposta so para SUGERIR "Transferência entre contas"; quem decide e o
+ * usuario.
+ */
+export type TransferenciaPropria = "titular" | "reserva";
+
+const PARTICULAS_DO_NOME = new Set(["de", "da", "do", "das", "dos", "e"]);
+
+function tokensDoNome(texto: string): string[] {
+  return normalizarDescricao(texto)
+    .replace(/[^a-z0-9 ]/g, " ")
+    .split(" ")
+    .filter((t) => t.length > 1 && !PARTICULAS_DO_NOME.has(t));
+}
+
+/**
+ * O nome do titular casa quando TODOS os nomes dele aparecem na descricao.
+ * Todos, e nao "nome e sobrenome": o irmao "Tiago ... de Moraes" e a prima
+ * "Talita Moreira de Moraes" dividem sobrenomes com o titular, e um Pix para
+ * eles e despesa de verdade. Nome com uma palavra so nao basta para afirmar
+ * nada, e a funcao nao sugere.
+ */
+export function pareceTransferenciaPropria(
+  descricao: string,
+  nomeDoTitular: string | null | undefined
+): TransferenciaPropria | null {
+  const texto = normalizarDescricao(descricao);
+
+  if (/^dinheiro (reservado|retirado|resgatado)\b/.test(texto)) return "reserva";
+
+  const ehMovimentoDeConta =
+    /\b(pix|ted|doc|transf\w*)\b/.test(texto) &&
+    /\b(enviad[oa]|recebid[oa]|para|de)\b/.test(texto);
+  if (!ehMovimentoDeConta) return null;
+
+  const nome = tokensDoNome(nomeDoTitular ?? "");
+  if (nome.length < 2) return null;
+
+  const palavras = new Set(tokensDoNome(descricao));
+  return nome.every((t) => palavras.has(t)) ? "titular" : null;
+}
+
 /** O tipo do lancamento sai do SINAL, e de mais nada. Ver o topo do arquivo. */
 export function tipoPeloSinal(amount: number): "expense" | "income" {
   return amount < 0 ? "expense" : "income";
