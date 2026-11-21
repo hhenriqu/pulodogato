@@ -14,6 +14,7 @@
 // silencio, e o erro dela e apagar do app um gasto que aconteceu de verdade.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -49,6 +50,7 @@ import type { FinancialAccount, TransactionCategory } from "@/types/financial";
 import { CampoDeData } from "@/components/ui/campo-de-data";
 import { lerValor } from "@/lib/statement";
 import { mesDaFaturaPeloNome } from "@/lib/extrato-c6";
+import { detectarOrigem, ROTULO_DA_ORIGEM_DETECTADA } from "@/lib/extrato-mercadopago";
 import { NovaContaRapida } from "@/components/contas/NovaContaRapida";
 import type { AccountType } from "@/types/financial";
 
@@ -153,6 +155,9 @@ interface StatementEntry {
   } | null;
 }
 
+// "Pagamento de fatura Cartão de crédito" (Mercado Pago), "PGTO FATURA" etc.
+const PAGAMENTO_DE_FATURA = /\b(pagamento|pgto|pag)\.? (de )?fatura\b/i;
+
 const valorNaTela = (v: number) =>
   Math.abs(v).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -254,9 +259,12 @@ export default function StatementsPage() {
     varrerSeMexeu();
   }, [varrerSeMexeu]);
 
-  const abrirExtrato = useCallback(async (id: string) => {
+  // `silencioso`: depois de resolver uma linha, a fila e relida sem o
+  // carregando por cima -- antes a lista sumia e a pagina pulava a cada
+  // clique, e com 111 linhas o usuario perdia o lugar (QA do Mercado Pago, B4).
+  const abrirExtrato = useCallback(async (id: string, opcoes: { silencioso?: boolean } = {}) => {
     setAbertoId(id);
-    setCarregandoLinhas(true);
+    if (!opcoes.silencioso) setCarregandoLinhas(true);
     try {
       const r = await fetch(`/api/statements/${id}`);
       const dados = await r.json().catch(() => ({}));
@@ -288,7 +296,9 @@ export default function StatementsPage() {
           novas[linha.id] = linha.category_suggestion.category_id;
         }
       }
-      setCategoriaPorLinha((m) => ({ ...m, ...novas }));
+      // O que o usuario ja escolheu ganha da sugestao: a releitura depois de
+      // cada clique nao pode desfazer a categoria trocada em outra linha.
+      setCategoriaPorLinha((m) => ({ ...novas, ...m }));
 
       // Os campos editaveis abrem com o que o banco mandou.
       const edicoes: Record<string, Edicao> = {};
@@ -301,7 +311,8 @@ export default function StatementsPage() {
           };
         }
       }
-      setEdicaoPorLinha((m) => ({ ...m, ...edicoes }));
+      // Mesma regra para data, valor e descricao editados e ainda nao confirmados.
+      setEdicaoPorLinha((m) => ({ ...edicoes, ...m }));
     } finally {
       setCarregandoLinhas(false);
     }
@@ -313,8 +324,21 @@ export default function StatementsPage() {
       return;
     }
 
+    // "Detectar sozinho" reconhece o CSV do C6 e o do Mercado Pago pelo
+    // cabecalho e usa o leitor certo, em vez de cair no CSV generico.
+    const conteudo = await arquivo.text();
+    let origemDoEnvio: Origem = origem;
+    if (origem === "auto") {
+      const detectada = detectarOrigem(conteudo);
+      if (detectada) {
+        origemDoEnvio = detectada;
+        setOrigem(detectada);
+        toast.info(`Reconheci o arquivo: ${ROTULO_DA_ORIGEM_DETECTADA[detectada]}.`);
+      }
+    }
+
     let mes = mesDaFatura;
-    if (origem === "c6_cartao" && !mesTocado.current) {
+    if (origemDoEnvio === "c6_cartao" && !mesTocado.current) {
       const peloNome = mesDaFaturaPeloNome(arquivo.name);
       if (peloNome) {
         mes = peloNome;
@@ -325,9 +349,8 @@ export default function StatementsPage() {
     setEnviando(true);
     setAvisos([]);
     try {
-      // O arquivo e lido como texto no navegador: extrato e texto puro, e assim
-      // nada precisa passar por armazenamento de arquivo.
-      const conteudo = await arquivo.text();
+      // O arquivo e lido como texto no navegador (acima): extrato e texto puro,
+      // e assim nada precisa passar por armazenamento de arquivo.
       const r = await fetch("/api/statements", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -335,8 +358,8 @@ export default function StatementsPage() {
           accountId: contaEscolhida,
           fileName: arquivo.name,
           content: conteudo,
-          source: origem,
-          invoiceMonth: origem === "c6_cartao" ? mes : undefined,
+          source: origemDoEnvio,
+          invoiceMonth: origemDoEnvio === "c6_cartao" ? mes : undefined,
         }),
       });
       const dados = await r.json().catch(() => ({}));
@@ -414,7 +437,7 @@ export default function StatementsPage() {
                 : "Desfeito"
         );
 
-      if (abertoId) await abrirExtrato(abertoId);
+      if (abertoId) await abrirExtrato(abertoId, { silencioso: true });
       await carregarBase();
     } finally {
       setAgindoEm(null);
@@ -466,10 +489,52 @@ export default function StatementsPage() {
       if (perna?.id) {
         await agir(linha, "link", { transaction_id: perna.id });
       } else if (abertoId) {
-        await abrirExtrato(abertoId);
+        await abrirExtrato(abertoId, { silencioso: true });
       }
     } finally {
       setAgindoEm(null);
+    }
+  };
+
+  // Confirmar em lote (QA do Mercado Pago, M4): 13 de 38 linhas eram
+  // "Rendimentos" de centavos, uma a uma. Cada linha vai pela MESMA rota do
+  // Confirmar, com a categoria que esta no seletor e as edicoes feitas.
+  const confirmarLote = async () => {
+    const lote = prontasParaLote;
+    if (lote.length === 0) return;
+    if (
+      !window.confirm(
+        `Lançar ${lote.length} linha(s) com a categoria que está escolhida em cada uma? As linhas com aviso ficam para você.`
+      )
+    )
+      return;
+
+    setConfirmandoLote(true);
+    let ok = 0;
+    try {
+      for (const linha of lote) {
+        const ed = edicaoPorLinha[linha.id];
+        const corpo: Record<string, string> = { action: "import", category_id: categoriaPorLinha[linha.id] };
+        if (ed) {
+          const v = lerValor(ed.valor);
+          if (v !== null && v !== 0) corpo.amount = String(Math.abs(v));
+          if (ed.data) corpo.transaction_date = ed.data;
+          if (ed.descricao.trim()) corpo.description = ed.descricao.trim();
+        }
+        const r = await fetch(`/api/statements/entries/${linha.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(corpo),
+        });
+        if (r.ok) ok++;
+      }
+    } finally {
+      extratoMexido.current = true;
+      setConfirmandoLote(false);
+      if (ok === lote.length) toast.success(`${ok} lançamento(s) criado(s)`);
+      else toast.error(`${ok} de ${lote.length} lançados. As outras continuam na fila.`);
+      if (abertoId) await abrirExtrato(abertoId, { silencioso: true });
+      await carregarBase();
     }
   };
 
@@ -499,6 +564,24 @@ export default function StatementsPage() {
   };
 
   const pendentes = useMemo(() => linhas.filter((l) => l.status === "pending"), [linhas]);
+
+  // Linhas que so dependem de um clique: tem categoria escolhida e nenhum
+  // alerta (ja lancado, transferencia, duplicata, pagamento de fatura). Sao
+  // elas que o "Confirmar em lote" lanca -- as outras pedem olho.
+  const prontasParaLote = useMemo(
+    () =>
+      pendentes.filter(
+        (l) =>
+          categoriaPorLinha[l.id] &&
+          !l.suggestion?.transaction &&
+          !l.transfer_hint &&
+          !l.duplicate_of &&
+          !l.suggested_action &&
+          !PAGAMENTO_DE_FATURA.test(l.description)
+      ),
+    [pendentes, categoriaPorLinha]
+  );
+  const [confirmandoLote, setConfirmandoLote] = useState(false);
   const resolvidas = useMemo(() => linhas.filter((l) => l.status !== "pending"), [linhas]);
   const totalPendente = useMemo(
     () => imports.reduce((s, i) => s + i.pending_count, 0),
@@ -635,6 +718,11 @@ export default function StatementsPage() {
               nomeSugerido={CONTA_SUGERIDA[origem].nome}
               tipoSugerido={CONTA_SUGERIDA[origem].tipo}
               tiposPermitidos={CONTA_SUGERIDA[origem].tipos}
+              contasExistentes={contas}
+              onUsarExistente={(conta) => {
+                setContaEscolhida(conta.id);
+                setCriandoContaEm(null);
+              }}
               onCriada={(conta) => {
                 setContas((lista) => [conta, ...lista]);
                 setContaEscolhida(conta.id);
@@ -684,6 +772,22 @@ export default function StatementsPage() {
               </div>
             )}
 
+            {!carregandoLinhas && prontasParaLote.length > 1 && (
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-muted/40 p-2 text-sm">
+                <span className="text-muted-foreground">
+                  {prontasParaLote.length} linha(s) já têm categoria e nenhum aviso.
+                </span>
+                <Button size="sm" variant="secondary" disabled={confirmandoLote} onClick={confirmarLote}>
+                  {confirmandoLote ? (
+                    <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                  ) : (
+                    <Check className="mr-1 h-3 w-3" />
+                  )}
+                  Confirmar as {prontasParaLote.length}
+                </Button>
+              </div>
+            )}
+
             {!carregandoLinhas && pendentes.length === 0 && (
               <p className="py-6 text-center text-sm text-muted-foreground">
                 Tudo deste extrato já foi resolvido.
@@ -730,6 +834,23 @@ export default function StatementsPage() {
 
                   {/* O pagamento da fatura ja aparece no extrato da conta: chega
                       sugerido para cancelar, mas quem decide e o usuario. */}
+                  {/* Pagamento de fatura no extrato da CONTA (QA do Mercado
+                      Pago, M3). Transferencia para cartao nao existe no app: a
+                      fatura e paga pelo "Pagar" dela, que grava a saida desta
+                      conta -- e ai esta linha casa com "É o mesmo". */}
+                  {PAGAMENTO_DE_FATURA.test(linha.description) && !linha.card_last4 && !linha.suggestion?.transaction && (
+                    <div className="mt-3 flex flex-wrap items-center gap-2 rounded-md border border-primary/30 bg-primary/5 p-2 text-sm">
+                      <AlertTriangle className="h-4 w-4 shrink-0 text-primary" />
+                      <span>
+                        Pagamento de fatura de cartão. Registre pelo botão <strong>Pagar</strong> da fatura, na tela do
+                        cartão, pagando desta conta; depois volte aqui e esta linha aparece como já lançada.
+                      </span>
+                      <Link href="/dashboard/cartoes" className="text-primary underline underline-offset-2">
+                        Ir para Cartões
+                      </Link>
+                    </div>
+                  )}
+
                   {linha.suggested_action === "ignore" && (
                     <div className="mt-3 flex flex-wrap items-center gap-2 rounded-md border border-warning/30 bg-warning/10 p-2 text-sm">
                       <AlertTriangle className="h-4 w-4 shrink-0 text-warning" />
@@ -816,6 +937,11 @@ export default function StatementsPage() {
                           nomeSugerido={linha.transfer_hint === "reserva" ? "Reserva" : ""}
                           tipoSugerido={linha.transfer_hint === "reserva" ? "savings" : "checking"}
                           tiposPermitidos={TIPOS_FORA_DO_CARTAO}
+                          contasExistentes={contas}
+                          onUsarExistente={(conta) => {
+                            setDestinoPorLinha((m) => ({ ...m, [linha.id]: conta.id }));
+                            setCriandoContaEm(null);
+                          }}
                           onCriada={(conta) => {
                             setContas((lista) => [conta, ...lista]);
                             setDestinoPorLinha((m) => ({ ...m, [linha.id]: conta.id }));

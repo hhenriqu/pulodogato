@@ -137,3 +137,32 @@ export function lerExtratoMercadoPago(conteudo: string): ParseResult {
     warnings,
   };
 }
+
+// =====================================================
+// Qual banco mandou o arquivo
+// =====================================================
+
+export type OrigemDetectada = "c6_conta" | "c6_cartao" | "mercadopago_conta";
+
+export const ROTULO_DA_ORIGEM_DETECTADA: Record<OrigemDetectada, string> = {
+  c6_conta: "C6 Bank: conta corrente",
+  c6_cartao: "C6 Bank: fatura do cartão",
+  mercadopago_conta: "Mercado Pago: extrato da conta",
+};
+
+/**
+ * Reconhece os formatos proprios pelo cabecalho da tabela. null quando o
+ * arquivo nao e nenhum deles (OFX, CSV de outro banco).
+ *
+ * Serve a duas coisas: a tela escolhe a origem sozinha quando o usuario deixou
+ * "detectar sozinho", e o erro de origem trocada diz QUAL arquivo e -- antes,
+ * o extrato do Mercado Pago mandado como C6 so ouvia "falta o cabecalho do
+ * C6" (QA do Mercado Pago, B5).
+ */
+export function detectarOrigem(conteudo: string): OrigemDetectada | null {
+  const texto = normalizarDescricao(conteudo.slice(0, 20000));
+  if (/release_date;transaction_type;reference_id;transaction_net_amount/.test(texto)) return "mercadopago_conta";
+  if (/data de compra;nome no cartao;final do cartao/.test(texto)) return "c6_cartao";
+  if (/data lancamento,data contabil,titulo,descricao/.test(texto)) return "c6_conta";
+  return null;
+}

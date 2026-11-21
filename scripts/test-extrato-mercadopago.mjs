@@ -71,11 +71,18 @@ test("pix de e para o titular sugere transferencia", () => {
   assert.equal(pareceTransferenciaPropria("Pix enviado Fulano de Tal Souza", TITULAR), "titular");
   assert.equal(pareceTransferenciaPropria("Transferência recebida FULANO DE TAL SOUZA", TITULAR), "titular");
   assert.equal(pareceTransferenciaPropria("Pix recebido de FULANO TAL SOUZA", TITULAR), "titular", "sem o 'de'");
+});
+
+test("a empresa do titular NAO e transferencia: e receita", () => {
+  // QA do Mercado Pago (B1): o salario pago pela PJ chegava sugerido como
+  // transferencia e sairia do resultado do mes.
   assert.equal(
-    pareceTransferenciaPropria("Pix recebido de FULANO DE TAL SOUZA DESENVOLVIMENTO DE SOFTWARE LTDA", TITULAR),
-    "titular",
-    "a empresa do titular tambem"
+    pareceTransferenciaPropria("Pix recebido FULANO DE TAL SOUZA DESENVOLVIMENTO DE SOFTWARE LTDA", TITULAR),
+    null
   );
+  assert.equal(pareceTransferenciaPropria("Pix recebido de FULANO DE TAL SOUZA DESENVOLVIM", TITULAR), null, "nome cortado");
+  assert.equal(pareceTransferenciaPropria("Pix enviado para FULANO DE TAL SOUZA ME", TITULAR), null);
+  assert.equal(pareceTransferenciaPropria("Pix enviado para 60.064.024 FULANO DE TAL SOUZA", TITULAR), null, "MEI");
 });
 
 test("parente com o mesmo sobrenome NAO e transferencia", () => {

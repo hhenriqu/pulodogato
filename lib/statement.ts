@@ -776,7 +776,31 @@ export function pareceTransferenciaPropria(
   if (nome.length < 2) return null;
 
   const palavras = new Set(tokensDoNome(descricao));
-  return nome.every((t) => palavras.has(t)) ? "titular" : null;
+  if (!nome.every((t) => palavras.has(t))) return null;
+
+  // A EMPRESA DO TITULAR NAO E ELE (QA do Mercado Pago, B1). "Pix recebido
+  // FULANO DE TAL DESENVOLVIMENTO DE SOFTWARE LTDA" e o salario que a PJ paga:
+  // para as financas pessoais, receita de verdade. Sugerir transferencia ali
+  // tirava o salario do mes.
+  if (pareceEmpresa(texto, palavras)) return null;
+
+  return "titular";
+}
+
+/**
+ * Sinais de razao social no texto do banco. O nome costuma vir cortado
+ * ("... DESENVOLVIM"), entao os ramos de atividade valem pelo comeco.
+ */
+const SUFIXOS_DE_EMPRESA = new Set(["ltda", "eireli", "epp", "mei", "me", "sa", "ss", "cia"]);
+const RAMOS_DE_EMPRESA = /^(desenvolvim|servic|comerc|consultor|tecnolog|software|solucoe|holding|participac|assessor|engenhari|industri)/;
+
+function pareceEmpresa(texto: string, palavras: Set<string>): boolean {
+  // CNPJ, ou o prefixo numerico do MEI ("60.064.024 FULANO")
+  if (/\d{2}\.?\d{3}\.?\d{3}/.test(texto)) return true;
+  for (const p of Array.from(palavras)) {
+    if (SUFIXOS_DE_EMPRESA.has(p) || RAMOS_DE_EMPRESA.test(p)) return true;
+  }
+  return false;
 }
 
 /** O tipo do lancamento sai do SINAL, e de mais nada. Ver o topo do arquivo. */
