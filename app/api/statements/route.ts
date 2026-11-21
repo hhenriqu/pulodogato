@@ -15,7 +15,11 @@ import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { parseStatement, type ParseResult } from "@/lib/statement";
 import { lerExtratoC6, type EntradaC6 } from "@/lib/extrato-c6";
-import { lerExtratoMercadoPago } from "@/lib/extrato-mercadopago";
+import {
+  detectarOrigem,
+  lerExtratoMercadoPago,
+  ROTULO_DA_ORIGEM_DETECTADA,
+} from "@/lib/extrato-mercadopago";
 
 // De onde e o arquivo (087, issue #447). 'auto' e o OFX/CSV generico de sempre;
 // os do C6 sao lidos pelo formato proprio, que o usuario escolhe na tela porque
@@ -191,7 +195,20 @@ export async function POST(request: NextRequest) {
 
     if (resultado.entries.length === 0) {
       // O motivo vai no proprio erro: o toast dizia so "nenhum lancamento do
-      // C6" enquanto o quadro amarelo explicava o porque (QA B5).
+      // C6" enquanto o quadro amarelo explicava o porque (QA B5). E quando o
+      // arquivo e de outro formato conhecido, o erro diz qual.
+      const detectada = detectarOrigem(content);
+      if (detectada && detectada !== origem) {
+        const rotulo = ROTULO_DA_ORIGEM_DETECTADA[detectada];
+        return NextResponse.json(
+          {
+            error: `Este arquivo é do formato "${rotulo}". Escolha essa opção em "De onde é o arquivo".`,
+            detected_source: detectada,
+            warnings: [],
+          },
+          { status: 422 }
+        );
+      }
       return NextResponse.json(
         {
           error:

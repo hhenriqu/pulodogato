@@ -32,7 +32,19 @@ interface Props {
   tiposPermitidos?: AccountType[];
   onCriada: (conta: FinancialAccount) => void;
   onCancelar: () => void;
+  /**
+   * As contas que ja existem. Com elas, o nome repetido ganha um aviso e o
+   * atalho "Usar esta" (QA do Mercado Pago, B2): o cadastro sugeria
+   * "Mercado Pago" para quem ja tinha uma conta com esse nome, e o usuario
+   * acabava com duas.
+   */
+  contasExistentes?: FinancialAccount[];
+  onUsarExistente?: (conta: FinancialAccount) => void;
 }
+
+const mesmoNome = (a: string, b: string) =>
+  a.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase() ===
+  b.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase();
 
 const diaValido = (texto: string) => {
   const n = Number(texto);
@@ -45,6 +57,8 @@ export function NovaContaRapida({
   tiposPermitidos,
   onCriada,
   onCancelar,
+  contasExistentes = [],
+  onUsarExistente,
 }: Props) {
   const tipos = TIPOS_DE_CONTA.filter((t) => !tiposPermitidos || tiposPermitidos.includes(t.valor));
   const [nome, setNome] = useState(nomeSugerido);
@@ -56,6 +70,7 @@ export function NovaContaRapida({
   const [salvando, setSalvando] = useState(false);
 
   const ehCartao = tipo === "credit_card";
+  const repetida = nome.trim() ? contasExistentes.find((c) => mesmoNome(c.name, nome)) : undefined;
 
   const salvar = async () => {
     if (!nome.trim()) {
@@ -85,7 +100,7 @@ export function NovaContaRapida({
         toast.error(dados.error ?? "Não foi possível criar a conta");
         return;
       }
-      toast.success(`${ehCartao ? "Cartão" : "Conta"} "${dados.account.name}" criado`);
+      toast.success(ehCartao ? `Cartão "${dados.account.name}" criado` : `Conta "${dados.account.name}" criada`);
       onCriada(dados.account as FinancialAccount);
     } finally {
       setSalvando(false);
@@ -138,8 +153,21 @@ export function NovaContaRapida({
           </>
         )}
       </div>
+      {repetida && (
+        <div className="flex flex-wrap items-center gap-2 rounded-md border border-warning/30 bg-warning/10 p-2 text-sm">
+          <span>
+            Você já tem uma conta chamada <strong>{repetida.name}</strong>. Mude o nome para criar outra
+            {onUsarExistente ? ", ou use a que já existe." : "."}
+          </span>
+          {onUsarExistente && (
+            <Button size="sm" variant="secondary" onClick={() => onUsarExistente(repetida)}>
+              Usar esta
+            </Button>
+          )}
+        </div>
+      )}
       <div className="flex gap-2">
-        <Button size="sm" disabled={salvando} onClick={salvar}>
+        <Button size="sm" disabled={salvando || Boolean(repetida)} onClick={salvar}>
           {salvando && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
           Criar
         </Button>
