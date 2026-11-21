@@ -40,6 +40,7 @@ import {
   FileUp,
   Link2,
   Loader2,
+  Repeat,
   Trash2,
   Upload,
   X,
@@ -48,6 +49,8 @@ import type { FinancialAccount, TransactionCategory } from "@/types/financial";
 import { CampoDeData } from "@/components/ui/campo-de-data";
 import { lerValor } from "@/lib/statement";
 import { mesDaFaturaPeloNome } from "@/lib/extrato-c6";
+import { NovaContaRapida } from "@/components/contas/NovaContaRapida";
+import type { AccountType } from "@/types/financial";
 
 import { Dica } from "@/components/ui/dica";
 const moeda = (valor: number) =>
@@ -63,12 +66,26 @@ const dataCurta = (iso: string | null) => {
 
 // De onde e o arquivo (087, issue #447). A conta e a fatura do C6 tem formatos
 // diferentes, e um lido como o outro erra o sinal ou a data das parcelas.
-type Origem = "auto" | "c6_conta" | "c6_cartao";
+type Origem = "auto" | "c6_conta" | "c6_cartao" | "mercadopago_conta";
 
 const ROTULO_DA_ORIGEM: Record<Origem, string> = {
   auto: "OFX ou CSV (detectar sozinho)",
   c6_conta: "C6 Bank: conta corrente",
   c6_cartao: "C6 Bank: fatura do cartão",
+  mercadopago_conta: "Mercado Pago: extrato da conta",
+};
+
+// Valor especial do seletor de conta: abre o cadastro rapido ali mesmo.
+const NOVA_CONTA = "__nova_conta__";
+
+const TIPOS_FORA_DO_CARTAO: AccountType[] = ["checking", "savings", "digital", "debit_card", "cash", "investment", "other"];
+
+/** O que o cadastro rapido ja traz preenchido para cada origem do arquivo. */
+const CONTA_SUGERIDA: Record<Origem, { nome: string; tipo: AccountType; tipos?: AccountType[] }> = {
+  auto: { nome: "", tipo: "checking" },
+  c6_conta: { nome: "C6", tipo: "checking", tipos: TIPOS_FORA_DO_CARTAO },
+  c6_cartao: { nome: "Cartão C6", tipo: "credit_card", tipos: ["credit_card"] },
+  mercadopago_conta: { nome: "Mercado Pago", tipo: "digital", tipos: TIPOS_FORA_DO_CARTAO },
 };
 
 /** 'AAAA-MM' do mes corrente, no fuso do aparelho. */
@@ -126,6 +143,9 @@ interface StatementEntry {
   card_last4?: string | null;
   bank_category?: string | null;
   suggested_action?: "ignore" | null;
+  // Pix de/para o proprio titular, ou dinheiro reservado no mesmo banco:
+  // sugere lancar como transferencia entre contas.
+  transfer_hint?: "titular" | "reserva" | null;
   // a mesma linha ja veio em OUTRO extrato desta conta
   duplicate_of?: {
     entry: { id: string; description: string; posted_at: string; status: string };
@@ -168,6 +188,10 @@ export default function StatementsPage() {
   const [categoriaPorLinha, setCategoriaPorLinha] = useState<Record<string, string>>({});
   const [agindoEm, setAgindoEm] = useState<string | null>(null);
   const [avisos, setAvisos] = useState<string[]>([]);
+  // Onde o cadastro rapido de conta esta aberto: no envio ('envio') ou no
+  // destino da transferencia de uma linha (o id da linha).
+  const [criandoContaEm, setCriandoContaEm] = useState<string | null>(null);
+  const [destinoPorLinha, setDestinoPorLinha] = useState<Record<string, string>>({});
 
   const carregarBase = useCallback(async () => {
     try {
@@ -326,6 +350,12 @@ export default function StatementsPage() {
         return;
       }
 
+      // Tudo repetido: a rota nao guarda importacao vazia (QA B1).
+      if (dados.inserted === 0) {
+        toast.info(dados.message ?? "Nada novo: todas as linhas deste arquivo já estavam importadas.");
+        return;
+      }
+
       toast.success(
         dados.duplicates > 0
           ? `${dados.inserted} lançamento(s) novo(s). ${dados.duplicates} já estavam importados.`
@@ -391,6 +421,58 @@ export default function StatementsPage() {
     }
   };
 
+  // A conta do extrato aberto: e de onde o dinheiro sai (ou para onde entra)
+  // quando a linha vira transferencia.
+  const contaDoExtrato = useMemo(
+    () => imports.find((i) => i.id === abertoId)?.account_id ?? null,
+    [imports, abertoId]
+  );
+
+  // Pix entre as proprias contas (QA M1). Grava as DUAS pernas pela rota de
+  // transferencia, que ja garante as duas ou nenhuma, e vincula a linha a perna
+  // desta conta. Se o vinculo falhar, a transferencia continua certa e a linha
+  // aparece de novo com "Parece já lançado", porque casa com a perna.
+  const transferir = async (linha: StatementEntry) => {
+    const outra = destinoPorLinha[linha.id];
+    if (!contaDoExtrato || !outra) {
+      toast.error("Escolha a outra conta da transferência");
+      return;
+    }
+    const saiDaqui = Number(linha.amount) < 0;
+    const ed = edicaoPorLinha[linha.id];
+
+    setAgindoEm(linha.id);
+    try {
+      const r = await fetch("/api/movimentacoes/transferencia", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          descricao: ed?.descricao.trim() || linha.description,
+          data: ed?.data || String(linha.posted_at).slice(0, 10),
+          // O valor e o do banco, sempre: e ele que a perna desta conta precisa
+          // ter para o vinculo com a linha bater.
+          valor: Math.abs(Number(linha.amount)),
+          origem_id: saiDaqui ? contaDoExtrato : outra,
+          destino_id: saiDaqui ? outra : contaDoExtrato,
+        }),
+      });
+      const dados = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        toast.error(dados.error ?? "Não foi possível lançar a transferência");
+        return;
+      }
+      extratoMexido.current = true;
+      const perna = saiDaqui ? dados.saida : dados.entrada;
+      if (perna?.id) {
+        await agir(linha, "link", { transaction_id: perna.id });
+      } else if (abertoId) {
+        await abrirExtrato(abertoId);
+      }
+    } finally {
+      setAgindoEm(null);
+    }
+  };
+
   const descartar = async (id: string) => {
     // Um clique apagava a fila inteira, com as edicoes feitas nela (QA B3).
     if (
@@ -442,7 +524,7 @@ export default function StatementsPage() {
         <h1 className="flex items-center gap-1.5 text-2xl font-bold tracking-tight">
           Importar extrato
           <Dica rotulo="Como funciona a importação">
-            Mande o OFX ou CSV do banco (ou o CSV do C6, da conta ou da fatura). O app separa o que já está lançado do que é novo —
+            Mande o OFX ou CSV do banco, o CSV do C6 (da conta ou da fatura) ou o do Mercado Pago. O app separa o que já está lançado do que é novo —
             nada entra sem você confirmar.
           </Dica>
         </h1>
@@ -474,7 +556,13 @@ export default function StatementsPage() {
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label>Conta</Label>
-              <Select value={contaEscolhida} onValueChange={setContaEscolhida}>
+              <Select
+                value={contaEscolhida}
+                onValueChange={(v) => {
+                  if (v === NOVA_CONTA) setCriandoContaEm("envio");
+                  else setContaEscolhida(v);
+                }}
+              >
                 <SelectTrigger>
                   <SelectValue placeholder="Escolha a conta" />
                 </SelectTrigger>
@@ -484,6 +572,7 @@ export default function StatementsPage() {
                       {c.name}
                     </SelectItem>
                   ))}
+                  <SelectItem value={NOVA_CONTA}>+ Criar conta ou cartão</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -539,6 +628,21 @@ export default function StatementsPage() {
               />
             </div>
           </div>
+
+          {criandoContaEm === "envio" && (
+            <NovaContaRapida
+              key={origem}
+              nomeSugerido={CONTA_SUGERIDA[origem].nome}
+              tipoSugerido={CONTA_SUGERIDA[origem].tipo}
+              tiposPermitidos={CONTA_SUGERIDA[origem].tipos}
+              onCriada={(conta) => {
+                setContas((lista) => [conta, ...lista]);
+                setContaEscolhida(conta.id);
+                setCriandoContaEm(null);
+              }}
+              onCancelar={() => setCriandoContaEm(null)}
+            />
+          )}
 
           {enviando && (
             <p className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -658,6 +762,68 @@ export default function StatementsPage() {
                       <Button size="sm" variant="secondary" disabled={ocupado} onClick={() => agir(linha, "ignore")}>
                         Cancelar esta linha
                       </Button>
+                    </div>
+                  )}
+
+                  {/* Dinheiro que so mudou de conta (QA M1): como receita ou
+                      despesa, inflaria o resultado do mes. */}
+                  {linha.transfer_hint && !linha.suggestion?.transaction && (
+                    <div className="mt-3 space-y-2 rounded-md border border-primary/30 bg-primary/5 p-2 text-sm">
+                      <p className="flex items-center gap-2">
+                        <Repeat className="h-4 w-4 shrink-0 text-primary" />
+                        {linha.transfer_hint === "reserva"
+                          ? "Parece dinheiro guardado ou resgatado no próprio banco."
+                          : "Parece uma transferência entre as suas contas."}{" "}
+                        {despesa ? "Para qual conta foi?" : "De qual conta veio?"}
+                      </p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Select
+                          value={destinoPorLinha[linha.id] ?? ""}
+                          onValueChange={(v) => {
+                            if (v === NOVA_CONTA) setCriandoContaEm(linha.id);
+                            else setDestinoPorLinha((m) => ({ ...m, [linha.id]: v }));
+                          }}
+                        >
+                          <SelectTrigger className="h-8 w-56">
+                            <SelectValue placeholder="Escolha a conta" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {contas
+                              .filter((c) => c.id !== contaDoExtrato && c.account_type !== "credit_card")
+                              .map((c) => (
+                                <SelectItem key={c.id} value={c.id}>
+                                  {c.name}
+                                </SelectItem>
+                              ))}
+                            <SelectItem value={NOVA_CONTA}>+ Criar conta</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <Button
+                          size="sm"
+                          disabled={ocupado || !destinoPorLinha[linha.id]}
+                          onClick={() => transferir(linha)}
+                        >
+                          {ocupado ? (
+                            <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                          ) : (
+                            <Repeat className="mr-1 h-3 w-3" />
+                          )}
+                          Lançar como transferência
+                        </Button>
+                      </div>
+                      {criandoContaEm === linha.id && (
+                        <NovaContaRapida
+                          nomeSugerido={linha.transfer_hint === "reserva" ? "Reserva" : ""}
+                          tipoSugerido={linha.transfer_hint === "reserva" ? "savings" : "checking"}
+                          tiposPermitidos={TIPOS_FORA_DO_CARTAO}
+                          onCriada={(conta) => {
+                            setContas((lista) => [conta, ...lista]);
+                            setDestinoPorLinha((m) => ({ ...m, [linha.id]: conta.id }));
+                            setCriandoContaEm(null);
+                          }}
+                          onCancelar={() => setCriandoContaEm(null)}
+                        />
+                      )}
                     </div>
                   )}
 

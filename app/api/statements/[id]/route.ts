@@ -21,7 +21,9 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   conciliar,
   duplicadasEntreImportacoes,
+  pareceTransferenciaPropria,
   TOLERANCIA_DIAS_PADRAO,
+  type TransferenciaPropria,
 } from "@/lib/statement";
 import { sugerirParaLinhas } from "@/lib/services/categorization";
 
@@ -60,7 +62,10 @@ export async function GET(
       .from("statement_entries")
       .select("*")
       .eq("import_id", params.id)
-      .order("posted_at", { ascending: false });
+      .order("posted_at", { ascending: false })
+      // Desempate fixo: sem ele, as linhas do mesmo dia trocavam de lugar a
+      // cada acao (QA B4).
+      .order("fingerprint", { ascending: true });
 
     if (error) {
       console.error("Erro ao ler linhas do extrato:", error);
@@ -243,6 +248,31 @@ export async function GET(
         pendentes.map((l) => ({ id: l.id, description: l.description ?? "", amount: l.amount }))
       );
 
+    // TRANSFERENCIA ENTRE CONTAS PROPRIAS (QA M1)
+    // ------------------------------------------
+    // Pix de/para o proprio titular, e dinheiro guardado no proprio banco. A
+    // linha so ganha a SUGESTAO; confirmar como receita ou despesa continua
+    // possivel. No cartao nao se aplica: transferencia nao entra em cartao.
+    const dicas = new Map<string, TransferenciaPropria>();
+    if (pendentes.length > 0) {
+      const { data: conta } = await supabase
+        .from("financial_accounts")
+        .select("account_type")
+        .eq("id", extrato.account_id)
+        .maybeSingle();
+      if (conta && conta.account_type !== "credit_card") {
+        const { data: perfil } = await supabase
+          .from("profiles")
+          .select("full_name")
+          .eq("id", user.id)
+          .maybeSingle();
+        for (const l of pendentes) {
+          const dica = pareceTransferenciaPropria(l.description ?? "", perfil?.full_name ?? null);
+          if (dica) dicas.set(l.id, dica);
+        }
+      }
+    }
+
     return NextResponse.json({
       import: extrato,
       entries: (linhas ?? []).map((l) => {
@@ -262,6 +292,7 @@ export async function GET(
             : null,
           // Possivel duplicata de uma linha de OUTRO extrato da mesma conta.
           duplicate_of: duplicatas.get(l.id) ?? null,
+          transfer_hint: dicas.get(l.id) ?? null,
           // `origin` viaja junto de proposito: e o que permite a tela tratar a
           // regra ("voce ja disse que isto e X") diferente do palpite ("acho
           // que e X"). Sem o campo, as duas teriam a mesma cara e o usuario

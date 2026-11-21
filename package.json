@@ -46,7 +46,7 @@
     "test:minha-parte-na-conta": "node scripts/compila.mjs lib/minha-parte-na-conta.ts --outDir .tmp-minha-parte-na-conta --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-minha-parte-na-conta.mjs",
     "test:reports": "node scripts/compila.mjs -p scripts/tsconfig.reports-test.json && node scripts/resolve-aliases.mjs .tmp-reports lib && node --test scripts/test-reports.mjs",
     "test:statement": "node scripts/compila.mjs lib/statement.ts --outDir .tmp-statement --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-statement.mjs",
-    "test:extrato-c6": "node scripts/compila.mjs -p scripts/tsconfig.extrato-c6-test.json && node scripts/resolve-aliases.mjs .tmp-extrato-c6 lib && node --test scripts/test-extrato-c6.mjs",
+    "test:extrato-c6": "node scripts/compila.mjs -p scripts/tsconfig.extrato-c6-test.json && node scripts/resolve-aliases.mjs .tmp-extrato-c6 lib && node --test scripts/test-extrato-c6.mjs scripts/test-extrato-mercadopago.mjs",
     "test:categorization": "node scripts/compila.mjs -p scripts/tsconfig.categorization-test.json && node scripts/resolve-aliases.mjs .tmp-categorization lib && node --test scripts/test-categorization.mjs",
     "test:calculadoras": "node scripts/compila.mjs lib/calculadoras.ts --outDir .tmp-calculadoras --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-calculadoras.mjs",
     "test:net-worth": "node scripts/compila.mjs lib/net-worth.ts --outDir .tmp-net-worth --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-net-worth.mjs",
