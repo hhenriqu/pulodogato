@@ -343,6 +343,9 @@ const PARTES = [
   "lib/saldo-em-conta.js",
   "lib/recurrence-detector.js",
   "lib/periodo-do-painel.js",
+  // A pagina pede o mes corrente da fatura para o bloco da composicao dos
+  // cartoes (22/11/2026). Vai real: so depende do periodo do painel.
+  "lib/fatura-do-cartao.js",
   "lib/realizado-e-previsao.js",
   "lib/previsto-x-realizado.js",
   "lib/dashboard-layout.js",
@@ -552,6 +555,11 @@ MODULOS["@/components/dashboard/DespesasPorCategoria"] = {
 };
 MODULOS["@/components/dashboard/UltimasDespesas"] = {
   UltimasDespesas: esboco("ULTIMAS-DESPESAS"),
+};
+// A composicao dos cartoes (22/11/2026) busca /api/card-invoices/composicao,
+// pelo mesmo motivo dos widgets acima: esbocada, a rota nao entra na rede.
+MODULOS["@/components/cartoes/ComposicaoDosCartoes"] = {
+  ComposicaoDosCartoes: esboco("COMPOSICAO-DOS-CARTOES"),
 };
 MODULOS["@/components/dashboard/SaldoDoMes"] = {
   SaldoDoMes: esboco("SALDO-DO-MES"),
@@ -1002,14 +1010,15 @@ for (const [chave, nome, , temCartao] of CASOS) {
     // importar e que a sonda esbocou calada -- e que pode estar justamente no
     // caminho do que as outras assercoes leem.
     //
-    // SAO SEIS (o mapa de calor e os tres widgets do Minhas Financas
-    // desenham em todo periodo), e nao os oito declarados em MODULOS: `Progress` so desenha
+    // SAO SETE (o mapa de calor, os tres widgets do Minhas Financas e a
+    // composicao dos cartoes desenham em todo periodo), e nao os oito declarados em MODULOS: `Progress` so desenha
     // dentro de uma meta (a rota devolve lista vazia) e `NumeroIndisponivel` so
     // quando uma rota falha em ler. (Eram cinco ate a HMO-470: o quinto era o
     // `PainelDePapel`, o outro ramo do portao, apagado com o painel.)
     // Esboco declarado e esboco RENDERIZADO sao coisas diferentes, e e o
     // segundo que pode encostar numa assercao.
     assert.deepEqual(resultado[chave].esbocos, [
+      "[ESBOCO-COMPOSICAO-DOS-CARTOES]",
       "[ESBOCO-DESPESAS-POR-CATEGORIA]",
       "[ESBOCO-MAPA-DE-CALOR]",
       "[ESBOCO-PREVISTO-X-REALIZADO]",
