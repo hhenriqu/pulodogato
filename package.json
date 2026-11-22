@@ -7,6 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "e2e": "playwright test -c e2e",
+    "e2e:relatorio": "playwright show-report e2e/relatorio",
     "lint-tudo": "node scripts/lint-tudo.mjs",
     "check-prd": "node scripts/check-prd-compliance.js",
     "check-table-drift": "node scripts/check-table-drift.mjs",
@@ -328,6 +330,7 @@
     "zod": "^4.1.11"
   },
   "devDependencies": {
+    "@playwright/test": "1.63.0",
     "@types/node": "^20",
     "@types/react": "^18",
     "@types/react-dom": "^18",

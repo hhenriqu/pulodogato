@@ -1,0 +1,148 @@
+name: e2e
+
+# =====================================================
+# Regressao em navegador de verdade, A CADA DEPLOY (Playwright)
+# =====================================================
+# A suite mora em e2e/ (ver e2e/README.md). Ela abre o APP PUBLICADO -- nao
+# um build local --, porque o que quebra num deploy e justamente o que so
+# existe la: variavel de ambiente, migration aplicada, rota da Vercel.
+#
+# QUANDO RODA
+#   - deployment_status: a Vercel avisa o GitHub que um deploy (producao ou
+#     preview) ficou pronto; a suite roda contra a URL DAQUELE deploy.
+#   - schedule: todo dia 09:00 de Brasilia, contra producao. Pega o que quebra
+#     sem deploy nenhum (dado novo, API externa, sessao expirando).
+#   - workflow_dispatch: na mao, com a URL que quiser.
+#
+# SEGREDOS (Settings > Secrets and variables > Actions)
+#   E2E_EMAIL, E2E_PASSWORD   a conta de teste. SEM ELES O JOB FALHA, e nao
+#                             pula: suite que se desliga sozinha e
+#                             indistinguivel de suite que passou.
+#   E2E_VERCEL_BYPASS         opcional: "Protection Bypass for Automation" da
+#                             Vercel, se o preview for protegido.
+#
+# A SUITE NAO GRAVA NADA: toda escrita que a pagina tenta e abortada no
+# navegador (e2e/guarda.ts). Pode rodar contra producao.
+#
+# A EVIDENCIA: os prints de cada tela (desktop e celular), com os valores
+# MASCARADOS -- o repositorio e publico e o artefato tambem --, mais o
+# relatorio HTML. Um artefato por deploy, `evidencias-<ambiente>-<sha>`, 90
+# dias. Trace e video ficam desligados pelo mesmo motivo.
+#
+# Nao entra no check-tests-in-ci: o script e `e2e`, fora do prefixo `test:`,
+# porque depende de um deploy no ar e nao do checkout.
+# =====================================================
+
+on:
+  deployment_status:
+  schedule:
+    - cron: "0 12 * * *"
+  workflow_dispatch:
+    inputs:
+      url:
+        description: "Endereco do app (vazio = producao)"
+        required: false
+        default: ""
+
+concurrency:
+  group: e2e-${{ github.event.deployment_status.target_url || inputs.url || 'producao' }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    name: fluxos principais no app publicado
+    # So deploy que DEU CERTO. Deploy falhado nao tem URL para testar -- e quem
+    # avisa dele e a propria Vercel.
+    if: github.event_name != 'deployment_status' || github.event.deployment_status.state == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      # Deploy de PRODUCAO testa o dominio de producao, e nao a URL
+      # `pulodogato-<hash>.vercel.app` do evento: essa fica atras da protecao
+      # de deploy da Vercel (401) e nao e o endereco que as pessoas usam.
+      # Preview testa a URL do proprio preview (com E2E_VERCEL_BYPASS, se
+      # protegido).
+      E2E_BASE_URL: ${{ (github.event.deployment_status.environment == 'Production' && 'https://pulodogato.hmoraes.com.br') || github.event.deployment_status.target_url || inputs.url || 'https://pulodogato.hmoraes.com.br' }}
+      E2E_EMAIL: ${{ secrets.E2E_EMAIL }}
+      E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
+      E2E_VERCEL_BYPASS: ${{ secrets.E2E_VERCEL_BYPASS }}
+      AMBIENTE: ${{ github.event.deployment_status.environment || 'producao' }}
+      SHA: ${{ github.event.deployment.sha || github.sha }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # O codigo da suite e o do MESMO commit que foi publicado: tela nova
+          # no menu entra na varredura junto com a tela.
+          ref: ${{ github.event.deployment.sha || github.sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Os segredos da conta de teste existem
+        run: |
+          if [ -z "$E2E_EMAIL" ] || [ -z "$E2E_PASSWORD" ]; then
+            echo "::error::Faltam os segredos E2E_EMAIL e E2E_PASSWORD (Settings > Secrets and variables > Actions)."
+            exit 1
+          fi
+          echo "Alvo: $E2E_BASE_URL ($AMBIENTE, $SHA)"
+          # "Preview – pulodogato" vira "preview-pulodogato": nome de artefato
+          # nao aceita qualquer caractere.
+          echo "AMBIENTE_SLUG=$(echo "$AMBIENTE" | iconv -f utf-8 -t ascii//TRANSLIT | tr 'A-Z' 'a-z' | tr -cs 'a-z0-9' '-' | sed 's/^-*//;s/-*$//')" >> "$GITHUB_ENV"
+
+      - run: npm ci --include=dev
+
+      - name: Chromium do Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: Tipos da suite
+        run: npx tsc -p e2e/tsconfig.json
+
+      - name: Playwright
+        run: npm run e2e
+
+      - name: Resumo
+        if: always()
+        run: |
+          node -e '
+            const fs = require("fs");
+            const p = "e2e/relatorio/resultado.json";
+            if (!fs.existsSync(p)) process.exit(0);
+            const r = JSON.parse(fs.readFileSync(p, "utf8"));
+            const s = r.stats || {};
+            const linhas = [];
+            const andar = (suite) => {
+              for (const sp of suite.specs || []) for (const t of sp.tests || []) {
+                const ult = (t.results || []).at(-1) || {};
+                if (t.status !== "expected") linhas.push(`| ${t.projectName} | ${sp.title} | ${t.status === "skipped" ? "pulou" : ult.status} |`);
+              }
+              for (const f of suite.suites || []) andar(f);
+            };
+            (r.suites || []).forEach(andar);
+            const out = [
+              `### E2E em ${process.env.E2E_BASE_URL}`,
+              `${s.expected || 0} passaram, ${s.unexpected || 0} falharam, ${s.flaky || 0} instaveis, ${s.skipped || 0} pularam.`,
+              "",
+              ...(linhas.length ? ["| projeto | teste | resultado |", "|---|---|---|", ...linhas] : []),
+              "",
+              "Prints mascarados e relatorio HTML no artefato desta execucao.",
+            ];
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, out.join("\n") + "\n");
+          '
+
+      - name: Evidencias (prints mascarados + relatorio)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidencias-${{ env.AMBIENTE_SLUG }}-${{ env.SHA }}-${{ github.run_attempt }}
+          path: |
+            e2e/evidencias/
+            e2e/relatorio/
+          retention-days: 90
+          if-no-files-found: warn

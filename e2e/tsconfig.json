@@ -1,0 +1,10 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "incremental": false,
+    "target": "es2022"
+  },
+  "include": ["./**/*.ts"],
+  "exclude": ["./resultados", "./relatorio", "./evidencias"]
+}
