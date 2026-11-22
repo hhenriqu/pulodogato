@@ -87,7 +87,10 @@ export interface DialogoDeAlcanceProps {
     antes: number;
     depois: (alcance: Alcance, base: BaseDoValorParcelado) => number | null;
   };
-  aoConfirmar: (alcance: Alcance, base: BaseDoValorParcelado) => void | Promise<void>;
+  aoConfirmar: (
+    alcance: Alcance,
+    base: BaseDoValorParcelado,
+  ) => void | Promise<void>;
   salvando?: boolean;
   /** Ver `serie` em `opcoesDeAlcance` (lib/alcance-na-tela.ts). */
   serie?: SerieFixa;
@@ -102,7 +105,7 @@ const moeda = (v: number) => {
   const abs = Math.abs(centavos);
   const inteiros = String(Math.floor(abs / 100)).replace(
     /\B(?=(\d{3})+(?!\d))/g,
-    "."
+    ".",
   );
   return `${sinal}R$ ${inteiros},${String(abs % 100).padStart(2, "0")}`;
 };
@@ -129,6 +132,13 @@ export function DialogoDeAlcance({
   // desfazer.
   const [alcance, setAlcance] = useState<Alcance>("apenas_esta");
   const [base, setBase] = useState<BaseDoValorParcelado>("parcela");
+  /**
+   * "Entendo que os meses já recebidos também são apagados" -- a trava do
+   * "Todos os meses" na serie fixa. Pedido do Helio (22/11/2026): os dois
+   * alcances que nao mexem no passado sao botoes comuns; o que apaga a serie
+   * inteira, historico incluso, so destrava depois de a pessoa marcar isto.
+   */
+  const [entendiTodos, setEntendiTodos] = useState(false);
 
   const opcoes = opcoesDeAlcance({
     tipo,
@@ -139,6 +149,12 @@ export function DialogoDeAlcance({
     serie,
   });
   const consequencia = consequenciaNaTela(alcance, opcoes);
+  /**
+   * Apagar numa serie fixa vinda das telas de movimentacao (`serie` presente):
+   * botoes em vez do Select, com "Todos os meses" travado por uma confirmacao.
+   * Contas a Pagar e a parcela de cartao nao passam `serie` e ficam como eram.
+   */
+  const apagarNaSerie = acao === "apagar" && tipo === "conta_fixa" && !!serie;
   const perguntarBase = precisaPerguntarBase({ tipo, alcance, mudaValor });
 
   const depois = totalDaCompra?.depois(alcance, base) ?? null;
@@ -164,6 +180,7 @@ export function DialogoDeAlcance({
           // -- a escolha de um pedido vazando para o seguinte.
           setAlcance("apenas_esta");
           setBase("parcela");
+          setEntendiTodos(false);
           aoFechar();
         }
       }}
@@ -174,103 +191,184 @@ export function DialogoDeAlcance({
           <DialogDescription>
             {tipo === "parcela"
               ? "Esta é uma compra parcelada. Escolha o que a mudança alcança."
-              : "Esta conta se repete. Escolha o que a mudança alcança."}
+              : apagarNaSerie
+                ? serie?.direcao === "income"
+                  ? "Esta receita se repete todo mês. Escolha o que apagar."
+                  : "Esta conta se repete todo mês. Escolha o que apagar."
+                : "Esta conta se repete. Escolha o que a mudança alcança."}
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4">
-          <div className="space-y-2 rounded-lg border border-border p-3">
-            <Label htmlFor="alcance-da-serie">
-              {acao === "apagar" ? "Apagar" : "Esta alteração vale para"}
-            </Label>
-            <Select
-              value={alcance}
-              onValueChange={(v) => setAlcance(v as Alcance)}
-            >
-              <SelectTrigger id="alcance-da-serie">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {opcoes.map((o) => (
-                  <SelectItem key={o.valor} value={o.valor}>
+        {apagarNaSerie ? (
+          <div className="space-y-4">
+            {/* OS DOIS ALCANCES QUE NAO APAGAM O PASSADO: BOTOES COMUNS. Cada
+                um com a frase dele embaixo, para a regra estar escrita antes
+                do clique e nao depois. */}
+            {opcoes
+              .filter((o) => o.valor !== "todas")
+              .map((o) => (
+                <div key={o.valor} className="space-y-1">
+                  <Button
+                    className="w-full"
+                    variant="outline"
+                    disabled={salvando}
+                    onClick={() => aoConfirmar(o.valor, base)}
+                  >
+                    {salvando && (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    )}
                     {o.rotulo}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+                  </Button>
+                  <p className="text-xs text-muted-foreground">
+                    {o.consequencia}
+                  </p>
+                </div>
+              ))}
 
-            {/* A CONSEQUENCIA DECLARADA. Ela nao e ajuda opcional: e o unico
+            {/* "TODOS OS MESES": SEPARADO, EM VERMELHO, E TRAVADO ATE A PESSOA
+                DIZER QUE ENTENDEU. E o unico que apaga o que ja foi
+                recebido/pago, e nao tem desfazer. */}
+            {opcoes
+              .filter((o) => o.valor === "todas")
+              .map((o) => (
+                <div
+                  key={o.valor}
+                  className="space-y-2 rounded-lg border border-destructive/40 p-3"
+                >
+                  <p className="text-sm font-medium text-destructive">
+                    {o.rotulo}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {o.consequencia}
+                  </p>
+                  <div className="flex items-start gap-2">
+                    <input
+                      type="checkbox"
+                      id="alcance-entendi-todos"
+                      checked={entendiTodos}
+                      onChange={(e) => setEntendiTodos(e.target.checked)}
+                      className="mt-0.5 h-4 w-4 accent-destructive"
+                    />
+                    <Label
+                      htmlFor="alcance-entendi-todos"
+                      className="text-xs leading-snug"
+                    >
+                      {serie?.direcao === "income"
+                        ? "Entendo que os meses já recebidos também serão apagados, e que isso não tem volta."
+                        : "Entendo que os meses já pagos também serão apagados, e que isso não tem volta."}
+                    </Label>
+                  </div>
+                  <Button
+                    className="w-full"
+                    variant="destructive"
+                    disabled={salvando || !entendiTodos}
+                    onClick={() => aoConfirmar(o.valor, base)}
+                  >
+                    {salvando && (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    )}
+                    Apagar todos os meses
+                  </Button>
+                </div>
+              ))}
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="space-y-2 rounded-lg border border-border p-3">
+              <Label htmlFor="alcance-da-serie">
+                {acao === "apagar" ? "Apagar" : "Esta alteração vale para"}
+              </Label>
+              <Select
+                value={alcance}
+                onValueChange={(v) => setAlcance(v as Alcance)}
+              >
+                <SelectTrigger id="alcance-da-serie">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {opcoes.map((o) => (
+                    <SelectItem key={o.valor} value={o.valor}>
+                      {o.rotulo}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              {/* A CONSEQUENCIA DECLARADA. Ela nao e ajuda opcional: e o unico
                 lugar onde a tela diz que "esta e as proximas" encerra o gasto
                 fixo, e que "todas" alcanca meses anteriores em aberto. */}
-            <p className="text-xs text-muted-foreground">{consequencia}</p>
+              <p className="text-xs text-muted-foreground">{consequencia}</p>
 
-            {/* AQUI HAVIA UM `aviso` (HMO-357), e ele SAIU na HMO-361.
+              {/* AQUI HAVIA UM `aviso` (HMO-357), e ele SAIU na HMO-361.
                 A frase era "o valor e a descrição que você alterou valem só
                 para esta parcela", e ela descrevia o estado em que o valor NAO
                 seguia o alcance. Agora segue: valor e descricao vao para a rota
                 da serie junto com o movimento, no alcance escolhido. Manter a
                 frase seria a tela afirmando o contrario do que ela faz. */}
-          </div>
+            </div>
 
-          {/* A MESMA PERGUNTA QUE A HMO-211 JA FAZ NO LANCAMENTO, COM AS MESMAS
+            {/* A MESMA PERGUNTA QUE A HMO-211 JA FAZ NO LANCAMENTO, COM AS MESMAS
               PALAVRAS. Vocabulario novo para a mesma duvida e como se aprende
               duas regras onde havia uma. */}
-          {perguntarBase && (
-            <div className="space-y-2 rounded-lg border border-border p-3">
-              <Label>O valor digitado é</Label>
-              <div className="flex flex-col gap-2">
-                <div className="flex items-center gap-2">
-                  <input
-                    type="radio"
-                    id="alcance-base-parcela"
-                    name="alcance-base"
-                    checked={base === "parcela"}
-                    onChange={() => setBase("parcela")}
-                    className="h-4 w-4 accent-primary"
-                  />
-                  <Label htmlFor="alcance-base-parcela">
-                    o valor de cada parcela
-                  </Label>
-                </div>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="radio"
-                    id="alcance-base-total"
-                    name="alcance-base"
-                    checked={base === "total"}
-                    onChange={() => setBase("total")}
-                    className="h-4 w-4 accent-primary"
-                  />
-                  <Label htmlFor="alcance-base-total">o total da compra</Label>
+            {perguntarBase && (
+              <div className="space-y-2 rounded-lg border border-border p-3">
+                <Label>O valor digitado é</Label>
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="radio"
+                      id="alcance-base-parcela"
+                      name="alcance-base"
+                      checked={base === "parcela"}
+                      onChange={() => setBase("parcela")}
+                      className="h-4 w-4 accent-primary"
+                    />
+                    <Label htmlFor="alcance-base-parcela">
+                      o valor de cada parcela
+                    </Label>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="radio"
+                      id="alcance-base-total"
+                      name="alcance-base"
+                      checked={base === "total"}
+                      onChange={() => setBase("total")}
+                      className="h-4 w-4 accent-primary"
+                    />
+                    <Label htmlFor="alcance-base-total">
+                      o total da compra
+                    </Label>
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {/* O TOTAL RECALCULADO, ANTES DO SALVAR.
+            {/* O TOTAL RECALCULADO, ANTES DO SALVAR.
               Os DOIS numeros: "passa a ser R$ 2.600" sozinho nao diz se era
               isso que a pessoa esperava, e e nessa comparacao que ela descobre
               que escolheu o alcance errado. */}
-          {totalDaCompra && depois !== null && (
-            <p className="text-sm text-foreground">
-              Total da compra:{" "}
-              <span className="text-muted-foreground line-through">
-                {moeda(totalDaCompra.antes)}
-              </span>{" "}
-              <span className="font-semibold">{moeda(depois)}</span>
-            </p>
-          )}
+            {totalDaCompra && depois !== null && (
+              <p className="text-sm text-foreground">
+                Total da compra:{" "}
+                <span className="text-muted-foreground line-through">
+                  {moeda(totalDaCompra.antes)}
+                </span>{" "}
+                <span className="font-semibold">{moeda(depois)}</span>
+              </p>
+            )}
 
-          <Button
-            className="w-full"
-            variant={acao === "apagar" ? "destructive" : "default"}
-            disabled={salvando}
-            onClick={() => aoConfirmar(alcance, base)}
-          >
-            {salvando && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            {acao === "apagar" ? "Apagar" : "Salvar alteração"}
-          </Button>
-        </div>
+            <Button
+              className="w-full"
+              variant={acao === "apagar" ? "destructive" : "default"}
+              disabled={salvando}
+              onClick={() => aoConfirmar(alcance, base)}
+            >
+              {salvando && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {acao === "apagar" ? "Apagar" : "Salvar alteração"}
+            </Button>
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   );
