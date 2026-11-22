@@ -127,6 +127,7 @@ next-env.d.ts
 /.tmp-dashboard-layout/
 /.tmp-mapa-de-calor/
 /.tmp-assinaturas-das-contas-fixas/
+/.tmp-painel-de-assinaturas/
 
 # saida do `npm run test:previsto-x-realizado`
 /.tmp-previsto-x-realizado/

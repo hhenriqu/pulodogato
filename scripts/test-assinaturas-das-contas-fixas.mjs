@@ -16,6 +16,7 @@ const {
   assinaturasDasContasFixas,
   totalMensalDasContasFixas,
   rotuloDaFrequenciaDaRegra,
+  rendaMensalDasRegras,
 } = await import("../.tmp-assinaturas-das-contas-fixas/assinaturas-das-contas-fixas.js");
 
 test("mensal custa o proprio valor por mes", () => {
@@ -55,4 +56,19 @@ test("rotulo da frequencia", () => {
   assert.equal(rotuloDaFrequenciaDaRegra("monthly", 1), "Mensal");
   assert.equal(rotuloDaFrequenciaDaRegra("monthly", 2), "A cada 2 meses");
   assert.equal(rotuloDaFrequenciaDaRegra("annual", 1), "Anual");
+});
+
+test("renda mensal: so receitas ativas, normalizadas para o mes", () => {
+  const renda = rendaMensalDasRegras([
+    { id: "s", description: "Salario", amount: "6000", frequency: "monthly", transaction_type: "income" },
+    { id: "a", description: "Aluguel recebido", amount: 2400, frequency: "quarterly", transaction_type: "income" },
+    { id: "v", description: "Bico antigo", amount: 900, frequency: "monthly", transaction_type: "income", is_active: false },
+    { id: "n", description: "Netflix", amount: 55.9, frequency: "monthly", transaction_type: "expense" },
+    { id: "t", description: "Poupanca", amount: 500, frequency: "monthly", transaction_type: "transfer" },
+  ]);
+  assert.equal(renda, 6800);
+});
+
+test("renda mensal sem nenhuma receita fixa e zero", () => {
+  assert.equal(rendaMensalDasRegras([]), 0);
 });

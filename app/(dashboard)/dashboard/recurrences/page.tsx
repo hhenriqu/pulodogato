@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -19,6 +20,9 @@ import {
   EyeOff,
   Ban,
   CalendarClock,
+  CalendarCheck,
+  ScrollText,
+  Undo2,
 } from "lucide-react";
 import {
   AVISO_ATUALIZAR_FALHOU,
@@ -43,6 +47,15 @@ import {
   rotuloDaFrequenciaDaRegra,
   type AssinaturaDaContaFixa,
 } from "@/lib/assinaturas-das-contas-fixas";
+import {
+  LIMITE_ATENCAO,
+  LIMITE_LEVE,
+  montarPainelDeAssinaturas,
+  type FaixaDoPeso,
+  type ItemDoPainel,
+  type MotivoForaDaConta,
+  type RecorrenciaDetectada,
+} from "@/lib/painel-de-assinaturas";
 // =====================================================
 // Assinaturas e cobrancas recorrentes (HMO-145)
 // =====================================================
@@ -59,19 +72,7 @@ import {
 // classes, ainda que para explicar por que nao usa-la, reprova o commit.)
 // =====================================================
 
-interface Recurrence {
-  id: string;
-  merchant_key: string;
-  display_name: string;
-  avg_amount: number | string;
-  last_amount: number | string;
-  monthly_cost: number | string;
-  frequency: "WEEKLY" | "MONTHLY" | "YEARLY";
-  occurrences: number;
-  last_charge_date: string;
-  next_expected_date: string;
-  status: "DETECTED" | "CONFIRMED" | "IGNORED" | "CANCELLED";
-}
+type Recurrence = RecorrenciaDetectada;
 
 interface Alerta {
   tipo: "PRICE_INCREASE" | "CHARGED_AFTER_CANCEL";
@@ -86,12 +87,6 @@ const ROTULO_FREQUENCIA: Record<Recurrence["frequency"], string> = {
   YEARLY: "Anual",
 };
 
-const ROTULO_STATUS: Record<Recurrence["status"], string> = {
-  DETECTED: "Detectada",
-  CONFIRMED: "Confirmada",
-  IGNORED: "Ignorada",
-  CANCELLED: "Cancelada",
-};
 
 function formatarBRL(valor: number | string): string {
   // O supabase-js entrega `numeric` como string. Sem o Number aqui o
@@ -111,12 +106,15 @@ function formatarData(iso: string): string {
 export default function RecurrencesPage() {
   const [recorrencias, setRecorrencias] = useState<Recurrence[]>([]);
   const [alertas, setAlertas] = useState<Alerta[]>([]);
-  const [totalMensal, setTotalMensal] = useState(0);
   // As contas fixas marcadas como assinatura (migration 084). `null` = a
   // leitura delas falhou (a coluna nao existe antes da migration), e a tela nao
   // afirma "nenhuma" sobre o que nao leu.
   const [fixas, setFixas] = useState<AssinaturaDaContaFixa[] | null>([]);
-  const [totalDasFixas, setTotalDasFixas] = useState<number | null>(0);
+  // A renda mensal fixa, para o peso das assinaturas no orcamento. `null` =
+  // nao deu para ler (ou resposta de antes desta versao, vinda da copia do
+  // aparelho): a tela nao mostra porcentagem nenhuma.
+  const [rendaMensal, setRendaMensal] = useState<number | null>(null);
+  const [soParaRevisar, setSoParaRevisar] = useState(false);
   const [chavesDuplicadas, setChavesDuplicadas] = useState<string[]>([]);
   const [carregando, setCarregando] = useState(true);
   const [varrendo, setVarrendo] = useState(false);
@@ -146,6 +144,7 @@ export default function RecurrencesPage() {
         monthlyTotal?: number;
         fixedSubscriptions?: AssinaturaDaContaFixa[] | null;
         fixedMonthlyTotal?: number | null;
+        fixedMonthlyIncome?: number | null;
         duplicatedMerchantKeys?: string[];
       }>(
         // ESTA e a tela em que o separador nao da para cravar na mao: a URL tem
@@ -185,7 +184,6 @@ export default function RecurrencesPage() {
       if (leitura.dados) {
         setRecorrencias(leitura.dados.recurrences || []);
         setAlertas(leitura.dados.alerts || []);
-        setTotalMensal(leitura.dados.monthlyTotal || 0);
         // `undefined` (resposta de antes desta versao, vinda da copia do
         // aparelho) vira lista vazia; `null` (falhou no servidor) fica `null`.
         setFixas(
@@ -193,11 +191,7 @@ export default function RecurrencesPage() {
             ? []
             : leitura.dados.fixedSubscriptions
         );
-        setTotalDasFixas(
-          leitura.dados.fixedMonthlyTotal === undefined
-            ? 0
-            : leitura.dados.fixedMonthlyTotal
-        );
+        setRendaMensal(leitura.dados.fixedMonthlyIncome ?? null);
         setChavesDuplicadas(leitura.dados.duplicatedMerchantKeys || []);
       }
 
@@ -269,9 +263,19 @@ export default function RecurrencesPage() {
     }
   };
 
-  const visiveis = mostrarIgnoradas
-    ? recorrencias
-    : recorrencias.filter((r) => r.status !== "IGNORED");
+  // A lista unica, os totais e o peso na renda saem de uma funcao pura com
+  // teste (lib/painel-de-assinaturas.ts). Ela aplica a MESMA regra de soma da
+  // rota; a tela so desenha.
+  const painel = montarPainelDeAssinaturas({
+    fixas: fixas ?? [],
+    detectadas: recorrencias,
+    chavesDasFixas: chavesDuplicadas,
+    rendaMensal,
+  });
+
+  const itensVisiveis = soParaRevisar
+    ? painel.itens.filter((i) => i.paraRevisar)
+    : painel.itens;
 
   return (
     <div className="space-y-6 p-4 md:p-6">
@@ -279,11 +283,11 @@ export default function RecurrencesPage() {
         <div>
           <h1 className="flex items-center gap-2 text-2xl font-bold text-foreground">
             <Repeat className="h-6 w-6 text-primary" />
-            Assinaturas e recorrências
+            Assinaturas
           </h1>
           <p className="text-sm text-muted-foreground">
-            As contas fixas que você marcou como assinatura e as cobranças que
-            se repetem no seu extrato, encontradas automaticamente.
+            Quanto você gasta com assinaturas, quanto isso pesa na sua renda e
+            o detalhe de cada uma.
           </p>
         </div>
         {/* A varredura le meses de extrato no servidor: sem rede ela nao tem
@@ -292,13 +296,14 @@ export default function RecurrencesPage() {
           onClick={varrer}
           disabled={varrendo || !online}
           className="gap-2"
+          variant="outline"
         >
           <RefreshCw className={`h-4 w-4 ${varrendo ? "animate-spin" : ""}`} />
           {!online
             ? "Procurar (precisa de rede)"
             : varrendo
               ? "Procurando..."
-              : "Procurar agora"}
+              : "Procurar no extrato"}
         </Button>
       </div>
 
@@ -328,100 +333,117 @@ export default function RecurrencesPage() {
         </Card>
       )}
 
-      {/* O numero pelo qual a tela existe. */}
-      <Card>
-        <CardHeader className="pb-2">
-          <CardDescription className="flex items-center gap-1.5">
-            Total por mês
-            <Dica rotulo="O que entra na soma">
-              Soma das contas fixas que você marcou como assinatura e do que
-              está detectado e confirmado no extrato. O que você ignorou ou
-              cancelou não entra na conta, e uma cobrança detectada que repete
-              uma conta fixa marcada só conta uma vez.
-            </Dica>
-          </CardDescription>
-          <CardTitle className="text-3xl text-foreground">
-            {podeMostrarNumero(estado) ? (
-              formatarBRL(totalMensal)
-            ) : (
-              <NumeroIndisponivel />
-            )}
-          </CardTitle>
-        </CardHeader>
-      </Card>
+      {/* O RESUMO: quanto custa e quanto pesa. Os dois numeros pelos quais a
+          tela existe, lado a lado. */}
+      <div className="grid gap-4 md:grid-cols-2">
+        <Card>
+          <CardHeader className="pb-2">
+            <CardDescription className="flex items-center gap-1.5">
+              Total por mês
+              <Dica rotulo="O que entra na soma">
+                Soma das contas fixas que você marcou como assinatura e do que
+                foi encontrado no seu extrato (confirmado ou ainda para
+                revisar). O que você ignorou ou cancelou não entra na conta, e
+                uma cobrança do extrato que repete uma conta fixa marcada só
+                conta uma vez.
+              </Dica>
+            </CardDescription>
+            <CardTitle className="text-3xl text-foreground">
+              {podeMostrarNumero(estado) ? (
+                formatarBRL(painel.totalMensal)
+              ) : (
+                <NumeroIndisponivel />
+              )}
+            </CardTitle>
+          </CardHeader>
+          {podeMostrarNumero(estado) && (
+            <CardContent className="space-y-1 text-sm text-muted-foreground">
+              <p>
+                <span className="font-medium text-foreground">
+                  {formatarBRL(painel.totalAnual)}
+                </span>{" "}
+                por ano
+              </p>
+              <p>
+                {painel.quantidade === 1
+                  ? "1 assinatura"
+                  : `${painel.quantidade} assinaturas`}
+                {painel.paraRevisar > 0
+                  ? ` · ${painel.paraRevisar} para revisar`
+                  : ""}
+              </p>
+            </CardContent>
+          )}
+        </Card>
 
-      {/* AS CONTAS FIXAS MARCADAS COMO ASSINATURA (migration 084). Antes das
-          detectadas: sao as que o usuario mesmo disse que sao assinatura. */}
+        <Card>
+          <CardHeader className="pb-2">
+            <CardDescription className="flex items-center gap-1.5">
+              Peso na sua renda
+              <Dica rotulo="Como o peso é calculado">
+                O total por mês das assinaturas dividido pela sua renda fixa
+                por mês (as receitas fixas ativas que você cadastrou). Como
+                referência: até {LIMITE_LEVE}% é leve, até {LIMITE_ATENCAO}%
+                pede atenção e acima disso as assinaturas já pesam no
+                orçamento.
+              </Dica>
+            </CardDescription>
+            <CardTitle className="text-3xl text-foreground">
+              {!podeMostrarNumero(estado) ||
+              painel.rendaMensal === null ? (
+                <NumeroIndisponivel />
+              ) : painel.percentualDaRenda === null ? (
+                "—"
+              ) : (
+                formatarPorcentagem(painel.percentualDaRenda)
+              )}
+            </CardTitle>
+          </CardHeader>
+          {podeMostrarNumero(estado) && (
+            <CardContent className="space-y-2 text-sm text-muted-foreground">
+              {painel.rendaMensal === null ? (
+                <p>Não foi possível ler a sua renda fixa agora.</p>
+              ) : painel.percentualDaRenda === null || !painel.faixa ? (
+                <p>
+                  Cadastre sua renda fixa (salário, por exemplo) para ver quanto
+                  as assinaturas pesam no orçamento.{" "}
+                  <Link
+                    href="/dashboard/receitas"
+                    className="font-medium text-primary underline-offset-4 hover:underline"
+                  >
+                    Ir para Receitas
+                  </Link>
+                </p>
+              ) : (
+                <>
+                  <BarraDoPeso
+                    percentual={painel.percentualDaRenda}
+                    faixa={painel.faixa}
+                  />
+                  <p>
+                    <Badge
+                      variant="outline"
+                      className={CLASSE_DA_FAIXA[painel.faixa].selo}
+                    >
+                      {ROTULO_DA_FAIXA[painel.faixa]}
+                    </Badge>{" "}
+                    de uma renda fixa de{" "}
+                    <span className="font-medium text-foreground">
+                      {formatarBRL(painel.rendaMensal)}
+                    </span>{" "}
+                    por mês
+                  </p>
+                </>
+              )}
+            </CardContent>
+          )}
+        </Card>
+      </div>
+
       {podeMostrarNumero(estado) && fixas === null && (
         <Card>
           <CardContent className="py-4 text-sm text-muted-foreground">
             Não foi possível ler as contas fixas marcadas como assinatura agora.
-          </CardContent>
-        </Card>
-      )}
-      {podeMostrarNumero(estado) && fixas !== null && fixas.length > 0 && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="flex items-center gap-1.5 text-base">
-              Contas fixas marcadas como assinatura
-              <Dica rotulo="Sobre as contas fixas marcadas">
-                Contas fixas (no cartão ou em outra conta) em que você ligou o
-                interruptor &quot;Assinatura&quot;. Para marcar outra, abra o
-                cartão e use o interruptor na conta prevista.
-              </Dica>
-            </CardTitle>
-            <CardDescription>
-              {fixas.length === 1 ? "1 assinatura" : `${fixas.length} assinaturas`}
-              {totalDasFixas !== null
-                ? ` · ${formatarBRL(totalDasFixas)} por mês`
-                : ""}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="divide-y divide-border p-0">
-            {fixas.map((f) => (
-              <div
-                key={f.id}
-                className="flex items-center justify-between gap-3 px-6 py-3"
-              >
-                <div className="min-w-0 space-y-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="truncate font-medium text-foreground">
-                      {f.descricao}
-                    </span>
-                    <Badge variant="secondary">
-                      {rotuloDaFrequenciaDaRegra(f.frequencia, f.intervalo)}
-                    </Badge>
-                  </div>
-                  {f.diaDoVencimento ? (
-                    <p className="text-xs text-muted-foreground">
-                      Todo dia {f.diaDoVencimento}
-                    </p>
-                  ) : null}
-                </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  <div className="text-right">
-                    <div className="font-semibold text-foreground">
-                      {formatarBRL(f.valor)}
-                    </div>
-                    {f.frequencia !== "monthly" || f.intervalo !== 1 ? (
-                      <div className="text-xs text-muted-foreground">
-                        {formatarBRL(f.custoMensal)}/mês
-                      </div>
-                    ) : null}
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    title="Não é uma assinatura, tirar da lista"
-                    aria-label={`Tirar ${f.descricao} de Assinaturas`}
-                    disabled={!online}
-                    onClick={() => void desmarcarFixa(f)}
-                  >
-                    <EyeOff className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-            ))}
           </CardContent>
         </Card>
       )}
@@ -444,23 +466,32 @@ export default function RecurrencesPage() {
         </div>
       )}
 
-      <div className="flex items-center justify-between">
-        {/* A contagem e um numero como qualquer outro: "0 cobrancas" sem dado
-            afirma a mesma coisa que o total zerado afirmava. */}
-        <span className="text-sm text-muted-foreground">
-          {podeMostrarNumero(estado)
-            ? `${visiveis.length} ${
-                visiveis.length === 1 ? "cobrança" : "cobranças"
-              }`
-            : "Lista indisponível agora"}
-        </span>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setMostrarIgnoradas((v) => !v)}
-        >
-          {mostrarIgnoradas ? "Esconder ignoradas" : "Mostrar ignoradas"}
-        </Button>
+      {/* A LISTA UNICA. Contas fixas e cobrancas do extrato juntas, da mais
+          cara para a mais barata. */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-base font-semibold text-foreground">
+          Suas assinaturas
+        </h2>
+        {podeMostrarNumero(estado) && painel.paraRevisar > 0 && (
+          <div className="flex gap-1" role="group" aria-label="Filtrar a lista">
+            <Button
+              variant={soParaRevisar ? "ghost" : "secondary"}
+              size="sm"
+              aria-pressed={!soParaRevisar}
+              onClick={() => setSoParaRevisar(false)}
+            >
+              Todas ({painel.quantidade})
+            </Button>
+            <Button
+              variant={soParaRevisar ? "secondary" : "ghost"}
+              size="sm"
+              aria-pressed={soParaRevisar}
+              onClick={() => setSoParaRevisar(true)}
+            >
+              Para revisar ({painel.paraRevisar})
+            </Button>
+          </div>
+        )}
       </div>
 
       {carregando ? (
@@ -484,114 +515,346 @@ export default function RecurrencesPage() {
           oQue="suas assinaturas"
           aoTentarDeNovo={() => carregar()}
         />
-      ) : visiveis.length === 0 && podeAfirmarVazio(estado) ? (
+      ) : itensVisiveis.length === 0 && podeAfirmarVazio(estado) ? (
         <Card>
           <CardContent className="space-y-2 pt-6 text-center">
             <p className="text-sm text-foreground">
-              Nenhuma cobrança recorrente encontrada ainda.
+              Nenhuma assinatura por aqui ainda.
             </p>
             <p className="text-xs text-muted-foreground">
-              São necessárias pelo menos 3 cobranças do mesmo lugar, em
-              intervalo regular e com valor parecido. Importe seu extrato e
-              clique em &quot;Procurar agora&quot;.
+              Marque uma conta fixa como assinatura no cartão (interruptor
+              &quot;Assinatura&quot; na conta prevista) ou importe seu extrato
+              e clique em &quot;Procurar no extrato&quot;: o app encontra o que
+              se repete pelo menos 3 vezes, em intervalo regular e com valor
+              parecido.
             </p>
           </CardContent>
         </Card>
       ) : (
-        <div className="space-y-3">
-          {visiveis.map((r) => (
-            <Card
-              key={r.id}
-              // Ignorada e cancelada continuam na lista, mas apagadas: o
-              // usuario precisa conseguir desfazer sem caçar a linha.
-              className={
-                r.status === "IGNORED" || r.status === "CANCELLED"
-                  ? "opacity-60"
-                  : undefined
-              }
+        <Card>
+          <CardContent className="divide-y divide-border p-0">
+            {itensVisiveis.map((item) => (
+              <LinhaDaAssinatura
+                key={item.chave}
+                item={item}
+                online={online}
+                aoDesmarcar={desmarcarFixa}
+                aoDecidir={decidir}
+              />
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* FORA DA CONTA: o que existe, mas nao soma -- com o motivo, para a
+          diferenca entre a lista e o total ter explicacao, e com o botao para
+          voltar atras. */}
+      {podeMostrarNumero(estado) && !carregando && (
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="flex items-center gap-1.5 text-base font-semibold text-foreground">
+              Fora da conta
+              <Dica rotulo="Por que estas não somam">
+                Cobranças do extrato que você cancelou ou disse que não são
+                assinatura, e as que repetem uma conta fixa já marcada (essas
+                contam uma vez só, pela conta fixa).
+              </Dica>
+            </h2>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setMostrarIgnoradas((v) => !v)}
             >
-              <CardContent className="flex flex-col gap-4 pt-6 md:flex-row md:items-center md:justify-between">
-                <div className="min-w-0 space-y-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="truncate font-medium text-foreground">
-                      {r.display_name}
-                    </span>
-                    <Badge variant="secondary">
-                      {ROTULO_FREQUENCIA[r.frequency]}
-                    </Badge>
-                    {r.status !== "DETECTED" && (
-                      <Badge variant="outline">{ROTULO_STATUS[r.status]}</Badge>
-                    )}
-                    {/* Ja somada como conta fixa marcada: nao conta de novo. */}
-                    {chavesDuplicadas.includes(r.merchant_key) && (
-                      <Badge variant="outline">Já é conta fixa</Badge>
-                    )}
-                  </div>
-                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                    <span className="flex items-center gap-1">
-                      <CalendarClock className="h-3 w-3" />
-                      Próxima: {formatarData(r.next_expected_date)}
-                    </span>
-                    <span>Última: {formatarData(r.last_charge_date)}</span>
-                    <span>{r.occurrences} cobranças</span>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-4">
-                  <div className="text-right">
-                    <div className="font-semibold text-foreground">
-                      {formatarBRL(r.avg_amount)}
-                    </div>
-                    {/* Mensal ja e o valor por mes; repetir "/mês" nas outras
-                        frequencias e o que deixa comparar anual com semanal. */}
-                    {r.frequency !== "MONTHLY" && (
-                      <div className="text-xs text-muted-foreground">
-                        {formatarBRL(r.monthly_cost)}/mês
+              {mostrarIgnoradas ? "Esconder ignoradas" : "Mostrar ignoradas"}
+            </Button>
+          </div>
+          {painel.foraDaConta.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              {mostrarIgnoradas
+                ? "Nada fora da conta."
+                : "Nada fora da conta (as ignoradas ficam escondidas)."}
+            </p>
+          ) : (
+            <Card>
+              <CardContent className="divide-y divide-border p-0">
+                {painel.foraDaConta.map((f) => (
+                  <div
+                    key={f.chave}
+                    className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between md:px-6"
+                  >
+                    <div className="min-w-0 space-y-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="truncate text-sm font-medium text-muted-foreground">
+                          {f.nome}
+                        </span>
+                        <Badge variant="outline">
+                          {ROTULO_DO_MOTIVO[f.motivo]}
+                        </Badge>
                       </div>
+                      <p className="text-xs text-muted-foreground">
+                        {formatarBRL(f.custoMensal)}/mês ·{" "}
+                        {formatarBRL(f.custoMensal * 12)}/ano
+                      </p>
+                    </div>
+                    {f.motivo !== "ja-e-conta-fixa" && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="gap-1 self-start sm:self-auto"
+                        title="Voltar a contar como assinatura"
+                        disabled={!online}
+                        onClick={() => decidir(f.detectada.id, "CONFIRMED")}
+                      >
+                        <Undo2 className="h-4 w-4" />
+                        É assinatura
+                      </Button>
                     )}
                   </div>
-
-                  {/*
-                    Sem rede as tres decisoes nao tem para onde ir. A
-                    atualizacao otimista mostraria a escolha aplicada por um
-                    instante e a desfaria em seguida -- pior que o botao
-                    apagado, porque a pessoa acreditaria ter decidido.
-                  */}
-                  <div className="flex gap-1">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      title="Confirmar que é uma assinatura"
-                      disabled={r.status === "CONFIRMED" || !online}
-                      onClick={() => decidir(r.id, "CONFIRMED")}
-                    >
-                      <Check className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      title="Não é uma assinatura, ignorar"
-                      disabled={r.status === "IGNORED" || !online}
-                      onClick={() => decidir(r.id, "IGNORED")}
-                    >
-                      <EyeOff className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      title="Já cancelei esta assinatura"
-                      disabled={r.status === "CANCELLED" || !online}
-                      onClick={() => decidir(r.id, "CANCELLED")}
-                    >
-                      <Ban className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
+                ))}
               </CardContent>
             </Card>
-          ))}
+          )}
         </div>
       )}
+    </div>
+  );
+}
+
+// =====================================================
+// Pecas da tela
+// =====================================================
+
+const ROTULO_DA_FAIXA: Record<FaixaDoPeso, string> = {
+  leve: "Leve",
+  atencao: "Atenção",
+  pesado: "Pesado",
+};
+
+const CLASSE_DA_FAIXA: Record<FaixaDoPeso, { barra: string; selo: string }> = {
+  leve: { barra: "bg-success", selo: "border-success text-success" },
+  atencao: { barra: "bg-warning", selo: "border-warning text-warning" },
+  pesado: {
+    barra: "bg-destructive",
+    selo: "border-destructive text-destructive",
+  },
+};
+
+const ROTULO_DO_MOTIVO: Record<MotivoForaDaConta, string> = {
+  ignorada: "Ignorada",
+  cancelada: "Cancelada",
+  "ja-e-conta-fixa": "Já é conta fixa",
+};
+
+function formatarPorcentagem(valor: number): string {
+  return `${valor.toLocaleString("pt-BR", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 1,
+  })}%`;
+}
+
+/**
+ * A barra do peso na renda. A escala vai ate 20% (e nao 100%): numa escala
+ * cheia, 4% e 12% virariam dois tracinhos iguais, e a diferenca entre "leve" e
+ * "pesado" e o que a barra existe para mostrar. As marcas de 5% e 10% ficam
+ * desenhadas.
+ */
+function BarraDoPeso({
+  percentual,
+  faixa,
+}: {
+  percentual: number;
+  faixa: FaixaDoPeso;
+}) {
+  const ESCALA = 20;
+  const largura = Math.min(100, (percentual / ESCALA) * 100);
+  return (
+    <div
+      className="relative h-2.5 w-full overflow-hidden rounded-full bg-muted"
+      role="meter"
+      aria-valuemin={0}
+      aria-valuemax={ESCALA}
+      aria-valuenow={Math.min(percentual, ESCALA)}
+      aria-label={`${formatarPorcentagem(percentual)} da renda`}
+    >
+      <div
+        className={`h-full rounded-full ${CLASSE_DA_FAIXA[faixa].barra}`}
+        style={{ width: `${largura}%` }}
+      />
+      {[LIMITE_LEVE, LIMITE_ATENCAO].map((marca) => (
+        <div
+          key={marca}
+          className="absolute top-0 h-full w-px bg-border"
+          style={{ left: `${(marca / ESCALA) * 100}%` }}
+          aria-hidden
+        />
+      ))}
+    </div>
+  );
+}
+
+function rotuloDaFrequencia(item: ItemDoPainel): string {
+  if (item.fixa) {
+    return rotuloDaFrequenciaDaRegra(item.fixa.frequencia, item.fixa.intervalo);
+  }
+  return item.detectada ? ROTULO_FREQUENCIA[item.detectada.frequency] : "";
+}
+
+function LinhaDaAssinatura({
+  item,
+  online,
+  aoDesmarcar,
+  aoDecidir,
+}: {
+  item: ItemDoPainel;
+  online: boolean;
+  aoDesmarcar: (fixa: AssinaturaDaContaFixa) => Promise<void>;
+  aoDecidir: (id: string, status: Recurrence["status"]) => Promise<void>;
+}) {
+  const mensal =
+    item.fixa
+      ? item.fixa.frequencia === "monthly" && item.fixa.intervalo === 1
+      : item.detectada?.frequency === "MONTHLY";
+
+  return (
+    <div className="space-y-2 px-4 py-3 md:px-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0 space-y-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="truncate font-medium text-foreground">
+              {item.nome}
+            </span>
+            <Badge variant="secondary">{rotuloDaFrequencia(item)}</Badge>
+            <Badge variant="outline" className="gap-1">
+              {item.origem === "conta-fixa" ? (
+                <>
+                  <CalendarCheck className="h-3 w-3" />
+                  Conta fixa
+                </>
+              ) : (
+                <>
+                  <ScrollText className="h-3 w-3" />
+                  Do extrato
+                </>
+              )}
+            </Badge>
+            {item.paraRevisar && (
+              <Badge
+                variant="outline"
+                className="border-warning text-warning"
+              >
+                Para revisar
+              </Badge>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+            {item.diaDoVencimento ? (
+              <span className="flex items-center gap-1">
+                <CalendarClock className="h-3 w-3" />
+                Vence todo dia {item.diaDoVencimento}
+              </span>
+            ) : null}
+            {item.proximaCobranca ? (
+              <span className="flex items-center gap-1">
+                <CalendarClock className="h-3 w-3" />
+                Próxima: {formatarData(item.proximaCobranca)}
+              </span>
+            ) : null}
+            {item.ultimaCobranca ? (
+              <span>Última: {formatarData(item.ultimaCobranca)}</span>
+            ) : null}
+            {!mensal ? (
+              <span>Cobrança de {formatarBRL(item.valorDaCobranca)}</span>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="flex items-start justify-between gap-3 sm:justify-end">
+          <div className="text-left sm:text-right">
+            <div className="font-semibold text-foreground">
+              {formatarBRL(item.custoMensal)}
+              <span className="text-xs font-normal text-muted-foreground">
+                /mês
+              </span>
+            </div>
+            <div className="text-xs text-muted-foreground">
+              {formatarBRL(item.custoAnual)}/ano
+            </div>
+          </div>
+
+          {/*
+            Sem rede as decisoes nao tem para onde ir. A atualizacao otimista
+            mostraria a escolha aplicada por um instante e a desfaria em
+            seguida -- pior que o botao apagado, porque a pessoa acreditaria ter
+            decidido.
+          */}
+          {item.fixa ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              title="Não é uma assinatura, tirar da lista"
+              aria-label={`Tirar ${item.nome} de Assinaturas`}
+              disabled={!online}
+              onClick={() => item.fixa && void aoDesmarcar(item.fixa)}
+            >
+              <EyeOff className="h-4 w-4" />
+            </Button>
+          ) : item.detectada ? (
+            <div className="flex gap-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                title="Confirmar que é uma assinatura"
+                aria-label={`Confirmar ${item.nome} como assinatura`}
+                disabled={item.detectada.status === "CONFIRMED" || !online}
+                onClick={() =>
+                  item.detectada &&
+                  void aoDecidir(item.detectada.id, "CONFIRMED")
+                }
+              >
+                <Check className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                title="Não é uma assinatura, ignorar"
+                aria-label={`Ignorar ${item.nome}`}
+                disabled={!online}
+                onClick={() =>
+                  item.detectada && void aoDecidir(item.detectada.id, "IGNORED")
+                }
+              >
+                <EyeOff className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                title="Já cancelei esta assinatura"
+                aria-label={`Já cancelei ${item.nome}`}
+                disabled={!online}
+                onClick={() =>
+                  item.detectada &&
+                  void aoDecidir(item.detectada.id, "CANCELLED")
+                }
+              >
+                <Ban className="h-4 w-4" />
+              </Button>
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      {/* A fatia desta assinatura no total do mes. */}
+      <div className="flex items-center gap-2">
+        <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
+          <div
+            className="h-full rounded-full bg-primary"
+            style={{ width: `${Math.min(100, item.participacao)}%` }}
+          />
+        </div>
+        <span className="w-24 shrink-0 text-right text-xs text-muted-foreground">
+          {formatarPorcentagem(item.participacao)} do total
+        </span>
+      </div>
     </div>
   );
 }

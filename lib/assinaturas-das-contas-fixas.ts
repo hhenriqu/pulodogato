@@ -146,3 +146,30 @@ export function rotuloDaFrequenciaDaRegra(
   if (frequencia === "annual") return `A cada ${intervalo} anos`;
   return `${ROTULO_DA_FREQUENCIA_DA_REGRA[frequencia]} (x${intervalo})`;
 }
+
+/**
+ * A renda mensal fixa: as receitas fixas ATIVAS, cada uma normalizada para o
+ * mes com a mesma conta do custo das assinaturas. E o denominador de "quanto as
+ * assinaturas pesam no orcamento" (docs/ASSINATURAS.md).
+ *
+ * So `transaction_type = 'income'` explicito: aqui o default de regra antiga
+ * sem tipo e despesa, e contar uma despesa como renda faria a porcentagem
+ * parecer menor do que e.
+ */
+export function rendaMensalDasRegras(regras: RegraDeAssinatura[]): number {
+  return arredondar(
+    regras
+      .filter((r) => r.is_active !== false)
+      .filter((r) => r.transaction_type === "income")
+      .reduce(
+        (soma, r) =>
+          soma +
+          custoMensalDaRegra(
+            r.frequency,
+            Number(r.amount) || 0,
+            Number(r.interval_count ?? 1) || 1
+          ),
+        0
+      )
+  );
+}

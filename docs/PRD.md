@@ -420,6 +420,15 @@ a tela não pode contorná-las. As marcadas **(tela)** vivem em TypeScript testa
   rateio. O que o membro ainda deve ao dono continua no «A pagar» da agenda.
   ↪ Substituída pela RN018 na fase 4: a parte de cada membro deixa de entrar
   no Realizado pelo rateio, e o que ele deve vira a conta do fechamento.
+- RN006.7 A tela de Assinaturas mostra numa **lista única** as contas fixas
+  marcadas como assinatura e as cobranças do extrato que somam (detectadas ou
+  confirmadas), da mais cara para a mais barata, com custo por mês, por ano e
+  a fatia de cada uma no total. Ignorada, cancelada e a detectada que repete
+  uma conta fixa ficam em «Fora da conta», com o motivo (docs/ASSINATURAS.md).
+- RN006.8 O **peso das assinaturas no orçamento** é o total mensal dividido
+  pela renda fixa mensal (receitas fixas ativas, normalizadas para o mês). Até
+  5% é leve, até 10% pede atenção, acima disso é pesado. Sem renda fixa
+  cadastrada a tela não mostra porcentagem: convida a cadastrar.
 
 ### RN007 — Divisão de despesa em grupo ✅ **(banco)**
 
