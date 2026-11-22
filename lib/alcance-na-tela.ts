@@ -76,9 +76,23 @@ export function opcoesDeAlcance(entrada: {
    * fixa (mudar a data de uma ocorrencia nao desloca a regra) nem em apagar.
    */
   movendo?: boolean;
+  /**
+   * De QUAL serie fixa se fala, e se a linha clicada ja foi realizada. So vale
+   * para apagar uma conta fixa.
+   *
+   * As frases de sempre falam de "gasto fixo" e de "agenda" porque nasceram em
+   * Contas a Pagar. Na tela de Receitas, apagando o salario ja recebido, as
+   * duas palavras estariam erradas: e uma RECEITA, e o que sai primeiro e o
+   * LANCAMENTO, nao uma linha da agenda. Sem este campo, nada muda.
+   */
+  serie?: SerieFixa;
 }): OpcaoDeAlcance[] {
-  const { tipo, acao, ancora, totalDeParcelas, movendo = false } = entrada;
+  const { tipo, acao, ancora, totalDeParcelas, movendo = false, serie } = entrada;
   const ehParcela = tipo === "parcela";
+
+  if (acao === "apagar" && !ehParcela && serie) {
+    return opcoesDeApagarNaSerie(ancora, serie);
+  }
 
   const todasRotulo =
     ehParcela && totalDeParcelas
@@ -163,6 +177,60 @@ export function opcoesDeAlcance(entrada: {
       consequencia: ehParcela
         ? "Muda todas as parcelas da compra. Parcelas em fatura já paga não são alteradas."
         : "Muda todas as ocorrências em aberto, inclusive as de meses anteriores que ainda não foram pagas, e o próprio gasto fixo. O que já foi pago não é alterado.",
+    },
+  ];
+}
+
+/** Ver `serie` em `opcoesDeAlcance`. */
+export interface SerieFixa {
+  /** A direcao da serie: decide "receita fixa"/"gasto fixo" e "recebido"/"pago". */
+  direcao: "income" | "expense" | "transfer";
+  /** A linha clicada e um lancamento ja realizado (e nao uma prevista). */
+  realizado: boolean;
+}
+
+/**
+ * As tres opcoes de apagar numa serie fixa, nas palavras da tela de
+ * movimentacao: "só este mês", "deste mês em diante", "todos".
+ *
+ * As consequencias dizem o que a rota faz, e nada alem: o mes clicado sai (o
+ * lancamento dele tambem, se ja foi realizado); "deste mes em diante" encerra a
+ * serie na data dele; "todos" encerra a serie inteira. Os meses ja
+ * recebidos/pagos -- fora o clicado -- FICAM, a mesma regra de Contas a Pagar
+ * (HMO-228), e a frase diz isso para que ninguem conclua que o historico sumiu.
+ */
+function opcoesDeApagarNaSerie(ancora: string, serie: SerieFixa): OpcaoDeAlcance[] {
+  const nome =
+    serie.direcao === "income"
+      ? "a receita fixa"
+      : serie.direcao === "transfer"
+        ? "a transferência fixa"
+        : "o gasto fixo";
+  const Nome = nome.charAt(0).toUpperCase() + nome.slice(1);
+  const jaFeitos = serie.direcao === "income" ? "já recebidos" : "já pagos";
+  const esteMes = serie.realizado
+    ? "O lançamento deste mês é apagado e o mês sai da agenda."
+    : "Este mês sai da agenda.";
+
+  return [
+    {
+      valor: "apenas_esta",
+      rotulo: `Só este mês (${ancora})`,
+      consequencia: `${esteMes} ${Nome} continua e os outros meses continuam vindo.`,
+    },
+    {
+      valor: "esta_e_proximas",
+      rotulo: "Deste mês em diante",
+      consequencia:
+        `${esteMes} Os meses seguintes em aberto também saem, e ${nome} para de gerar a partir desta data. ` +
+        `Meses anteriores e os ${jaFeitos} ficam como estão.`,
+    },
+    {
+      valor: "todas",
+      rotulo: "Todos os meses",
+      consequencia:
+        `${esteMes} ${Nome} para de gerar e todos os meses em aberto saem da agenda. ` +
+        `Os meses ${jaFeitos} ficam no histórico.`,
     },
   ];
 }

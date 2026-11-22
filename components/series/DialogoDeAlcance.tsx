@@ -53,6 +53,7 @@ import {
   precisaPerguntarBase,
   type Acao,
   type Alcance,
+  type SerieFixa,
   type TipoDeSerie,
 } from "@/lib/alcance-na-tela";
 import type { BaseDoValorParcelado } from "@/lib/lancamento";
@@ -88,6 +89,8 @@ export interface DialogoDeAlcanceProps {
   };
   aoConfirmar: (alcance: Alcance, base: BaseDoValorParcelado) => void | Promise<void>;
   salvando?: boolean;
+  /** Ver `serie` em `opcoesDeAlcance` (lib/alcance-na-tela.ts). */
+  serie?: SerieFixa;
 }
 
 const moeda = (v: number) => {
@@ -116,6 +119,7 @@ export function DialogoDeAlcance({
   totalDaCompra,
   aoConfirmar,
   salvando = false,
+  serie,
 }: DialogoDeAlcanceProps) {
   // O PADRAO E O MENOS DESTRUTIVO, SEMPRE.
   //
@@ -132,6 +136,7 @@ export function DialogoDeAlcance({
     ancora,
     totalDeParcelas,
     movendo,
+    serie,
   });
   const consequencia = consequenciaNaTela(alcance, opcoes);
   const perguntarBase = precisaPerguntarBase({ tipo, alcance, mudaValor });
@@ -142,7 +147,9 @@ export function DialogoDeAlcance({
     acao === "apagar"
       ? tipo === "parcela"
         ? "Apagar parcela"
-        : "Apagar conta"
+        : serie?.direcao === "income"
+          ? "Apagar receita fixa"
+          : "Apagar conta"
       : tipo === "parcela"
         ? "Alterar parcela"
         : "Alterar conta";

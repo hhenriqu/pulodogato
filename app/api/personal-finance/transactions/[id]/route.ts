@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { normalizarLancamento } from "@/lib/movimentacoes";
 import { avisoDaDivisaoPaga } from "@/lib/conta-da-divisao";
 import { cobrancaDaCompra, pularCobranca } from "@/lib/services/cobranca-no-cartao";
+import { ehAlcanceValido, type AlcanceDaEdicao } from "@/lib/recorrencia-edicao";
 
 export async function PATCH(
   request: NextRequest,
@@ -271,10 +272,46 @@ export async function DELETE(
 
     const { id } = params;
 
+    // O ALCANCE DA SERIE, QUANDO O LANCAMENTO VEIO DE UMA RECEITA/GASTO FIXO
+    // ----------------------------------------------------------------------
+    // "Excluí um lançamento duplicado do meu salário e ele excluiu só aquele
+    // mês. Se for fixo, deve perguntar se quero excluir apenas aquele mês,
+    // daquele mês em diante ou todas."
+    //
+    // Sem `alcance` no corpo a rota faz o que sempre fez: apaga ESTE lancamento,
+    // e o trigger da 065 devolve a ocorrencia que ele quitou para `pending` --
+    // ela reaparece em "Previsto" como se nada tivesse sido apagado. Com
+    // `alcance`, a ocorrencia deste mes sai da agenda e, conforme a escolha, as
+    // dos meses seguintes tambem, pelo MESMO caminho do Excluir de uma conta
+    // prevista (`DELETE /api/scheduled-transactions/{id}`): uma regra so para
+    // "tirar meses de uma serie", e nao duas que divergem no primeiro conserto.
+    //
+    // No CORPO e nao na query string, pelo motivo escrito na rota da agenda: e
+    // uma decisao sobre dinheiro.
+    let alcance: AlcanceDaEdicao | null = null;
+    try {
+      const corpo = await request.json();
+      if (corpo && typeof corpo === "object" && "alcance" in corpo) {
+        const recebido = (corpo as { alcance: unknown }).alcance;
+        if (!ehAlcanceValido(recebido)) {
+          return NextResponse.json(
+            {
+              error:
+                'Alcance inválido. Use "apenas_esta", "esta_e_proximas" ou "todas".',
+            },
+            { status: 400 }
+          );
+        }
+        alcance = recebido;
+      }
+    } catch {
+      // Sem corpo: o comportamento de sempre.
+    }
+
     // Verificar se a transação pertence ao usuário
     const { data: existingTransaction, error: fetchError } = await supabase
       .from("financial_transactions")
-      .select("group_id")
+      .select("group_id, transaction_type")
       .eq("id", id)
       .eq("user_id", user.id)
       .single();
@@ -293,6 +330,22 @@ export async function DELETE(
     // assinatura de outubro a faria voltar na proxima leitura. Ver
     // `cobrancaDaCompra`.
     const cobrancaPulada = await cobrancaDaCompra(supabase, user.id, id);
+
+    // A ocorrencia da serie que este lancamento quitou. Lida ANTES do DELETE
+    // pela mesma razao de `cobrancaDaCompra`: depois dele o trigger da 065 ja
+    // zerou o `transaction_id`, e o elo some. Transferencia fica de fora -- o
+    // estorno dela e o `DELETE .../pay`, e ela nem chega a esta rota pela tela.
+    let ocorrenciaDaSerie: string | null = null;
+    if (alcance && existingTransaction.transaction_type !== "transfer") {
+      const { data: ocorrencia } = await supabase
+        .from("scheduled_transactions")
+        .select("id, recurring_rule_id")
+        .eq("user_id", user.id)
+        .eq("transaction_id", id)
+        .not("recurring_rule_id", "is", null)
+        .maybeSingle();
+      ocorrenciaDaSerie = ocorrencia?.id ?? null;
+    }
 
     if (existingTransaction.group_id) {
       await supabase
@@ -325,6 +378,104 @@ export async function DELETE(
     }
 
     if (cobrancaPulada) await pularCobranca(supabase, user.id, cobrancaPulada);
+
+    if (alcance && ocorrenciaDaSerie) {
+      // 1. O MES DESTE LANCAMENTO SAI DA AGENDA, EM QUALQUER ALCANCE.
+      //
+      // O trigger da 065 acabou de devolver a ocorrencia para `pending`. Deixada
+      // assim, ela reaparece em "Previsto" -- e o pior caso e o `todas`:
+      // `encerrarRegra` so cancela as pendentes de HOJE em diante, entao o
+      // salario de um mes que ja passou voltaria como receita atrasada depois de
+      // a pessoa ter mandado apagar a serie inteira. `skipped` e o que a agenda
+      // ja usa para "este mes nao acontece", e `encerrarRegra` o leva a
+      // `cancelled` junto com as outras. O filtro de `pending` na escrita e o
+      // mesmo da agenda: a cobranca no cartao ja foi pulada logo acima.
+      const { error: erroAoPular } = await supabase
+        .from("scheduled_transactions")
+        .update({ status: "skipped" })
+        .eq("id", ocorrenciaDaSerie)
+        .eq("user_id", user.id)
+        .eq("status", "pending");
+
+      if (erroAoPular) {
+        console.error("Lançamento apagado, mas o mês não saiu da agenda:", erroAoPular);
+        return NextResponse.json(
+          {
+            message:
+              "Apaguei o lançamento, mas este mês continua na agenda. Confira em Contas a Pagar.",
+            lancamento_excluido: true,
+          },
+          { status: 207 }
+        );
+      }
+
+      if (alcance === "apenas_esta") {
+        return NextResponse.json({
+          message:
+            "Lançamento apagado. Este mês saiu da agenda e os próximos continuam vindo.",
+          lancamento_excluido: true,
+        });
+      }
+
+      // 2. OS MESES SEGUINTES (OU TODOS) PELO EXCLUIR DA AGENDA.
+      //
+      // O DELETE da agenda e importado AQUI, sob demanda, e por caminho
+      // relativo: as suites que compilam esta rota rodam o JS sem empacotador,
+      // so reescrevem os aliases de `lib` e nao passam por este galho. Um import
+      // estatico quebraria o carregamento delas inteiro.
+      const { DELETE: tirarDaAgenda } = await import(
+        "../../../scheduled-transactions/[id]/route"
+      );
+      const daAgenda = await tirarDaAgenda(
+        new NextRequest(
+          new URL(`/api/scheduled-transactions/${ocorrenciaDaSerie}`, request.url),
+          {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ alcance }),
+          }
+        ),
+        { params: { id: ocorrenciaDaSerie } }
+      );
+      const serie = await daAgenda.json().catch(() => ({}));
+
+      // 207 da agenda tambem e metade: as linhas sairam e a regra nao encerrou.
+      if (!daAgenda.ok || daAgenda.status === 207) {
+        // O lancamento JA saiu, e isso nao volta. Dizer so "erro" mandaria a
+        // pessoa tentar de novo sobre uma linha que nao existe mais; o que ela
+        // precisa saber e que a serie nao ficou como ela pediu.
+        return NextResponse.json(
+          {
+            message:
+              "Apaguei o lançamento e tirei este mês da agenda, mas não consegui encerrar a série" +
+              (serie?.error ? `: ${serie.error}` : ".") +
+              " Confira em Contas a Pagar.",
+            lancamento_excluido: true,
+            serie,
+          },
+          { status: 207 }
+        );
+      }
+
+      const outros = Number(
+        alcance === "todas"
+          ? serie?.ocorrencias_canceladas ?? 0
+          : serie?.ocorrencias_puladas ?? 0
+      );
+      const fora =
+        outros > 0
+          ? ` ${outros} ${outros === 1 ? "mês em aberto saiu" : "meses em aberto saíram"} da agenda.`
+          : "";
+
+      return NextResponse.json({
+        message:
+          alcance === "todas"
+            ? `Lançamento apagado e a série encerrada.${fora} Os meses já lançados ficam no histórico.`
+            : `Lançamento apagado e a série encerrada a partir deste mês.${fora}`,
+        lancamento_excluido: true,
+        serie,
+      });
+    }
 
     return NextResponse.json({
       message: "Transaction deleted successfully",

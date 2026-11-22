@@ -54,6 +54,7 @@ const {
   pedidoDeConfirmacao,
   pedidoDeEdicaoDaPrevista,
   pedidoDeExclusao,
+  perguntaOAlcance,
   podeAgirNaLinha,
   podeConfirmar,
   podeEditar,
@@ -1372,4 +1373,63 @@ test("o aviso diz o que o flag NAO faz -- as tres coisas que continuam", () => {
   // "Continua" PRIMEIRO: o medo de quem desmarca e perder o lancamento, e a
   // primeira palavra responde isso.
   assert.match(AVISO_DO_FLAG_DOS_TOTAIS, /^Continua\b/);
+});
+
+// ---------------------------------------------------------------------------
+// A LINHA FIXA PERGUNTA O ALCANCE NA EXCLUSAO
+// ---------------------------------------------------------------------------
+// "Excluí um lançamento duplicado do meu salário e ele excluiu só aquele mês.
+// Se for fixo deve perguntar se quero excluir apenas aquele mês, daquele mês em
+// diante ou todas."
+
+test("o Excluir pergunta o alcance na linha fixa -- prevista ou ja realizada -- e so nela", () => {
+  assert.equal(perguntaOAlcance(prevista({ natureza: "fixa" })), true);
+  assert.equal(
+    perguntaOAlcance(realizada({ natureza: "fixa", tipo: "income" })),
+    true,
+    "o salario ja recebido tem de perguntar tambem: apaga-lo devolvia o mes para Previsto"
+  );
+
+  // A linha comum continua no confirm() de sempre.
+  assert.equal(perguntaOAlcance(prevista()), false);
+  assert.equal(perguntaOAlcance(realizada()), false);
+
+  // A transferencia JA REALIZADA sai pela rota das duas pernas, sem alcance.
+  assert.equal(perguntaOAlcance(realizada({ natureza: "fixa", tipo: "transfer" })), false);
+  // A prevista de uma transferencia fixa e uma linha da agenda como outra.
+  assert.equal(perguntaOAlcance(prevista({ natureza: "fixa", tipo: "transfer" })), true);
+
+  // A peneira de sempre manda: linha de outro membro nao pergunta nada.
+  assert.equal(perguntaOAlcance(prevista({ natureza: "fixa", posso_editar: false })), false);
+});
+
+test("o alcance escolhido vai no CORPO -- da agenda na prevista, da rota de lancamento na realizada", () => {
+  assert.deepEqual(pedidoDeExclusao(prevista({ id: "s9", natureza: "fixa" }), "todas"), {
+    metodo: "DELETE",
+    url: "/api/scheduled-transactions/s9",
+    corpo: { alcance: "todas" },
+  });
+
+  assert.deepEqual(
+    pedidoDeExclusao(
+      realizada({ id: "t9", natureza: "fixa", tipo: "income" }),
+      "esta_e_proximas"
+    ),
+    {
+      metodo: "DELETE",
+      url: "/api/personal-finance/transactions/t9",
+      corpo: { alcance: "esta_e_proximas" },
+    }
+  );
+
+  // Sem escolha, o padrao e o menos destrutivo -- e continua escrito.
+  assert.deepEqual(pedidoDeExclusao(prevista({ id: "s9", natureza: "fixa" })).corpo, {
+    alcance: "apenas_esta",
+  });
+
+  // A realizada COMUM nao manda corpo nenhum: a rota faz o que sempre fez.
+  assert.deepEqual(pedidoDeExclusao(realizada({ id: "t1" }), "todas"), {
+    metodo: "DELETE",
+    url: "/api/personal-finance/transactions/t1",
+  });
 });

@@ -600,7 +600,10 @@ export function pedidoDeConfirmacao(linha: LinhaAcionavel): PedidoDaAcao | null 
  * inteiro. E a mesma bifurcacao que `deleteTransaction` da lista de Financas
  * Pessoais ja faz.
  */
-export function pedidoDeExclusao(linha: LinhaAcionavel): PedidoDaAcao | null {
+export function pedidoDeExclusao(
+  linha: LinhaAcionavel,
+  alcance: AlcanceDaExclusao = "apenas_esta"
+): PedidoDaAcao | null {
   if (!podeExcluir(linha)) return null;
 
   const id = encodeURIComponent(linha.id);
@@ -609,11 +612,12 @@ export function pedidoDeExclusao(linha: LinhaAcionavel): PedidoDaAcao | null {
     return {
       metodo: "DELETE",
       url: `/api/scheduled-transactions/${id}`,
-      // `apenas_esta` EXPLICITO, e nao confiando no default da rota: o alcance
-      // decide se a serie inteira sai da agenda, e e a unica coisa que esta tela
-      // NAO pergunta. Escrito, ele nao muda de significado no dia em que o
-      // default da rota mudar. Ver lib/recorrencia-edicao.ts.
-      corpo: { alcance: "apenas_esta" },
+      // O alcance SEMPRE EXPLICITO, e nao confiando no default da rota: ele
+      // decide se a serie inteira sai da agenda. Escrito, ele nao muda de
+      // significado no dia em que o default da rota mudar. Na linha fixa ele e
+      // a resposta da pergunta (`perguntaOAlcance`); na avulsa, `apenas_esta`.
+      // Ver lib/recorrencia-edicao.ts.
+      corpo: { alcance },
     };
   }
 
@@ -624,10 +628,42 @@ export function pedidoDeExclusao(linha: LinhaAcionavel): PedidoDaAcao | null {
     };
   }
 
+  // O lancamento JA REALIZADO de uma receita/gasto fixo leva o alcance tambem:
+  // sem ele a rota apaga o lancamento e o trigger da 065 devolve o mes para
+  // "Previsto" -- a linha some de um lado da tela e reaparece no outro.
+  if (perguntaOAlcance(linha)) {
+    return {
+      metodo: "DELETE",
+      url: `/api/personal-finance/transactions/${id}`,
+      corpo: { alcance },
+    };
+  }
+
   return {
     metodo: "DELETE",
     url: `/api/personal-finance/transactions/${id}`,
   };
+}
+
+/** Os tres alcances da exclusao de uma linha fixa (lib/recorrencia-edicao.ts). */
+export type AlcanceDaExclusao = "apenas_esta" | "esta_e_proximas" | "todas";
+
+/**
+ * O Excluir desta linha pergunta "só este mês, deste mês em diante ou todos"?
+ *
+ * Sim em toda linha que nasceu de uma regra fixa (`natureza: "fixa"`) -- a
+ * prevista E a ja realizada. Antes so a Contas a Pagar perguntava; aqui o
+ * Excluir tirava SO aquele mes, e a receita fixa duplicada continuava gerando
+ * os meses seguintes sem a pessoa ter tido a chance de dizer que nao queria.
+ *
+ * Fora a transferencia ja realizada: o estorno dela apaga as duas pernas pela
+ * rota propria, e a rota de lancamento comum nem e chamada.
+ */
+export function perguntaOAlcance(linha: LinhaAcionavel): boolean {
+  if (!podeExcluir(linha)) return false;
+  if (linha.natureza !== "fixa") return false;
+  if (linha.origem !== "previsto" && linha.tipo === "transfer") return false;
+  return true;
 }
 
 /**
