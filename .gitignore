@@ -761,3 +761,10 @@ next-env.d.ts
 graphify-out/
 /.tmp-acesso-pelo-claude/
 /.tmp-extrato-c6/
+
+# E2E (Playwright): sessao da conta de teste, prints e relatorio de cada rodada.
+# A sessao NUNCA entra no git nem no artefato: e um token valido.
+/e2e/.auth/
+/e2e/evidencias/
+/e2e/resultados/
+/e2e/relatorio/
