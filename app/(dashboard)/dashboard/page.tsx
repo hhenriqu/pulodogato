@@ -106,6 +106,8 @@ import { NumeroIndisponivel } from "@/components/SemRede";
 import { PrevistoXRealizado } from "@/components/dashboard/PrevistoXRealizado";
 import { MapaDeCalor } from "@/components/dashboard/MapaDeCalor";
 import { DespesasPorCategoria } from "@/components/dashboard/DespesasPorCategoria";
+import { ComposicaoDosCartoes } from "@/components/cartoes/ComposicaoDosCartoes";
+import { mesCorrenteDaFatura, rotuloDaFatura } from "@/lib/fatura-do-cartao";
 import { UltimasDespesas } from "@/components/dashboard/UltimasDespesas";
 import { SaldoDoMes } from "@/components/dashboard/SaldoDoMes";
 import {
@@ -1280,6 +1282,15 @@ function PainelCompleto() {
     ),
     "despesas-por-categoria": (
       <DespesasPorCategoria de={periodo.de} ate={periodo.ate} rotulo={rotulo} />
+    ),
+    // A composicao dos cartoes: a fatura do mes CORRENTE (a mesma que a
+    // tela de Cartoes abre), com a chave do Total para quitar. Busca os
+    // proprios dados -- ver components/cartoes/ComposicaoDosCartoes.tsx.
+    "composicao-dos-cartoes": (
+      <ComposicaoDosCartoes
+        mes={mesCorrenteDaFatura()}
+        rotuloDoMes={rotuloDaFatura(mesCorrenteDaFatura())}
+      />
     ),
     "ultimas-despesas": (
       <UltimasDespesas

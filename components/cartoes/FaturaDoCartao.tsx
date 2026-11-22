@@ -224,6 +224,13 @@ interface FaturaDoCartaoProps {
    * abaixo do total que o ajuste explica.
    */
   blocoDeAjuste?: ReactNode;
+  /**
+   * A rosca da composicao da fatura (fixo, assinatura, parcelado, esporadico),
+   * como SLOT pelo mesmo motivo: ela busca os proprios dados, e quem sabe
+   * quando a fatura mudou e a pagina. Fica logo abaixo do total que ela
+   * decompoe. Ver docs/COMPOSICAO-DA-FATURA.md.
+   */
+  blocoDaComposicao?: ReactNode;
 }
 
 /**
@@ -271,6 +278,7 @@ export function FaturaDoCartao({
   aoMarcarAssinatura,
   blocoDeEdicaoDaPrevisao,
   blocoDeAjuste,
+  blocoDaComposicao,
 }: FaturaDoCartaoProps) {
   /**
    * A tela do cartao, para o modal de lancamento voltar para a fatura (HMO-249).
@@ -473,6 +481,8 @@ export function FaturaDoCartao({
           lado dele.
           ------------------------------------------------------------------ */}
       {blocoDeAjuste}
+
+      {blocoDaComposicao}
 
       {/* ------------------------------------------------------------------
           A lista.

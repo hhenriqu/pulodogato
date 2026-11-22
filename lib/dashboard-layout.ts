@@ -105,6 +105,15 @@ export const SECOES_DO_PAINEL: SecaoDoPainel[] = [
     titulo: "Últimas despesas",
     descricao: "As cinco despesas pagas mais recentes do período",
   },
+  // A composicao dos cartoes (22/11/2026, docs/COMPOSICAO-DA-FATURA.md):
+  // fixo, assinatura, parcelado e esporadico na fatura do mes, com a chave do
+  // TOTAL para quitar. Largura inteira, logo depois do par da rosca.
+  {
+    id: "composicao-dos-cartoes",
+    titulo: "Composição dos cartões",
+    descricao:
+      "Fixo, assinaturas, parcelado e esporádico na fatura do mês, e o total para quitar",
+  },
   {
     id: "posso-gastar",
     titulo: "Quanto ainda posso gastar",

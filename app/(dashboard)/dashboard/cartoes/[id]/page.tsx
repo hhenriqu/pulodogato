@@ -68,6 +68,7 @@ import {
   PainelErroDoServidor,
   PainelSemRede,
 } from "@/components/SemRede";
+import { ComposicaoDosCartoes } from "@/components/cartoes/ComposicaoDosCartoes";
 import { FaturaDoCartao } from "@/components/cartoes/FaturaDoCartao";
 import { AcoesDaFatura } from "@/components/cartoes/AcoesDaFatura";
 import { faturaParcelada } from "@/lib/mover-e-parcelar-fatura";
@@ -918,6 +919,18 @@ function GastosDoCartao() {
             aoMudarDescricao={setDescricaoDoAjuste}
             aoSalvar={salvarAjuste}
             aoRemover={removerAjuste}
+          />
+        }
+        blocoDaComposicao={
+          // O MENSAL desta fatura, sem a chave do Total: quitar e pergunta da
+          // tela de Cartoes e do painel. `sinal` rele a rosca quando a fatura
+          // mudou (apagar parcela, ajustar, excluir compra).
+          <ComposicaoDosCartoes
+            mes={mes}
+            accountId={conta.id}
+            soMensal
+            rotuloDoMes={rotuloDaFatura(mes)}
+            sinal={`${fatura?.total ?? ""}|${fatura?.line_count ?? ""}|${fatura?.total_previsto ?? ""}`}
           />
         }
       />
