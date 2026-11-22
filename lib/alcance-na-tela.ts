@@ -195,9 +195,10 @@ export interface SerieFixa {
  *
  * As consequencias dizem o que a rota faz, e nada alem: o mes clicado sai (o
  * lancamento dele tambem, se ja foi realizado); "deste mes em diante" encerra a
- * serie na data dele; "todos" encerra a serie inteira. Os meses ja
- * recebidos/pagos -- fora o clicado -- FICAM, a mesma regra de Contas a Pagar
- * (HMO-228), e a frase diz isso para que ninguem conclua que o historico sumiu.
+ * serie na data dele, e os meses ja recebidos/pagos ficam; "todos" APAGA A SERIE
+ * INTEIRA, os ja recebidos/pagos inclusive (decisao de 22/11/2026, o salario
+ * duplicado) -- diferente de Contas a Pagar, que preserva o pago, e por isso a
+ * frase diz com todas as letras.
  */
 function opcoesDeApagarNaSerie(ancora: string, serie: SerieFixa): OpcaoDeAlcance[] {
   const nome =
@@ -229,8 +230,8 @@ function opcoesDeApagarNaSerie(ancora: string, serie: SerieFixa): OpcaoDeAlcance
       valor: "todas",
       rotulo: "Todos os meses",
       consequencia:
-        `${esteMes} ${Nome} para de gerar e todos os meses em aberto saem da agenda. ` +
-        `Os meses ${jaFeitos} ficam no histórico.`,
+        `A série inteira é apagada: os meses ${jaFeitos} também são apagados, e todos os meses em aberto saem da agenda. ` +
+        "Transferências e contas divididas já pagas ficam.",
     },
   ];
 }

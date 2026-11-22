@@ -765,13 +765,17 @@ test("na tela de movimentacao, a serie fixa fala de MES, da direcao certa, e do 
       ["todas", "Todos os meses"],
     ]
   );
-  for (const o of receita) {
+  for (const o of receita.slice(0, 2)) {
     assert.match(o.consequencia, /lançamento deste mês é apagado/, o.valor);
     assert.match(o.consequencia, /receita fixa/i, o.valor);
+  }
+  for (const o of receita) {
     assert.doesNotMatch(o.consequencia, /gasto fixo|pagos/, o.valor);
   }
-  // "Todos" diz o que FICA: os meses ja recebidos nao somem.
-  assert.match(receita[2].consequencia, /já recebidos ficam no histórico/);
+  // "Deste mês em diante" preserva os ja recebidos; "Todos" APAGA (decisao de
+  // 22/11/2026, o salario duplicado) -- e a frase tem de dizer as duas coisas.
+  assert.match(receita[1].consequencia, /já recebidos ficam como estão/);
+  assert.match(receita[2].consequencia, /já recebidos também são apagados/);
 
   // Prevista de despesa: sem a frase do lancamento, e com "pagos".
   const gasto = opcoesDeAlcance({

@@ -148,14 +148,15 @@ function VIZINHA_DE_OUTRO_DONO() {
  * `noMeioDoPedido` (opcional) roda UMA vez, depois de a rota ter lido a
  * ocorrencia e antes de ela escrever. Ver o caso da corrida.
  */
-async function apagar({ id, alcance, agenda, regras, noMeioDoPedido }) {
+async function apagar({ id, alcance, agenda, regras, noMeioDoPedido, lancamentos, apagarLancados }) {
   const scheduled_transactions = agenda ?? serieComoEstavaEmProducao();
   const recurring_rules =
     regras ?? [{ id: REGRA, user_id: DONO, is_active: true, end_date: null }];
+  const financial_transactions = lancamentos ?? [];
 
   const sessao = criarDuble({
     user: { id: DONO },
-    tabelas: { scheduled_transactions, recurring_rules },
+    tabelas: { scheduled_transactions, recurring_rules, financial_transactions },
   });
 
   // O CLIENT EMBRULHADO, PARA PODER ENCAIXAR ALGO ENTRE A LEITURA E A ESCRITA.
@@ -184,7 +185,10 @@ async function apagar({ id, alcance, agenda, regras, noMeioDoPedido }) {
   let resposta;
   try {
     resposta = await ROTA.DELETE(
-      { json: async () => ({ alcance }) },
+      {
+        json: async () =>
+          apagarLancados ? { alcance, apagar_lancados: true } : { alcance },
+      },
       { params: { id } }
     );
   } finally {
@@ -196,6 +200,7 @@ async function apagar({ id, alcance, agenda, regras, noMeioDoPedido }) {
     corpo: await resposta.json(),
     agenda: scheduled_transactions,
     regras: recurring_rules,
+    lancamentos: financial_transactions,
     escritas: sessao.escritas,
   };
 }
@@ -486,4 +491,60 @@ test("a ocorrencia PAGA volta 409 com a frase do estorno, e nao um sucesso idemp
   assert.equal(r.status, 409);
   assert.match(r.corpo.error, /estorne/);
   assert.equal(statusDe(r.agenda, "pago"), "paid");
+});
+
+// ---------------------------------------------------------------------------
+// "TODOS OS MESES" DA TELA DE MOVIMENTACAO: APAGA TAMBEM OS JA LANCADOS
+// ---------------------------------------------------------------------------
+// Decisao de 22/11/2026 (o salario duplicado). So com `apagar_lancados: true`;
+// sem ele, `todas` continua preservando o pago -- e o caso de baixo prova que o
+// pago de `serieEmAberto` segue intacto no caminho de Contas a Pagar.
+
+function serieComLancados() {
+  return {
+    agenda: [
+      { id: "fut", user_id: DONO, recurring_rule_id: REGRA, due_date: D(3), status: "pending", description: "Salário" },
+      { id: "vencida", user_id: DONO, recurring_rule_id: REGRA, due_date: "2020-03-10", status: "pending", description: "Salário" },
+      { id: "recebido", user_id: DONO, recurring_rule_id: REGRA, due_date: "2020-02-10", status: "paid", transaction_id: "t-recebido", description: "Salário" },
+      { id: "fatura", user_id: DONO, recurring_rule_id: REGRA, due_date: "2020-01-10", status: "paid", transaction_id: "t-perna", description: "Salário" },
+      VIZINHA_DE_OUTRO_DONO(),
+    ],
+    lancamentos: [
+      { id: "t-recebido", user_id: DONO, transaction_type: "income", amount: 8000 },
+      { id: "t-perna", user_id: DONO, transaction_type: "transfer", amount: -100 },
+      { id: "t-de-fora", user_id: DONO, transaction_type: "income", amount: 1 },
+    ],
+  };
+}
+
+test("'todas' COM apagar_lancados apaga os ja recebidos, cancela os meses em aberto (vencidos inclusive) e preserva a transferencia", async () => {
+  const { agenda, lancamentos } = serieComLancados();
+  const r = await apagar({ id: "fut", alcance: "todas", agenda, lancamentos, apagarLancados: true });
+
+  assert.equal(r.status, 200, JSON.stringify(r.corpo));
+  assert.equal(r.corpo.regra_encerrada, true);
+  assert.equal(r.corpo.lancados_apagados, 1);
+  assert.equal(r.corpo.preservadas, 1, "a perna de transferencia fica");
+
+  const ids = r.lancamentos.map((l) => l.id).sort();
+  assert.deepEqual(ids, ["t-de-fora", "t-perna"], "so o lancamento recebido da serie saiu");
+
+  assert.equal(statusDe(r.agenda, "recebido"), "cancelled");
+  assert.equal(linhaDe(r.agenda, "recebido").transaction_id, null);
+  assert.equal(statusDe(r.agenda, "fatura"), "paid", "a transferencia paga nao e tocada");
+  assert.equal(statusDe(r.agenda, "fut"), "cancelled");
+  assert.equal(statusDe(r.agenda, "vencida"), "cancelled", "o mes vencido da serie apagada nao fica como divida");
+  assert.equal(statusDe(r.agenda, "de-outro-dono"), "skipped", "a linha de outro dono nao e tocada");
+  assert.equal(r.regras[0].is_active, false);
+});
+
+test("'todas' SEM apagar_lancados (Contas a Pagar) continua preservando o pago e o vencido", async () => {
+  const { agenda, lancamentos } = serieComLancados();
+  const r = await apagar({ id: "fut", alcance: "todas", agenda, lancamentos });
+
+  assert.equal(r.status, 200);
+  assert.equal(r.lancamentos.length, 3, "nenhum lancamento saiu");
+  assert.equal(statusDe(r.agenda, "recebido"), "paid");
+  assert.equal(statusDe(r.agenda, "vencida"), "pending");
+  assert.equal(statusDe(r.agenda, "fut"), "cancelled");
 });

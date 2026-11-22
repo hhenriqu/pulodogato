@@ -289,8 +289,15 @@ export async function DELETE(
     // No CORPO e nao na query string, pelo motivo escrito na rota da agenda: e
     // uma decisao sobre dinheiro.
     let alcance: AlcanceDaEdicao | null = null;
+    // "Todos os meses" que apaga tambem os ja lancados (ver
+    // lib/services/lancados-da-serie.ts). Repassado a agenda, so em `todas`.
+    let apagarLancados = false;
     try {
       const corpo = await request.json();
+      if (corpo && typeof corpo === "object") {
+        apagarLancados =
+          (corpo as { apagar_lancados?: unknown }).apagar_lancados === true;
+      }
       if (corpo && typeof corpo === "object" && "alcance" in corpo) {
         const recebido = (corpo as { alcance: unknown }).alcance;
         if (!ehAlcanceValido(recebido)) {
@@ -432,7 +439,11 @@ export async function DELETE(
           {
             method: "DELETE",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ alcance }),
+            body: JSON.stringify(
+              alcance === "todas" && apagarLancados
+                ? { alcance, apagar_lancados: true }
+                : { alcance }
+            ),
           }
         ),
         { params: { id: ocorrenciaDaSerie } }
@@ -467,9 +478,20 @@ export async function DELETE(
           ? ` ${outros} ${outros === 1 ? "mês em aberto saiu" : "meses em aberto saíram"} da agenda.`
           : "";
 
+      const outrosLancados = Number(serie?.lancados_apagados ?? 0);
+
       return NextResponse.json({
         message:
-          alcance === "todas"
+          alcance === "todas" && apagarLancados
+            ? `Série apagada: ${
+                outrosLancados > 0
+                  ? `este lançamento e mais ${outrosLancados} já ${outrosLancados === 1 ? "feito saíram" : "feitos saíram"}`
+                  : "este lançamento saiu"
+              }, e a série foi encerrada.${fora}` +
+              (Number(serie?.preservadas ?? 0) > 0
+                ? ` ${serie.preservadas} ficaram (transferência ou conta dividida já paga).`
+                : "")
+            : alcance === "todas"
             ? `Lançamento apagado e a série encerrada.${fora} Os meses já lançados ficam no histórico.`
             : `Lançamento apagado e a série encerrada a partir deste mês.${fora}`,
         lancamento_excluido: true,
