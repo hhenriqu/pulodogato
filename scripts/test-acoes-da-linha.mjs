@@ -1404,10 +1404,20 @@ test("o Excluir pergunta o alcance na linha fixa -- prevista ou ja realizada -- 
 });
 
 test("o alcance escolhido vai no CORPO -- da agenda na prevista, da rota de lancamento na realizada", () => {
+  // "Todos os meses" leva `apagar_lancados`: ali a serie inteira sai, os meses
+  // ja recebidos inclusive (decisao de 22/11/2026).
   assert.deepEqual(pedidoDeExclusao(prevista({ id: "s9", natureza: "fixa" }), "todas"), {
     metodo: "DELETE",
     url: "/api/scheduled-transactions/s9",
-    corpo: { alcance: "todas" },
+    corpo: { alcance: "todas", apagar_lancados: true },
+  });
+  assert.deepEqual(
+    pedidoDeExclusao(realizada({ id: "t8", natureza: "fixa", tipo: "income" }), "todas").corpo,
+    { alcance: "todas", apagar_lancados: true }
+  );
+  // A prevista AVULSA nunca manda o pedido de apagar lancados.
+  assert.deepEqual(pedidoDeExclusao(prevista({ id: "s1" }), "todas").corpo, {
+    alcance: "todas",
   });
 
   assert.deepEqual(

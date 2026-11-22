@@ -47,6 +47,7 @@ import {
   type AlcanceDaEdicao,
 } from "@/lib/recorrencia-edicao";
 import { encerrarRegra } from "@/lib/services/scheduled";
+import { apagarLancadosDaSerie } from "@/lib/services/lancados-da-serie";
 import {
   ehContaDoFechamento,
   MENSAGEM_DA_CONTA_DO_FECHAMENTO,
@@ -376,10 +377,17 @@ export async function DELETE(
     // dinheiro, e query string e o que acaba colado em link, repetido por
     // retentativa e registrado em log de proxy.
     let alcanceRecebido: unknown = "apenas_esta";
+    // So em "todas", e so quando a tela pede: ver lib/services/lancados-da-serie.ts.
+    // Contas a Pagar nao manda, e continua preservando o que ja foi pago.
+    let apagarLancados = false;
     try {
       const corpo = await request.json();
       if (corpo && typeof corpo === "object" && "alcance" in corpo) {
         alcanceRecebido = (corpo as { alcance: unknown }).alcance;
+      }
+      if (corpo && typeof corpo === "object") {
+        apagarLancados =
+          (corpo as { apagar_lancados?: unknown }).apagar_lancados === true;
       }
     } catch {
       // Sem corpo: fica o padrao.
@@ -487,6 +495,31 @@ export async function DELETE(
           { error: "Não foi possível encerrar o gasto fixo" },
           { status: 500 }
         );
+      }
+
+      if (apagarLancados) {
+        const lancados = await apagarLancadosDaSerie(
+          supabase,
+          atual.recurring_rule_id,
+          user.id
+        );
+        const partes = [
+          `Série encerrada. ${encerrada.canceladas + lancados.vencidasCanceladas} mês(es) em aberto saíram da agenda`,
+          `${lancados.apagados} lançamento(s) já feito(s) foram apagados`,
+        ];
+        return NextResponse.json({
+          message:
+            `${partes.join(", e ")}.` +
+            (lancados.preservados > 0
+              ? ` ${lancados.preservados} ficaram (transferência ou conta dividida já paga).`
+              : ""),
+          rule: encerrada.rule,
+          ocorrencias_canceladas: encerrada.canceladas + lancados.vencidasCanceladas,
+          ocorrencias_ja_fora_encerradas: encerrada.jaEstavamFora,
+          lancados_apagados: lancados.apagados,
+          preservadas: lancados.preservados,
+          regra_encerrada: true,
+        });
       }
 
       return NextResponse.json({

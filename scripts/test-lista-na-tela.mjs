@@ -2175,7 +2175,7 @@ test("E3: o salario JA RECEBIDO de uma receita fixa pergunta o alcance tambem, e
   const deletes = resultado.e3.chamadas.filter((c) => c.metodo === "DELETE");
   assert.equal(deletes.length, 1, JSON.stringify(resultado.e3.chamadas));
   assert.equal(deletes[0].url, "/api/personal-finance/transactions/t-salario");
-  assert.deepEqual(deletes[0].corpo, { alcance: "todas" });
+  assert.deepEqual(deletes[0].corpo, { alcance: "todas", apagar_lancados: true });
 });
 
 test("F: RECUSADA a pergunta, NADA sai -- e a linha fica onde estava", () => {

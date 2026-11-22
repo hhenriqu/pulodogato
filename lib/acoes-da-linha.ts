@@ -617,7 +617,7 @@ export function pedidoDeExclusao(
       // significado no dia em que o default da rota mudar. Na linha fixa ele e
       // a resposta da pergunta (`perguntaOAlcance`); na avulsa, `apenas_esta`.
       // Ver lib/recorrencia-edicao.ts.
-      corpo: { alcance },
+      corpo: corpoDaSerie(linha, alcance),
     };
   }
 
@@ -635,7 +635,7 @@ export function pedidoDeExclusao(
     return {
       metodo: "DELETE",
       url: `/api/personal-finance/transactions/${id}`,
-      corpo: { alcance },
+      corpo: corpoDaSerie(linha, alcance),
     };
   }
 
@@ -643,6 +643,21 @@ export function pedidoDeExclusao(
     metodo: "DELETE",
     url: `/api/personal-finance/transactions/${id}`,
   };
+}
+
+/**
+ * O corpo da exclusao numa serie. Em "Todos os meses" de uma linha fixa vai
+ * `apagar_lancados: true`: decisao de 22/11/2026, por causa do salario
+ * duplicado -- ali "todos" e a serie inteira, os meses ja recebidos inclusive.
+ * Contas a Pagar nao passa por aqui e continua preservando o que foi pago.
+ */
+function corpoDaSerie(
+  linha: LinhaAcionavel,
+  alcance: AlcanceDaExclusao
+): Record<string, unknown> {
+  return alcance === "todas" && perguntaOAlcance(linha)
+    ? { alcance, apagar_lancados: true }
+    : { alcance };
 }
 
 /** Os tres alcances da exclusao de uma linha fixa (lib/recorrencia-edicao.ts). */
