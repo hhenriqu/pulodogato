@@ -2582,6 +2582,9 @@ jobs:
       - name: A conta fixa marcada como assinatura entra no total mensal certo
         run: npm run test:assinaturas-das-contas-fixas
 
+      - name: O painel de assinaturas junta as listas, soma uma vez e mede o peso na renda
+        run: npm run test:painel-de-assinaturas
+
       # nota: verificacao-notas.md -> "O painel abre no mes certo, e a transferencia fica fora da soma"
       - name: O painel abre no mes certo, e a transferencia fica fora da soma
         run: npm run test:periodo-painel

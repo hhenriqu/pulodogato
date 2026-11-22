@@ -7,6 +7,7 @@ import {
 } from "@/lib/recurrence-detector";
 import {
   assinaturasDasContasFixas,
+  rendaMensalDasRegras,
   totalMensalDasContasFixas,
   type AssinaturaDaContaFixa,
   type RegraDeAssinatura,
@@ -114,6 +115,29 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    // -----------------------------------------------------------------
+    // A RENDA MENSAL FIXA (docs/ASSINATURAS.md)
+    // -----------------------------------------------------------------
+    // O denominador de "quanto as assinaturas pesam no orcamento": as receitas
+    // fixas ativas da pessoa, normalizadas para o mes. `null` = nao deu para
+    // ler, e a tela nao mostra porcentagem; `0` = nenhuma cadastrada, e a tela
+    // convida a cadastrar. Falhar aqui tambem nao derruba a tela.
+    let rendaMensal: number | null = null;
+    const { data: receitas, error: erroReceitas } = await supabase
+      .from("recurring_rules")
+      .select("id, description, amount, frequency, interval_count, is_active, transaction_type")
+      .eq("user_id", user.id)
+      .eq("transaction_type", "income")
+      .eq("is_active", true);
+
+    if (erroReceitas) {
+      console.error("Assinaturas seguiram sem a renda mensal:", erroReceitas);
+    } else {
+      rendaMensal = rendaMensalDasRegras(
+        (receitas ?? []) as RegraDeAssinatura[]
+      );
+    }
+
     // A MESMA ASSINATURA NAO CONTA DUAS VEZES. A conta fixa no cartao vira
     // compra todo mes, e o detector acaba achando a mesma Netflix no extrato.
     // Quando a chave do lojista da detectada bate com a descricao de uma
@@ -150,6 +174,8 @@ export async function GET(request: NextRequest) {
       fixedMonthlyTotal: assinaturasFixas ? totalFixas : null,
       // As detectadas que repetem uma conta fixa, para a tela avisar.
       duplicatedMerchantKeys: Array.from(chavesDasFixas),
+      // Receitas fixas ativas por mes (`null` = nao deu para ler).
+      fixedMonthlyIncome: rendaMensal,
       alerts: alertas,
     });
   } catch (error) {
