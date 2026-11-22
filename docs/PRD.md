@@ -41,6 +41,7 @@
 | 2.20 | 06/11/2026 | RN016.6.1 nova: tags no lançamento e "ignorar nos orçamentos", como no Minhas Finanças (migration 083) | Helio |
 | 2.21 | 06/11/2026 | RN016.6.2 nova: relatório de lançamentos com data de referência (lançamento, vencimento, efetivação) e situação, como no Minhas Finanças | Helio |
 | 2.22 | 07/11/2026 | RN019.7 nova e RN021.6 reescrita: a aba Receitas mostra quem paga o "A receber do grupo" com o botão Recebi, e a aba Despesas mostra a parcela cheia do MyBank fora do total | Helio |
+| 2.23 | 22/11/2026 | RN004.12 e RN004.13 novas: a composição da fatura (fixo, assinaturas, parcelado, esporádico) em rosca, e o total para quitar os cartões, que o Custo de vida pode somar à reserva | Helio |
 
 > **O que a versão 2.0 corrigiu.** Até aqui esta PRD descrevia um app de carteira
 > de investimentos: o problema era "investidores pessoa física", as personas eram
@@ -392,6 +393,20 @@ a tela não pode contorná-las. As marcadas **(tela)** vivem em TypeScript testa
   entra em 2 a 24 faturas seguintes, em centavos que somam o total; essas
   linhas ficam fora dos totais. Juros informados são despesa, divididos entre
   as parcelas. Fatura paga não se parcela, e o parcelamento pode ser desfeito.
+- RN004.12 **Composição da fatura** (docs/COMPOSICAO-DA-FATURA.md): cada
+  compra da fatura cai em uma de quatro fatias, nesta ordem: **parcelado**
+  (tem parcela), **fixo** ou **assinatura** (é a compra de uma conta fixa no
+  cartão, pela marca da regra; ou o extrato a reconhece como assinatura; ou tem
+  a descrição de uma conta fixa) e **esporádico** (o resto, menos estornos). A
+  cobrança prevista do mês entra pela regra dela. A tela do cartão mostra a
+  rosca da fatura do mês, com a legenda embaixo.
+- RN004.13 **Total para quitar os cartões**: a fatura em aberto e todas as
+  seguintes (as parcelas que faltam, a compra feita depois do fechamento), a
+  fatura anterior ainda não paga e toda fatura pendente na agenda; a fatura paga
+  nunca entra, e das cobranças previstas só as da fatura em aberto — o fixo e a
+  assinatura dos meses seguintes não são dívida. Cartões e o painel inicial
+  mostram o mensal por padrão e o TOTAL numa chave; o Custo de vida tem a
+  chave que soma esse total à reserva de emergência.
 
 ### RN005 — Parcelamento ✅
 

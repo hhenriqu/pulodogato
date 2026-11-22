@@ -96,6 +96,7 @@ import {
   type ValoresDaConta,
 } from "@/lib/contas";
 import { CamposDaConta } from "@/components/contas/CamposDaConta";
+import { ComposicaoDosCartoes } from "@/components/cartoes/ComposicaoDosCartoes";
 import { CartaoDaLista } from "@/components/cartoes/CartaoDaLista";
 import { ContasArquivadas } from "@/components/contas/ContasArquivadas";
 import { useContas } from "@/lib/hooks/useContas";
@@ -468,6 +469,13 @@ export default function CartoesPage() {
               )}
             </CardContent>
           </Card>
+
+          {/* A COMPOSICAO DOS CARTOES (docs/COMPOSICAO-DA-FATURA.md): o
+              MENSAL do mes do seletor, e a chave TOTAL com quanto seria
+              preciso para quitar os cartoes hoje. So com cartao cadastrado. */}
+          {ativas.length > 0 && (
+            <ComposicaoDosCartoes mes={mes} rotuloDoMes={rotuloDoMes} />
+          )}
 
           {/* "Voce ainda nao tem cartoes" e uma afirmacao sobre o CADASTRO.
               Pedi-la ao estado combinado faria a tela esconder o convite de

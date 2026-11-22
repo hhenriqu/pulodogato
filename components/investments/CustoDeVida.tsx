@@ -18,6 +18,13 @@
 // contas fixas e a reserva vira "12 meses de contas fixas"
 // (`resumoDoCusto`, lib/custo-de-vida.ts). A escolha fica no navegador, so
 // como conveniencia: sem ela a tela abre ligada.
+//
+// A CHAVE "SOMAR A DIVIDA DOS CARTOES" (docs/COMPOSICAO-DA-FATURA.md): ligada,
+// a reserva sugerida ganha o TOTAL para quitar os cartoes hoje (as parcelas
+// que faltam, as compras ainda nao pagas e o fixo/assinaturas so da fatura
+// atual) -- o colchao para ficar sem renda E sem divida. O numero vem de
+// GET /api/card-invoices/composicao; esta tela so soma. Desligada por padrao,
+// e a escolha fica no navegador como a do variavel.
 
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -77,6 +84,23 @@ const COR_FIXO = "hsl(var(--primary))";
 const COR_VARIAVEL = "hsl(var(--warning))";
 
 const CHAVE_DO_VARIAVEL = "custo-de-vida:com-variavel";
+const CHAVE_DOS_CARTOES = "custo-de-vida:com-cartoes";
+
+function lerChaveDosCartoes(): boolean {
+  try {
+    return window.localStorage.getItem(CHAVE_DOS_CARTOES) === "sim";
+  } catch {
+    return false;
+  }
+}
+
+function gravarChaveDosCartoes(comCartoes: boolean) {
+  try {
+    window.localStorage.setItem(CHAVE_DOS_CARTOES, comCartoes ? "sim" : "nao");
+  } catch {
+    // Sem armazenamento (aba privada): a chave so vale ate recarregar.
+  }
+}
 
 function lerPreferencia(): boolean {
   try {
@@ -103,10 +127,39 @@ export function CustoDeVida({ valorDaCarteira }: Props) {
   const [dados, setDados] = useState<RespostaDoCusto | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [comVariavel, setComVariavel] = useState(true);
+  const [comCartoes, setComCartoes] = useState(false);
+  // O TOTAL para quitar os cartoes. `undefined` carregando, `null` se falhou:
+  // a chave so soma um numero que chegou.
+  const [dividaDosCartoes, setDividaDosCartoes] = useState<number | null | undefined>(
+    undefined
+  );
 
   useEffect(() => {
     setComVariavel(lerPreferencia());
+    setComCartoes(lerChaveDosCartoes());
   }, []);
+
+  useEffect(() => {
+    let vivo = true;
+    fetch("/api/card-invoices/composicao")
+      .then(async (r) => {
+        const corpo = await r.json();
+        if (!vivo) return;
+        const total = Number(corpo?.total?.total);
+        setDividaDosCartoes(r.ok && Number.isFinite(total) ? total : null);
+      })
+      .catch(() => {
+        if (vivo) setDividaDosCartoes(null);
+      });
+    return () => {
+      vivo = false;
+    };
+  }, []);
+
+  const mudarCartoes = (valor: boolean) => {
+    setComCartoes(valor);
+    gravarChaveDosCartoes(valor);
+  };
 
   const mudarVariavel = (valor: boolean) => {
     setComVariavel(valor);
@@ -176,9 +229,19 @@ export function CustoDeVida({ valorDaCarteira }: Props) {
 
   const semHistorico = dados.mesesComGasto === 0;
   const resumo = resumoDoCusto(dados, comVariavel);
+  // A divida so soma quando a chave esta ligada E o numero chegou.
+  const dividaSomada =
+    comCartoes && typeof dividaDosCartoes === "number" && dividaDosCartoes > 0
+      ? dividaDosCartoes
+      : 0;
+  const reserva = resumo.reserva + dividaSomada;
+  // Com a divida somada, a carteira primeiro quita os cartoes, e o que sobra
+  // e que cobre os meses.
+  const carteiraLivre =
+    valorDaCarteira && valorDaCarteira > 0 ? valorDaCarteira - dividaSomada : null;
   const mesesCobertos =
-    valorDaCarteira && valorDaCarteira > 0 && resumo.mediaPrevista > 0
-      ? valorDaCarteira / resumo.mediaPrevista
+    carteiraLivre !== null && resumo.mediaPrevista > 0
+      ? Math.max(0, carteiraLivre) / resumo.mediaPrevista
       : null;
   const primeiroPrevisto = dados.previsao[0]?.mes;
 
@@ -235,6 +298,31 @@ export function CustoDeVida({ valorDaCarteira }: Props) {
           )}
         </div>
 
+        <div className="flex flex-wrap items-center gap-3">
+          <Switch
+            id="custo-com-cartoes"
+            checked={comCartoes}
+            onCheckedChange={mudarCartoes}
+            disabled={dividaDosCartoes === null}
+          />
+          <Label htmlFor="custo-com-cartoes" className="cursor-pointer">
+            Somar o total para quitar os cartões
+          </Label>
+          <Dica rotulo="O que é o total para quitar os cartões">
+            Quanto seria preciso hoje para zerar os cartões: todas as parcelas
+            que faltam e as compras ainda não pagas, mais o fixo e as
+            assinaturas só da fatura atual. Ligado, ele entra na reserva: o
+            colchão para ficar sem renda e sem dívida no cartão.
+          </Dica>
+          <span className="text-xs text-muted-foreground">
+            {dividaDosCartoes === undefined
+              ? "calculando…"
+              : dividaDosCartoes === null
+                ? "não foi possível calcular agora"
+                : dinheiro(dividaDosCartoes)}
+          </span>
+        </div>
+
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <div className="rounded-lg border p-4">
             <p className="text-sm text-muted-foreground flex items-center gap-1.5">
@@ -245,11 +333,12 @@ export function CustoDeVida({ valorDaCarteira }: Props) {
                 ano sem renda.
               </Dica>
             </p>
-            <p className="text-2xl font-bold">{dinheiro(resumo.reserva)}</p>
+            <p className="text-2xl font-bold">{dinheiro(reserva)}</p>
             <p className="text-xs text-muted-foreground mt-1">
-              {comVariavel ? "12 meses" : "12 meses de contas fixas"} ·{" "}
+              {comVariavel ? "12 meses" : "12 meses de contas fixas"}
+              {dividaSomada > 0 ? ` + ${dinheiro(dividaSomada)} para quitar os cartões` : ""} ·{" "}
               {mesesCobertos !== null
-                ? `a carteira lançada aqui equivale a ${mesesCobertos.toLocaleString("pt-BR", {
+                ? `a carteira lançada aqui${dividaSomada > 0 ? ", depois de quitar os cartões," : ""} equivale a ${mesesCobertos.toLocaleString("pt-BR", {
                     maximumFractionDigits: 1,
                   })} ${mesesCobertos >= 1 && mesesCobertos < 2 ? "mês" : "meses"}`
                 : "para 12 meses de custo previsto"}
