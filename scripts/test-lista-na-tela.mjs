@@ -420,7 +420,7 @@ const umd = (pacote, arquivo) =>
 const PAGINA = `<!doctype html>
 <html><head><meta charset="utf-8"></head><body>
 <div id="raiz-a"></div><div id="raiz-b"></div><div id="raiz-c"></div>
-<div id="raiz-d"></div><div id="raiz-e"></div><div id="raiz-f"></div>
+<div id="raiz-d"></div><div id="raiz-e"></div><div id="raiz-e3"></div><div id="raiz-f"></div>
 <div id="raiz-g"></div><div id="raiz-h"></div><div id="raiz-i"></div>
 <div id="raiz-j"></div><div id="raiz-k"></div><div id="raiz-l"></div>
 <div id="raiz-m"></div>
@@ -766,6 +766,32 @@ const DialogoDeAcerto = (props) => {
     : null;
 };
 
+/**
+ * O DIALOGO DO ALCANCE DA LINHA FIXA: um registro das props + uma marca no DOM.
+ *
+ * O mesmo molde de \`DialogoDeAcerto\` logo acima, e pelo mesmo motivo: o
+ * dialogo real e Radix (sem build UMD), e o que esta suite mede e o FIO -- que o
+ * Excluir de uma linha fixa abre ESTA pergunta (e nao o \`confirm()\`), com a
+ * data e a direcao da linha, e que a escolha que a sonda devolve por
+ * \`aoConfirmar\` chega na rota certa, no corpo. As palavras de cada opcao sao
+ * de \`lib/alcance-na-tela.ts\` e tem suite propria (test:alcance-da-serie).
+ */
+let ALCANCE_ABERTO = null;
+const DialogoDeAlcance = (props) => {
+  ALCANCE_ABERTO = props.aberto
+    ? {
+        tipo: props.tipo,
+        acao: props.acao,
+        ancora: props.ancora,
+        serie: props.serie,
+        aoConfirmar: props.aoConfirmar,
+      }
+    : null;
+  return props.aberto
+    ? React.createElement("div", { "data-esboco": "dialogo-do-alcance" })
+    : null;
+};
+
 // --- o codigo de producao EXTRAIDO (ver \`daLib\` no .mjs) ---------------------
 ${DA_LIB_DO_PAGAMENTO}
 ${DAS_FRASES_DO_ACERTO}
@@ -1029,6 +1055,7 @@ async function montar(idDaRaiz, respostas, extras) {
   PERGUNTAS = [];
   ABERTO = null;
   ACERTO_ABERTO = null;
+  ALCANCE_ABERTO = null;
   FILA_DO_RESUMO = respostas;
 
   const raiz = document.getElementById(idDaRaiz);
@@ -1231,11 +1258,65 @@ const out = {};
   RESPOSTA_DO_CONFIRM = true;
   await clicar(raiz, PREVISTO, "Excluir");
 
+  // 1. O clique ABRIU a pergunta do alcance, e nada saiu ainda.
+  out.e_aberto = {
+    perguntas: PERGUNTAS.slice(),
+    escritas: CHAMADAS.filter((c) => c.metodo !== "GET"),
+    dialogo: ALCANCE_ABERTO
+      ? {
+          tipo: ALCANCE_ABERTO.tipo,
+          acao: ALCANCE_ABERTO.acao,
+          ancora: ALCANCE_ABERTO.ancora,
+          serie: ALCANCE_ABERTO.serie,
+        }
+      : null,
+    dialogoNoDom: !!raiz.querySelector('[data-esboco="dialogo-do-alcance"]'),
+  };
+
+  // 2. "Deste mês em diante" -- o que o botao do dialogo real faz.
+  if (ALCANCE_ABERTO) await ALCANCE_ABERTO.aoConfirmar("esta_e_proximas");
+  await assentar();
+
   out.e = {
     perguntas: PERGUNTAS.slice(),
     chamadas: CHAMADAS.slice(),
     previsto: retrato(raiz, PREVISTO),
+    dialogoNoDom: !!raiz.querySelector('[data-esboco="dialogo-do-alcance"]'),
   };
+}
+
+// =========================================================================
+// E3. EXCLUIR o salario JA RECEBIDO de uma receita fixa: a mesma pergunta, e o
+// alcance vai para a rota de lancamento
+// =========================================================================
+{
+  const antes = corpo([
+    linha({
+      id: "t-salario",
+      descricao: "Salário",
+      valor: 8000,
+      data: "2026-10-05",
+      origem: "realizado",
+      tipo: "income",
+      status: "paid",
+      situacao: "paid",
+      natureza: "fixa",
+    }),
+  ]);
+  const raiz = await montar("raiz-e3", [antes, corpo([])], { tipo: "income" });
+
+  await clicar(raiz, REALIZADO, "Excluir");
+  out.e3_aberto = {
+    perguntas: PERGUNTAS.slice(),
+    dialogo: ALCANCE_ABERTO
+      ? { ancora: ALCANCE_ABERTO.ancora, serie: ALCANCE_ABERTO.serie }
+      : null,
+  };
+
+  if (ALCANCE_ABERTO) await ALCANCE_ABERTO.aoConfirmar("todas");
+  await assentar();
+
+  out.e3 = { chamadas: CHAMADAS.slice() };
 }
 
 // =========================================================================
@@ -2053,27 +2134,48 @@ test("D: a linha de outro membro do grupo nao tem Excluir -- nem os outros", () 
   assert.match(resultado.d.previsto.texto, /Mercado do grupo/);
 });
 
-test("E1: Excluir PERGUNTA antes, e a pergunta distingue ocorrencia de serie", () => {
-  assert.equal(resultado.e.perguntas.length, 1, JSON.stringify(resultado.e.perguntas));
-
-  const pergunta = resultado.e.perguntas[0];
-  assert.match(pergunta, /Aluguel/);
-  assert.match(pergunta, /ocorrência/);
-  assert.match(pergunta, /continua ativo/);
-  assert.match(pergunta, /gerar as próximas/);
+test("E1: Excluir numa linha FIXA pergunta o ALCANCE (so este mes, deste em diante, todos) -- e nada sai antes da resposta", () => {
+  // O pedido da pessoa: "se for fixo deve perguntar se quero excluir apenas
+  // aquele mês, daquele mês em diante ou todas". O `confirm()` de antes so
+  // dizia que valia para UM mes, e nao deixava escolher.
+  assert.deepEqual(resultado.e_aberto.perguntas, [], "a linha fixa caiu no confirm()");
+  assert.deepEqual(resultado.e_aberto.escritas, [], JSON.stringify(resultado.e_aberto.escritas));
+  assert.equal(resultado.e_aberto.dialogoNoDom, true, "o Excluir nao abriu a pergunta do alcance");
+  assert.deepEqual(resultado.e_aberto.dialogo, {
+    tipo: "conta_fixa",
+    acao: "apagar",
+    ancora: "15/10/2026",
+    serie: { direcao: "expense", realizado: false },
+  });
 });
 
-test("E2: aceita, a exclusao sai com `alcance: apenas_esta` -- e a linha sai da lista", () => {
+test("E2: escolhido 'deste mes em diante', a exclusao sai com esse alcance no CORPO -- e a linha sai da lista", () => {
+  assert.deepEqual(resultado.e.perguntas, []);
+  assert.equal(resultado.e.dialogoNoDom, false, "o dialogo ficou aberto depois da escolha");
+
   const deletes = resultado.e.chamadas.filter((c) => c.metodo === "DELETE");
 
   assert.equal(deletes.length, 1, JSON.stringify(resultado.e.chamadas));
   assert.equal(deletes[0].url, "/api/scheduled-transactions/s-fixa");
-  assert.deepEqual(deletes[0].corpo, { alcance: "apenas_esta" });
+  assert.deepEqual(deletes[0].corpo, { alcance: "esta_e_proximas" });
 
   assert.ok(
     !resultado.e.previsto.texto.includes("Aluguel"),
     resultado.e.previsto.texto
   );
+});
+
+test("E3: o salario JA RECEBIDO de uma receita fixa pergunta o alcance tambem, e 'todos' vai no corpo da rota de lancamento", () => {
+  assert.deepEqual(resultado.e3_aberto.perguntas, [], "a linha realizada caiu no confirm()");
+  assert.deepEqual(resultado.e3_aberto.dialogo, {
+    ancora: "05/10/2026",
+    serie: { direcao: "income", realizado: true },
+  });
+
+  const deletes = resultado.e3.chamadas.filter((c) => c.metodo === "DELETE");
+  assert.equal(deletes.length, 1, JSON.stringify(resultado.e3.chamadas));
+  assert.equal(deletes[0].url, "/api/personal-finance/transactions/t-salario");
+  assert.deepEqual(deletes[0].corpo, { alcance: "todas" });
 });
 
 test("F: RECUSADA a pergunta, NADA sai -- e a linha fica onde estava", () => {

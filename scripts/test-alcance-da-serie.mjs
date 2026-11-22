@@ -747,6 +747,48 @@ test("o rotulo de 'apenas esta' identifica a linha clicada", () => {
   assert.equal(o[0].rotulo, "Apenas esta (10/12)");
 });
 
+test("na tela de movimentacao, a serie fixa fala de MES, da direcao certa, e do lancamento ja realizado", () => {
+  // O pedido: "apenas aquele mês, daquele mês em diante ou todas". Na receita
+  // as palavras de Contas a Pagar ("gasto fixo", "pagos") estariam erradas.
+  const receita = opcoesDeAlcance({
+    tipo: "conta_fixa",
+    acao: "apagar",
+    ancora: "05/10/2026",
+    serie: { direcao: "income", realizado: true },
+  });
+
+  assert.deepEqual(
+    receita.map((o) => [o.valor, o.rotulo]),
+    [
+      ["apenas_esta", "Só este mês (05/10/2026)"],
+      ["esta_e_proximas", "Deste mês em diante"],
+      ["todas", "Todos os meses"],
+    ]
+  );
+  for (const o of receita) {
+    assert.match(o.consequencia, /lançamento deste mês é apagado/, o.valor);
+    assert.match(o.consequencia, /receita fixa/i, o.valor);
+    assert.doesNotMatch(o.consequencia, /gasto fixo|pagos/, o.valor);
+  }
+  // "Todos" diz o que FICA: os meses ja recebidos nao somem.
+  assert.match(receita[2].consequencia, /já recebidos ficam no histórico/);
+
+  // Prevista de despesa: sem a frase do lancamento, e com "pagos".
+  const gasto = opcoesDeAlcance({
+    tipo: "conta_fixa",
+    acao: "apagar",
+    ancora: "15/10/2026",
+    serie: { direcao: "expense", realizado: false },
+  });
+  assert.doesNotMatch(gasto[0].consequencia, /lançamento/);
+  assert.match(gasto[0].consequencia, /^Este mês sai da agenda\. O gasto fixo continua/);
+  assert.match(gasto[1].consequencia, /já pagos/);
+
+  // Sem `serie`, as frases de Contas a Pagar continuam as mesmas.
+  const semSerie = opcoesDeAlcance({ tipo: "conta_fixa", acao: "apagar", ancora: "10/12" });
+  assert.equal(semSerie[0].rotulo, "Apenas esta (10/12)");
+});
+
 test("alcance desconhecido devolve string vazia, nao undefined", () => {
   // Um `undefined` renderizado no JSX desaparece em silencio, e a tela ficaria
   // sem a declaracao exatamente no caso em que algo esta errado.

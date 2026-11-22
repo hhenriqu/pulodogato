@@ -102,11 +102,16 @@ import {
   pedidoDeEdicaoDaPrevista,
   pedidoDeExclusao,
   pedidoDeMudarOsTotais,
+  perguntaOAlcance,
   rotuloDeConfirmar,
+  type AlcanceDaExclusao,
   type EdicaoDaPrevista,
   type PedidoDaAcao,
 } from "@/lib/acoes-da-linha";
 import { DialogoDePagamentoDaFatura } from "@/components/fatura/DialogoDePagamentoDaFatura";
+// A MESMA pergunta de Contas a Pagar e da fatura do cartao (HMO-228): "so este
+// mes, deste mes em diante ou todos". Ver `aoExcluir`.
+import { DialogoDeAlcance } from "@/components/series/DialogoDeAlcance";
 // O MESMO dialogo da tela do grupo, e nao um seletor de conta novo (HMO-366): o
 // dado que falta e o mesmo -- de qual conta o dinheiro veio --, e ele ja filtra
 // as contas elegiveis pela MESMA funcao que o servidor usa (`contasParaOAcerto`,
@@ -362,6 +367,13 @@ export function ListaDeMovimentacao({
 
   /** A conta prevista aberta no formulario em linha, e os tres campos dela. */
   const [editando, setEditando] = useState<LinhaDaTela | null>(null);
+  /**
+   * A linha fixa cuja exclusao esta esperando a pergunta do alcance. `null`
+   * quando o dialogo esta fechado.
+   */
+  const [fixaParaExcluir, setFixaParaExcluir] = useState<LinhaDaTela | null>(
+    null
+  );
   const [campos, setCampos] = useState<EdicaoDaPrevista>({
     descricao: "",
     valor: "",
@@ -501,7 +513,17 @@ export function ListaDeMovimentacao({
    * primeira mudanca, mostrando um realizado plausivel e errado.
    */
   const disparar = useCallback(
-    async (linha: LinhaDaTela, pedido: PedidoDaAcao, sucesso: string) => {
+    async (
+      linha: LinhaDaTela,
+      pedido: PedidoDaAcao,
+      sucesso: string,
+      /**
+       * A frase de sucesso vem da ROTA quando ela tem uma. E o caso da
+       * exclusao numa serie fixa: so a rota sabe quantos meses sairam e em que
+       * data a serie foi encerrada.
+       */
+      fraseDaRota = false
+    ) => {
       setAgindo(linha.id);
       try {
         const resposta = await fetch(pedido.url, {
@@ -527,7 +549,13 @@ export function ListaDeMovimentacao({
           );
         }
 
-        toast.success(sucesso);
+        // 207: a rota fez PARTE do pedido (o lancamento saiu, a serie nao) e diz
+        // qual parte. Um toast verde ali afirmaria a metade que nao aconteceu.
+        if (resposta.status === 207) {
+          toast.error(dados.message || sucesso);
+        } else {
+          toast.success(fraseDaRota && dados.message ? dados.message : sucesso);
+        }
         await carregar();
       } catch (erro) {
         console.error("Ação da linha de movimentação falhou:", erro);
@@ -563,6 +591,15 @@ export function ListaDeMovimentacao({
 
   const aoExcluir = useCallback(
     (linha: LinhaDaTela) => {
+      // A LINHA FIXA PERGUNTA O ALCANCE, e nao o `confirm()` de baixo: "só este
+      // mês, deste mês em diante ou todos". Antes ela saia SO naquele mes, com
+      // uma frase mandando a pessoa ir a Contas a Pagar para o resto -- e quem
+      // apagava o salario duplicado o via voltar no mes seguinte.
+      if (perguntaOAlcance(linha)) {
+        setFixaParaExcluir(linha);
+        return;
+      }
+
       const pedido = pedidoDeExclusao(linha);
       const aviso = avisoDaExclusao(linha, linha.descricao);
       if (!pedido || !aviso) return;
@@ -577,6 +614,19 @@ export function ListaDeMovimentacao({
       void disparar(linha, pedido, "Pronto: a linha saiu da lista.");
     },
     [disparar]
+  );
+
+  /** A resposta do dialogo do alcance: apaga a linha fixa no alcance escolhido. */
+  const excluirFixa = useCallback(
+    async (alcance: AlcanceDaExclusao) => {
+      const linha = fixaParaExcluir;
+      if (!linha) return;
+      const pedido = pedidoDeExclusao(linha, alcance);
+      setFixaParaExcluir(null);
+      if (!pedido) return;
+      await disparar(linha, pedido, "Pronto: a linha saiu da lista.", true);
+    },
+    [fixaParaExcluir, disparar]
   );
 
   /**
@@ -1399,6 +1449,22 @@ export function ListaDeMovimentacao({
             no fuso de Sao Paulo: o componente nao tem relogio nem formatador
             proprio, e a data e lida no clique de Confirmar (HMO-315).
           */}
+          {fixaParaExcluir && (
+            <DialogoDeAlcance
+              aberto
+              aoFechar={() => setFixaParaExcluir(null)}
+              tipo="conta_fixa"
+              acao="apagar"
+              ancora={dataLonga(fixaParaExcluir.data)}
+              serie={{
+                direcao: fixaParaExcluir.tipo,
+                realizado: fixaParaExcluir.origem === "realizado",
+              }}
+              salvando={agindo === fixaParaExcluir.id}
+              aoConfirmar={(alcance) => excluirFixa(alcance)}
+            />
+          )}
+
           <DialogoDePagamentoDaFatura
             linha={
               faturaParaPagar ? linhaParaPagarDaTela(faturaParaPagar) : null
