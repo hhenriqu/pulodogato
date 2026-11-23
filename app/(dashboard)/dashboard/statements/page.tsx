@@ -319,11 +319,6 @@ export default function StatementsPage() {
   }, []);
 
   const enviarArquivo = async (arquivo: File) => {
-    if (!contaEscolhida) {
-      toast.error("Escolha primeiro a conta deste extrato");
-      return;
-    }
-
     // "Detectar sozinho" reconhece o CSV do C6 e o do Mercado Pago pelo
     // cabecalho e usa o leitor certo, em vez de cair no CSV generico.
     const conteudo = await arquivo.text();
@@ -335,6 +330,15 @@ export default function StatementsPage() {
         setOrigem(detectada);
         toast.info(`Reconheci o arquivo: ${ROTULO_DA_ORIGEM_DETECTADA[detectada]}.`);
       }
+    }
+
+    // Sem conta escolhida, o arquivo de um banco conhecido vai para a conta
+    // dele: a rota acha a que ja existe ou cria (lib/conta-do-extrato.ts). So
+    // o OFX/CSV generico precisa que alguem diga de que conta e.
+    if (!contaEscolhida && origemDoEnvio === "auto") {
+      toast.error("Não reconheci o banco deste arquivo. Escolha a conta do extrato.");
+      if (inputArquivo.current) inputArquivo.current.value = "";
+      return;
     }
 
     let mes = mesDaFatura;
@@ -355,7 +359,7 @@ export default function StatementsPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          accountId: contaEscolhida,
+          accountId: contaEscolhida || undefined,
           fileName: arquivo.name,
           content: conteudo,
           source: origemDoEnvio,
@@ -371,6 +375,19 @@ export default function StatementsPage() {
       if (!r.ok) {
         toast.error(dados.error ?? "Falha ao importar");
         return;
+      }
+
+      // A conta que a rota achou ou criou passa a ser a escolhida na tela.
+      if (dados.account_created) {
+        toast.success(
+          dados.account_created.account_type === "credit_card"
+            ? `Criei o cartão "${dados.account_created.name}". Confira o fechamento e o vencimento na tela do cartão.`
+            : `Criei a conta "${dados.account_created.name}".`
+        );
+        setContaEscolhida(dados.account_created.id);
+      } else if (dados.account_found && !contaEscolhida) {
+        toast.info(`Extrato enviado para "${dados.account_found.name}".`);
+        setContaEscolhida(dados.account_found.id);
       }
 
       // Tudo repetido: a rota nao guarda importacao vazia (QA B1).
@@ -427,7 +444,9 @@ export default function StatementsPage() {
       else
         toast.success(
           action === "import"
-            ? "Lançamento criado"
+            ? dados.installments_created > 0
+              ? `Lançamento criado, com as ${dados.installments_created} parcela(s) seguinte(s) nas próximas faturas`
+              : "Lançamento criado"
             : action === "link"
               ? dados.adjusted_amount != null
                 ? `Vinculado. O lançamento ficou com o valor do banco, R$ ${valorNaTela(dados.adjusted_amount)}`
@@ -629,9 +648,11 @@ export default function StatementsPage() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-lg">
             <FileUp className="h-5 w-5" /> Novo extrato
-            <Dica rotulo="Por que escolher a conta antes">
-              A conta precisa ser escolhida antes: é por ela que o app sabe com quais lançamentos
-              comparar, e é por ela que um arquivo repetido é reconhecido.
+            <Dica rotulo="De que conta é o extrato">
+              No arquivo do C6 (conta ou fatura) e do Mercado Pago, pode deixar a conta em branco:
+              o app usa a conta da última importação desse banco, ou a que tem o nome dele, e cria
+              a conta ou o cartão se ainda não existir. No OFX ou CSV de outro banco, escolha a
+              conta: é por ela que o app compara os lançamentos e reconhece um arquivo repetido.
             </Dica>
           </CardTitle>
         </CardHeader>
@@ -647,7 +668,7 @@ export default function StatementsPage() {
                 }}
               >
                 <SelectTrigger>
-                  <SelectValue placeholder="Escolha a conta" />
+                  <SelectValue placeholder="Achar ou criar pelo arquivo" />
                 </SelectTrigger>
                 <SelectContent>
                   {contas.map((c) => (
@@ -703,7 +724,7 @@ export default function StatementsPage() {
                 ref={inputArquivo}
                 type="file"
                 accept=".ofx,.csv,.txt,text/csv,application/x-ofx"
-                disabled={!contaEscolhida || enviando}
+                disabled={enviando}
                 onChange={(e) => {
                   const f = e.target.files?.[0];
                   if (f) enviarArquivo(f);

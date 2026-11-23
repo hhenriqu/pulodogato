@@ -21,6 +21,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServiceId } from "@/lib/services/scheduled";
 import { TOLERANCIA_CENTAVOS_PADRAO, tipoPeloSinal } from "@/lib/statement";
 import {
+  parcelaJaGravada,
+  parcelasQueFaltam,
+  type ParcelaGravada,
+  type ParcelaImportada,
+} from "@/lib/parcelas-da-fatura-importada";
+import {
   aprenderRegra,
   regraParaLinha,
   registrarAplicacao,
@@ -296,6 +302,92 @@ export async function PATCH(
       .eq("id", linha.import_id)
       .single();
     const daFatura = extratoDaLinha?.source === "c6_cartao";
+    const descricaoFinal = (body?.description || linha.description || "Lançamento importado").slice(0, 500);
+
+    // --- a compra parcelada da fatura (089) ---------------------------------
+    // A fatura traz so a parcela do mes. As que faltam nascem junto (mais
+    // abaixo), e a parcela que ja nasceu assim numa importacao anterior e
+    // VINCULADA aqui, em vez de virar um segundo lancamento. Ver
+    // lib/parcelas-da-fatura-importada.ts.
+    const parcela: ParcelaImportada | null =
+      daFatura &&
+      extratoDaLinha?.invoice_month &&
+      linha.installment_number &&
+      linha.installment_total &&
+      linha.installment_total > 1
+        ? {
+            numero: linha.installment_number,
+            total: linha.installment_total,
+            mesDaFatura: String(extratoDaLinha.invoice_month).slice(0, 10),
+            valor,
+            descricao: descricaoFinal,
+          }
+        : null;
+
+    let gravadas: ParcelaGravada[] = [];
+    if (parcela) {
+      const { data: daSerie, error: erroDaSerie } = await supabase
+        .from("card_invoice_lines")
+        .select("transaction_id, installment_number, installment_total, invoice_month, amount, description")
+        .eq("account_id", linha.account_id)
+        .eq("installment_total", parcela.total)
+        .gte("installment_number", parcela.numero)
+        .gte("invoice_month", parcela.mesDaFatura);
+      if (erroDaSerie) {
+        // Sem a leitura nao da para saber o que ja existe: criar as parcelas
+        // as cegas poderia dobrar a serie. A linha entra sozinha, como antes.
+        console.error("Erro ao ler as parcelas já gravadas:", erroDaSerie);
+      } else {
+        const ids = (daSerie ?? []).map((t) => t.transaction_id as string);
+        const { data: ligadas } = ids.length
+          ? await supabase.from("statement_entries").select("transaction_id").in("transaction_id", ids)
+          : { data: [] };
+        const ocupadas = new Set((ligadas ?? []).map((l) => l.transaction_id));
+        gravadas = (daSerie ?? []).map((t) => ({
+          id: t.transaction_id as string,
+          numero: t.installment_number ?? null,
+          total: t.installment_total ?? null,
+          mesDaFatura: String(t.invoice_month).slice(0, 10),
+          valor: Number(t.amount),
+          descricao: t.description ?? "",
+          vinculada: ocupadas.has(t.transaction_id),
+        }));
+      }
+    }
+
+    const jaGravada = parcela ? parcelaJaGravada(parcela, gravadas) : null;
+    if (jaGravada) {
+      // A parcela nasceu com a fatura anterior. A categoria escolhida agora
+      // vale para ela; o valor, a data e a fatura ja sao os do banco.
+      const { data: vinculada, error: erroVinculo } = await supabase
+        .from("financial_transactions")
+        .update({ category_id: categoryId })
+        .eq("id", jaGravada.id)
+        .eq("user_id", user.id)
+        .select()
+        .single();
+      if (erroVinculo || !vinculada) {
+        console.error("Erro ao vincular a parcela já gravada:", erroVinculo);
+        return NextResponse.json({ error: "Não foi possível vincular a parcela" }, { status: 500 });
+      }
+      const { error: erroLinhaVinculada } = await supabase
+        .from("statement_entries")
+        .update({ status: "linked", transaction_id: jaGravada.id })
+        .eq("id", params.id);
+      if (erroLinhaVinculada) {
+        console.error("Erro ao fechar a linha da parcela:", erroLinhaVinculada);
+        return NextResponse.json({ error: "Não foi possível vincular a parcela" }, { status: 500 });
+      }
+      return NextResponse.json(
+        {
+          ok: true,
+          transaction: vinculada,
+          installment_linked: true,
+          aviso: `A parcela ${parcela!.numero}/${parcela!.total} já estava lançada pela fatura anterior: vinculei a ela.`,
+        },
+        { status: 200 }
+      );
+    }
 
     const { data: transacao, error: erroTransacao } = await supabase
       .from("financial_transactions")
@@ -305,7 +397,7 @@ export async function PATCH(
         category_id: categoryId,
         account_id: linha.account_id,
         // O usuario pode corrigir a descricao do banco ("PAG*IFD3947") na tela.
-        description: (body?.description || linha.description || "Lançamento importado").slice(0, 500),
+        description: descricaoFinal,
         amount: valor,
         transaction_date: data,
         transaction_type: tipoPeloSinal(valor),
@@ -346,6 +438,48 @@ export async function PATCH(
       );
     }
 
+    // --- as parcelas que faltam (089) --------------------------------------
+    // Depois de a linha fechar: se este insert falhar, a parcela do mes ja
+    // esta certa, e a resposta diz que as seguintes nao entraram. Um insert so
+    // com todas: ou entram as que faltam, ou nenhuma.
+    let parcelasCriadas = 0;
+    let avisoDasParcelas: string | undefined;
+    if (parcela) {
+      const faltam = parcelasQueFaltam(parcela, gravadas);
+      if (faltam.length > 0) {
+        const { data: criadas, error: erroParcelas } = await supabase
+          .from("financial_transactions")
+          .insert(
+            faltam.map((f) => ({
+              user_id: user.id,
+              service_id: serviceId,
+              category_id: categoryId,
+              account_id: linha.account_id,
+              description: f.descricao.slice(0, 500),
+              amount: f.valor,
+              transaction_date: f.dataDoLancamento,
+              transaction_type: tipoPeloSinal(f.valor),
+              installment_number: f.numero,
+              installment_total: f.total,
+              invoice_month_override: f.mesDaFatura,
+              installment_parent_id: transacao.id,
+            }))
+          )
+          .select("id");
+        if (erroParcelas) {
+          console.error("Erro ao criar as parcelas seguintes:", erroParcelas);
+          avisoDasParcelas = `As parcelas seguintes (${faltam[0].numero} a ${parcela.total}) não foram criadas. Lance a compra parcelada pelo cartão para que entrem no total.`;
+        } else {
+          parcelasCriadas = criadas?.length ?? 0;
+          await supabase
+            .from("financial_transactions")
+            .update({ installment_parent_id: transacao.id })
+            .eq("id", transacao.id)
+            .eq("user_id", user.id);
+        }
+      }
+    }
+
     // --- o aprendizado ------------------------------------------------------
     // Depois de a linha fechar, nunca antes: gravar a regra e um efeito
     // secundario, e nenhuma falha dele pode desfazer um lancamento que ja
@@ -375,6 +509,9 @@ export async function PATCH(
         // procurar na tela de regras.
         rule_learned: aprendizado?.outcome === "created" ? aprendizado.ruleId : undefined,
         rule_applied: regraAplicada,
+        // Quantas parcelas seguintes nasceram com esta (089).
+        installments_created: parcelasCriadas,
+        aviso: avisoDasParcelas,
       },
       { status: 201 }
     );

@@ -42,6 +42,7 @@
 | 2.21 | 06/11/2026 | RN016.6.2 nova: relatório de lançamentos com data de referência (lançamento, vencimento, efetivação) e situação, como no Minhas Finanças | Helio |
 | 2.22 | 07/11/2026 | RN019.7 nova e RN021.6 reescrita: a aba Receitas mostra quem paga o "A receber do grupo" com o botão Recebi, e a aba Despesas mostra a parcela cheia do MyBank fora do total | Helio |
 | 2.23 | 22/11/2026 | RN004.12 e RN004.13 novas: a composição da fatura (fixo, assinaturas, parcelado, esporádico) em rosca, e o total para quitar os cartões, que o Custo de vida pode somar à reserva | Helio |
+| 2.24 | 23/11/2026 | RN005.3 e RN005.4 novas: a parcela importada da fatura leva as seguintes (o TOTAL para quitar passa a ver a compra inteira), e o extrato do C6 ou do Mercado Pago sem conta escolhida acha ou cria a conta ou o cartão (migration 089) | Helio |
 
 > **O que a versão 2.0 corrigiu.** Até aqui esta PRD descrevia um app de carteira
 > de investimentos: o problema era "investidores pessoa física", as personas eram
@@ -413,6 +414,18 @@ a tela não pode contorná-las. As marcadas **(tela)** vivem em TypeScript testa
 - RN005.1 Uma compra em N parcelas gera N lançamentos previstos.
 - RN005.2 A soma das parcelas é igual ao total, **em centavos** — a sobra do
   arredondamento é distribuída, não descartada.
+- RN005.3 **Parcela importada da fatura** (docs/COMPOSICAO-DA-FATURA.md): a
+  fatura do C6 traz só a parcela do mês (k/N). Ao lançá-la, as parcelas
+  k+1..N nascem junto, uma por fatura seguinte, no dia 1, com a mesma
+  categoria. A parcela que já existe (lançada à mão, ou criada por uma fatura
+  anterior) não se repete, e a da fatura seguinte é **vinculada** à que já
+  estava gravada. A migration 089 completa as compras importadas antes disso.
+- RN005.4 **Conta do extrato achada ou criada**: no arquivo do C6 (conta ou
+  fatura) e do Mercado Pago, a conta pode ficar em branco. O extrato vai para
+  a conta da última importação daquele banco, ou para a conta ativa do tipo
+  certo com o nome do banco; sem nenhuma, o app cria (o cartão C6 com o
+  vencimento do nome do arquivo e o fechamento 7 dias antes; a conta com um
+  nome que ainda não existe). O OFX/CSV genérico continua pedindo a conta.
 
 ### RN006 — Recorrência e contas previstas ✅
 

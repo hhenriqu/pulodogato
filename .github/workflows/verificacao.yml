@@ -2588,6 +2588,12 @@ jobs:
       - name: A fatura se divide em fixo, assinatura, parcelado e esporadico, e o total para quitar so leva o fixo do mes
         run: npm run test:composicao-da-fatura
 
+      - name: A parcela importada da fatura leva as seguintes, sem repetir a que ja existe
+        run: npm run test:parcelas-da-fatura-importada
+
+      - name: O extrato sem conta escolhida vai para a conta do banco, ou cria a conta ou o cartao
+        run: npm run test:conta-do-extrato
+
       # nota: verificacao-notas.md -> "O painel abre no mes certo, e a transferencia fica fora da soma"
       - name: O painel abre no mes certo, e a transferencia fica fora da soma
         run: npm run test:periodo-painel
