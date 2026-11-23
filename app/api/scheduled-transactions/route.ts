@@ -86,9 +86,28 @@ export async function GET(request: NextRequest) {
     }
 
     const url = new URL(request.url);
-    const de = url.searchParams.get("from") ?? today();
+    const deInformado = url.searchParams.get("from");
+    const de = deInformado ?? today();
     const ate = url.searchParams.get("to") ?? horizonteAte();
     const status = url.searchParams.get("status");
+
+    // A LISTA «EM ABERTO» COMECA NO PASSADO (23/11/2026)
+    // ---------------------------------------------------
+    // Sem `from`, a janela comecava em HOJE -- e "vencida" e, por definicao da
+    // view, `due_date < CURRENT_DATE`. A secao «Vencidas» de Contas a Pagar
+    // (que le `?status=open` sem `from`) ficava vazia SEMPRE, enquanto o
+    // cartao do painel, que le /summary desde o dia 1 do mes, dizia «1 conta
+    // vencida». A pessoa clicava em «Ver contas» e nao achava conta nenhuma.
+    //
+    // O painel estava certo. Para `status=open` sem `from` explicito:
+    //   * a leitura da view NAO tem limite inferior: toda linha `pending` do
+    //     passado e uma conta que ainda nao foi paga, de qualquer mes;
+    //   * a fatura sintetizada e a parcela do MyBank comecam no dia 1 do mes
+    //     corrente -- o MESMO inicio do /summary que o painel le. Ir mais
+    //     para tras com a sintese ressuscitaria faturas antigas nunca
+    //     fechadas (importacoes de extrato), que o painel nao conta.
+    const abertoDesdeOPassado = status === "open" && !deInformado;
+    const deDaSintese = abertoDesdeOPassado ? `${today().slice(0, 7)}-01` : de;
     const groupId = url.searchParams.get("group_id");
     // A geracao e o padrao: sem ela, o usuario abre a tela no dia 1 e nao ve o
     // mes novo. `?generate=false` existe para quem so quer ler (relatorio).
@@ -123,9 +142,10 @@ export async function GET(request: NextRequest) {
         group:expense_groups(id, name, group_code, closing_day)
       `
       )
-      .gte("due_date", de)
       .lte("due_date", ate)
       .order("due_date", { ascending: true });
+
+    if (!abertoDesdeOPassado) query = query.gte("due_date", de);
 
     if (groupId) query = query.eq("group_id", groupId);
 
@@ -183,7 +203,11 @@ export async function GET(request: NextRequest) {
       !status || status === "all" || status === "open" || status === "pending";
 
     const fatura = incluiPendente
-      ? await faturasPrevistasDaJanela(supabase, user.id, { de, ate, hoje: today() })
+      ? await faturasPrevistasDaJanela(supabase, user.id, {
+          de: deDaSintese,
+          ate,
+          hoje: today(),
+        })
       : { previstas: [], semVencimento: [] };
 
     // -----------------------------------------------------------------------
@@ -210,7 +234,11 @@ export async function GET(request: NextRequest) {
     // por grupo passaria a somar a parcela do MyBank em TODO grupo.
     const divida =
       incluiPendente && !groupId
-        ? await lerDividaDoMyBank(supabase, user.id, { de, ate, hoje: today() })
+        ? await lerDividaDoMyBank(supabase, user.id, {
+            de: deDaSintese,
+            ate,
+            hoje: today(),
+          })
         : { ok: true as const, linhas: [] };
 
     if (!divida.ok) {
@@ -248,7 +276,7 @@ export async function GET(request: NextRequest) {
       // na sessao.
       meu_user_id: user.id,
       generated: geradas,
-      range: { from: de, to: ate },
+      range: { from: abertoDesdeOPassado ? null : de, to: ate },
     });
   } catch (error) {
     console.error("Erro na API de contas previstas:", error);
