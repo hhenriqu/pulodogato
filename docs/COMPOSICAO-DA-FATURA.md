@@ -69,6 +69,23 @@ assinaturas dali em diante:
 - das cobranças previstas, **só as da fatura em aberto**. O fixo e a assinatura
   dos meses seguintes ainda não são dívida.
 
+### A compra parcelada importada (23/11/2026)
+
+> "Só a placa solar que coloquei no meu cartão já dá 22 mil reais parcelado e
+> diz que tem só 10 mil no total."
+
+O TOTAL lê as faturas a partir da aberta, e só via as parcelas que **existiam
+como lançamento**. A compra parcelada lançada à mão já nascia com as N
+parcelas; a importada da fatura do C6 nascia com uma só, a do mês da fatura
+(a fatura traz só a parcela k/N). As parcelas seguintes não estavam em lugar
+nenhum: nem na fatura dos meses seguintes, nem no saldo do cartão, nem no
+TOTAL.
+
+Agora (RN005.3) lançar a parcela k/N da fila cria junto as k+1..N, uma por
+fatura, e a fatura seguinte vincula a parcela dela à que já estava gravada. A
+migration 089 completa as compras importadas antes disso. O saldo do cartão
+desce pelo valor das parcelas criadas, como na compra parcelada lançada à mão.
+
 ### Decisões de leitura
 
 - **Por que não o saldo do cartão.** O saldo (`current_balance`) já é a dívida

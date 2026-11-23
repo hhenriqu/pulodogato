@@ -6394,6 +6394,21 @@ jobs:
       - name: Origem do Mercado Pago no extrato
         run: $PSQL -f database/tests/088_importacao_do_mercadopago_test.sql
 
+      # =====================================================================
+      # 089 -- as parcelas que a fatura importada nao trouxe
+      # =====================================================================
+      # Completa as compras parceladas importadas da fatura do C6 com as
+      # parcelas k+1..N. A suite monta as series, aplica a 089 duas vezes (a
+      # segunda nao cria nada) e apaga o que montou.
+      - name: 089_parcelas_da_fatura_importada
+        run: $PSQL -f database/migrations/089_parcelas_da_fatura_importada.sql
+
+      - name: 089 e idempotente
+        run: $PSQL -f database/migrations/089_parcelas_da_fatura_importada.sql
+
+      - name: Parcelas que faltam nas compras importadas
+        run: $PSQL -f database/tests/089_parcelas_da_fatura_importada_test.sql
+
       # A metade TypeScript: a leitura dos dois CSVs do C6 (sinal da fatura,
       # parcela no mes da fatura, fingerprint com a parcela), a do CSV do
       # Mercado Pago (REFERENCE_ID, conferencia com o resumo) e a sugestao de

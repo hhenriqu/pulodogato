@@ -30573,6 +30573,324 @@ COMMIT;
 
 
 -- ---------------------------------------------------------------------------
+-- 87. 087_importacao_do_c6.sql
+-- ---------------------------------------------------------------------------
+-- Cada migration traz o proprio BEGIN/COMMIT: se uma falhar, ela volta atras
+-- inteira e as seguintes nem chegam a rodar.
+-- =====================================================
+-- PULODOGATO - IMPORTACAO DO CSV DO C6 BANK (conta e fatura)
+-- =====================================================
+-- Migration: 087_importacao_do_c6
+-- Spec: issue #447
+--
+-- O QUE MUDA
+-- ----------
+-- A area de espera do 009 (statement_imports / statement_entries) passa a
+-- guardar o que o CSV do C6 traz alem de data, valor e descricao:
+--
+--   statement_imports.source         'auto' (OFX/CSV generico, o de sempre),
+--                                    'c6_conta' ou 'c6_cartao' -- o usuario diz
+--                                    qual arquivo esta mandando
+--   statement_imports.invoice_month  o mes da fatura (dia 1), so no cartao
+--
+--   statement_entries.installment_number / installment_total   a parcela k/N
+--   statement_entries.purchase_date   a data da compra original, quando a
+--                                     parcela 2+ foi levada para o mes da fatura
+--   statement_entries.card_last4      o "Final do Cartão"
+--   statement_entries.bank_category   a "Categoria" do C6, so informativa
+--   statement_entries.suggested_action  'ignore' no pagamento da fatura
+--
+-- So ACRESCENTA: todas as colunas sao nullable ou tem default, entao as linhas
+-- de importacoes antigas continuam validas sem UPDATE nenhum.
+--
+-- POR QUE A PARCELA PRECISA DE COLUNA
+-- -----------------------------------
+-- A deduplicacao entre importacoes (lib/statement.ts,
+-- duplicadasEntreImportacoes) compara valor e data. A 5/12 da fatura passada e
+-- a 6/12 de agora tem o MESMO valor e, no dia 1 de meses vizinhos, cairiam
+-- fora da folga -- mas a parcela 1/2 de uma compra e a 1/3 de outra no mesmo
+-- dia, mesmo valor, nao. A parcela na coluna e o que permite dizer "nao e a
+-- mesma" sem depender da descricao.
+--
+-- Idempotente: pode ser colada duas vezes.
+-- =====================================================
+
+BEGIN;
+
+DO $$
+BEGIN
+  IF to_regclass('public.statement_entries') IS NULL OR to_regclass('public.statement_imports') IS NULL THEN
+    RAISE EXCEPTION 'A migration 087 nao pode ser aplicada neste banco:%',
+      E'\n  - public.statement_imports / statement_entries nao existem (009)';
+  END IF;
+END $$;
+
+-- -----------------------------------------------------
+-- statement_imports
+-- -----------------------------------------------------
+ALTER TABLE public.statement_imports
+  ADD COLUMN IF NOT EXISTS source text NOT NULL DEFAULT 'auto';
+ALTER TABLE public.statement_imports
+  ADD COLUMN IF NOT EXISTS invoice_month date;
+
+ALTER TABLE public.statement_imports
+  DROP CONSTRAINT IF EXISTS statement_imports_source_check;
+ALTER TABLE public.statement_imports
+  ADD CONSTRAINT statement_imports_source_check
+  CHECK (source IN ('auto', 'c6_conta', 'c6_cartao'));
+
+-- Mes da fatura e dia 1, como invoice_month_override (041): e o valor que vai
+-- para la quando a linha vira lancamento. E so existe no cartao.
+ALTER TABLE public.statement_imports
+  DROP CONSTRAINT IF EXISTS statement_imports_invoice_month_check;
+ALTER TABLE public.statement_imports
+  ADD CONSTRAINT statement_imports_invoice_month_check
+  CHECK (
+    invoice_month IS NULL
+    OR (source = 'c6_cartao' AND invoice_month = date_trunc('month', invoice_month)::date)
+  );
+
+COMMENT ON COLUMN public.statement_imports.source IS
+  'De onde e o arquivo (087): auto (OFX/CSV generico), c6_conta ou c6_cartao.';
+COMMENT ON COLUMN public.statement_imports.invoice_month IS
+  'Mes da fatura (dia 1), so em c6_cartao. Vira invoice_month_override do lancamento.';
+
+-- -----------------------------------------------------
+-- statement_entries
+-- -----------------------------------------------------
+ALTER TABLE public.statement_entries
+  ADD COLUMN IF NOT EXISTS installment_number integer;
+ALTER TABLE public.statement_entries
+  ADD COLUMN IF NOT EXISTS installment_total integer;
+ALTER TABLE public.statement_entries
+  ADD COLUMN IF NOT EXISTS purchase_date date;
+ALTER TABLE public.statement_entries
+  ADD COLUMN IF NOT EXISTS card_last4 text;
+ALTER TABLE public.statement_entries
+  ADD COLUMN IF NOT EXISTS bank_category text;
+ALTER TABLE public.statement_entries
+  ADD COLUMN IF NOT EXISTS suggested_action text;
+
+-- Parcela vem inteira (k e N juntos) e coerente, ou nao vem.
+ALTER TABLE public.statement_entries
+  DROP CONSTRAINT IF EXISTS statement_entries_installment_check;
+ALTER TABLE public.statement_entries
+  ADD CONSTRAINT statement_entries_installment_check
+  CHECK (
+    (installment_number IS NULL AND installment_total IS NULL)
+    -- os IS NOT NULL sao explicitos: `3 BETWEEN 1 AND NULL` e NULL, e um CHECK
+    -- que da NULL PASSA -- a parcela "3 de nada" entraria.
+    OR (installment_number IS NOT NULL AND installment_total IS NOT NULL
+        AND installment_number BETWEEN 1 AND installment_total AND installment_total <= 999)
+  );
+
+ALTER TABLE public.statement_entries
+  DROP CONSTRAINT IF EXISTS statement_entries_suggested_action_check;
+ALTER TABLE public.statement_entries
+  ADD CONSTRAINT statement_entries_suggested_action_check
+  CHECK (suggested_action IS NULL OR suggested_action = 'ignore');
+
+COMMENT ON COLUMN public.statement_entries.installment_number IS
+  'k da parcela k/N lida da fatura (087). NULL fora do cartao ou em compra a vista.';
+COMMENT ON COLUMN public.statement_entries.purchase_date IS
+  'Data da compra original quando a parcela 2+ foi levada para o dia 1 do mes da fatura (087).';
+COMMENT ON COLUMN public.statement_entries.suggested_action IS
+  'ignore = a linha chega sugerida para cancelar (pagamento da fatura). So sugestao: quem decide e o usuario.';
+
+INSERT INTO public.schema_migrations (version, name, description, executed_at)
+VALUES ('087', '087_importacao_do_c6',
+        'Importacao do CSV do C6: origem do arquivo, mes da fatura e parcela/cartao nas linhas do extrato', now())
+ON CONFLICT (version) DO NOTHING;
+
+COMMIT;
+
+
+-- ---------------------------------------------------------------------------
+-- 88. 088_importacao_do_mercadopago.sql
+-- ---------------------------------------------------------------------------
+-- Cada migration traz o proprio BEGIN/COMMIT: se uma falhar, ela volta atras
+-- inteira e as seguintes nem chegam a rodar.
+-- =====================================================
+-- PULODOGATO - IMPORTACAO DO CSV DO MERCADO PAGO
+-- =====================================================
+-- Migration: 088_importacao_do_mercadopago
+--
+-- O QUE MUDA
+-- ----------
+-- statement_imports.source (087) passa a aceitar 'mercadopago_conta': o
+-- extrato da conta do Mercado Pago, lido por lib/extrato-mercadopago.ts.
+--
+-- So troca o CHECK. Nenhuma linha existente muda, e as origens do 087
+-- continuam valendo. O mes da fatura continua so no 'c6_cartao' -- o CHECK
+-- statement_imports_invoice_month_check do 087 ja barra o resto.
+--
+-- Idempotente: pode ser colada duas vezes.
+-- =====================================================
+
+BEGIN;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_schema = 'public' AND table_name = 'statement_imports' AND column_name = 'source'
+  ) THEN
+    RAISE EXCEPTION 'A migration 088 nao pode ser aplicada neste banco:%',
+      E'\n  - public.statement_imports.source nao existe (aplique a 087 antes)';
+  END IF;
+END $$;
+
+ALTER TABLE public.statement_imports
+  DROP CONSTRAINT IF EXISTS statement_imports_source_check;
+ALTER TABLE public.statement_imports
+  ADD CONSTRAINT statement_imports_source_check
+  CHECK (source IN ('auto', 'c6_conta', 'c6_cartao', 'mercadopago_conta'));
+
+COMMENT ON COLUMN public.statement_imports.source IS
+  'De onde e o arquivo (087/088): auto (OFX/CSV generico), c6_conta, c6_cartao ou mercadopago_conta.';
+
+INSERT INTO public.schema_migrations (version, name, description, executed_at)
+VALUES ('088', '088_importacao_do_mercadopago',
+        'Importacao do CSV do Mercado Pago: nova origem do arquivo', now())
+ON CONFLICT (version) DO NOTHING;
+
+COMMIT;
+
+
+-- ---------------------------------------------------------------------------
+-- 89. 089_parcelas_da_fatura_importada.sql
+-- ---------------------------------------------------------------------------
+-- Cada migration traz o proprio BEGIN/COMMIT: se uma falhar, ela volta atras
+-- inteira e as seguintes nem chegam a rodar.
+-- =====================================================
+-- PULODOGATO - AS PARCELAS QUE A FATURA IMPORTADA NAO TROUXE
+-- =====================================================
+-- Migration: 089_parcelas_da_fatura_importada
+--
+-- O DEFEITO
+-- ---------
+-- A fatura do C6 traz a compra parcelada como UMA linha: a parcela do mes
+-- ("PLACA SOLAR (3/10)"). O import (087) gravava so essa linha. As parcelas
+-- seguintes nao existiam em lugar nenhum: a fatura dos meses seguintes nao as
+-- mostrava, o saldo do cartao nao as contava, e o TOTAL para quitar os cartoes
+-- (docs/COMPOSICAO-DA-FATURA.md, RN004.13) saiu com R$ 10 mil quando so uma
+-- placa solar parcelada no cartao passava de R$ 22 mil.
+--
+-- Desde esta versao, importar a parcela k/N cria junto as k+1..N
+-- (app/api/statements/entries/[id]/route.ts, lib/parcelas-da-fatura-importada.ts),
+-- como a compra parcelada lancada a mao ja fazia (POST /api/financial-installments).
+--
+-- O QUE ESTA MIGRATION FAZ
+-- ------------------------
+-- Completa as compras parceladas JA importadas. Para cada serie importada da
+-- fatura do C6 -- mesma conta, mesma descricao sem o " (k/N)", mesmo N, mesmo
+-- valor e mesma data de compra original -- pega a parcela de numero mais alto
+-- e cria as que faltam ate N:
+--
+--   * uma linha por mes de fatura, no dia 1, com invoice_month_override;
+--   * a mesma categoria, subcategoria, valor e include_in_total da parcela;
+--   * installment_parent_id apontando para a parcela importada.
+--
+-- Nao cria a parcela que ja existe (a serie lancada a mao, ou uma importacao
+-- seguinte), nem preenche buraco ANTES da ultima parcela conhecida: essas sao
+-- faturas passadas, ja pagas fora do app.
+--
+-- O SALDO DO CARTAO desce pelo valor das parcelas criadas (o trigger de saldo
+-- soma cada INSERT), como na compra parcelada lancada a mao: no cartao, o saldo
+-- e a divida inteira.
+--
+-- Idempotente: colada duas vezes, a segunda nao acha nada para criar.
+-- Para ver ANTES o que vai ser criado, rode so o SELECT da secao 1.
+-- =====================================================
+
+BEGIN;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_schema = 'public' AND table_name = 'statement_entries' AND column_name = 'purchase_date'
+  ) THEN
+    RAISE EXCEPTION 'A migration 089 nao pode ser aplicada neste banco:%',
+      E'\n  - public.statement_entries.purchase_date nao existe (aplique a 087 antes)';
+  END IF;
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- SECAO 1: as series importadas e a ultima parcela conhecida de cada uma
+-- ---------------------------------------------------------------------------
+CREATE TEMP TABLE _089_ultimas ON COMMIT DROP AS
+WITH importadas AS (
+  SELECT
+    t.id,
+    t.user_id,
+    t.service_id,
+    t.account_id,
+    t.category_id,
+    t.subcategory_id,
+    t.include_in_total,
+    t.description,
+    t.amount,
+    t.transaction_type,
+    t.installment_number AS k,
+    t.installment_total  AS n,
+    COALESCE(t.invoice_month_override,
+             public.card_invoice_month(t.transaction_date, a.closing_day)) AS mes,
+    COALESCE(e.purchase_date, e.posted_at)                               AS compra,
+    lower(regexp_replace(t.description, '\s*\(\s*\d+\s*/\s*\d+\s*\)\s*$', ''))   AS serie
+  FROM public.financial_transactions t
+  JOIN public.financial_accounts a ON a.id = t.account_id AND a.account_type = 'credit_card'
+  JOIN public.statement_entries e  ON e.transaction_id = t.id
+  JOIN public.statement_imports i  ON i.id = e.import_id AND i.source = 'c6_cartao'
+  WHERE t.installment_total > 1
+    AND t.installment_number BETWEEN 1 AND t.installment_total
+    AND t.transaction_type IN ('expense', 'income')
+)
+SELECT DISTINCT ON (account_id, serie, n, amount, compra) *
+  FROM importadas
+ ORDER BY account_id, serie, n, amount, compra, k DESC;
+
+-- ---------------------------------------------------------------------------
+-- SECAO 2: as parcelas que faltam
+-- ---------------------------------------------------------------------------
+INSERT INTO public.financial_transactions (
+  user_id, service_id, account_id, category_id, subcategory_id, include_in_total,
+  description, amount, transaction_date, transaction_type,
+  installment_number, installment_total, invoice_month_override, installment_parent_id
+)
+SELECT
+  u.user_id, u.service_id, u.account_id, u.category_id, u.subcategory_id,
+  COALESCE(u.include_in_total, true),
+  regexp_replace(u.description, '\s*\(\s*\d+\s*/\s*\d+\s*\)\s*$', '') || ' (' || g.j || '/' || u.n || ')',
+  u.amount,
+  (u.mes + make_interval(months => g.j - u.k))::date,
+  u.transaction_type,
+  g.j,
+  u.n,
+  (u.mes + make_interval(months => g.j - u.k))::date,
+  u.id
+FROM _089_ultimas u
+CROSS JOIN LATERAL generate_series(u.k + 1, u.n) AS g(j)
+WHERE u.k < u.n
+  AND NOT EXISTS (
+    SELECT 1
+      FROM public.financial_transactions x
+     WHERE x.account_id = u.account_id
+       AND x.installment_total = u.n
+       AND x.installment_number = g.j
+       AND x.amount = u.amount
+       AND lower(regexp_replace(x.description, '\s*\(\s*\d+\s*/\s*\d+\s*\)\s*$', '')) = u.serie
+  );
+
+INSERT INTO public.schema_migrations (version, name, description, executed_at)
+VALUES ('089', '089_parcelas_da_fatura_importada',
+        'Completa as compras parceladas importadas da fatura do C6 com as parcelas que faltam', now())
+ON CONFLICT (version) DO NOTHING;
+
+COMMIT;
+
+
+-- ---------------------------------------------------------------------------
 -- 4. Relatorio -- ESTA e a tabela para copiar de volta na issue
 -- ---------------------------------------------------------------------------
 WITH sem_rls AS (

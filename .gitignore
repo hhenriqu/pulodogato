@@ -129,6 +129,8 @@ next-env.d.ts
 /.tmp-assinaturas-das-contas-fixas/
 /.tmp-painel-de-assinaturas/
 /.tmp-composicao-da-fatura/
+/.tmp-parcelas-da-fatura-importada/
+/.tmp-conta-do-extrato/
 
 # saida do `npm run test:previsto-x-realizado`
 /.tmp-previsto-x-realizado/

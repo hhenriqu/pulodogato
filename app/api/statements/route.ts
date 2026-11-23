@@ -15,6 +15,7 @@ import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { parseStatement, type ParseResult } from "@/lib/statement";
 import { lerExtratoC6, type EntradaC6 } from "@/lib/extrato-c6";
+import { contaParaOrigem } from "@/lib/conta-do-extrato";
 import {
   detectarOrigem,
   lerExtratoMercadoPago,
@@ -112,17 +113,23 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { accountId, fileName, content, source, invoiceMonth } = body as {
+    const { fileName, content, source, invoiceMonth } = body as {
       accountId?: string;
       fileName?: string;
       content?: string;
       source?: string;
       invoiceMonth?: string;
     };
+    let accountId = (body as { accountId?: string }).accountId || undefined;
 
-    const origem: Origem = ORIGENS.includes(source as Origem) ? (source as Origem) : "auto";
+    let origem: Origem = ORIGENS.includes(source as Origem) ? (source as Origem) : "auto";
     if (source != null && source !== origem) {
       return NextResponse.json({ error: "Origem do arquivo inválida" }, { status: 400 });
+    }
+    // Sem conta escolhida, o arquivo de um banco conhecido diz de onde e: e o
+    // que permite achar ou criar a conta mais abaixo.
+    if (origem === "auto" && !accountId && typeof content === "string") {
+      origem = detectarOrigem(content) ?? "auto";
     }
 
     // O mes da fatura decide em que mes caem as parcelas 2+ e vira o
@@ -136,7 +143,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!accountId) {
+    if (!accountId && origem === "auto") {
       return NextResponse.json(
         { error: "Escolha a conta do extrato" },
         { status: 400 }
@@ -154,35 +161,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // A conta tem que ser do proprio usuario. A RLS do 009 ja barraria, mas com
-    // um erro do Postgres; aqui o usuario le uma frase.
-    const { data: conta } = await supabase
-      .from("financial_accounts")
-      .select("id, name, account_type")
-      .eq("id", accountId)
-      .eq("user_id", user.id)
-      .single();
-
-    if (!conta) {
-      return NextResponse.json({ error: "Conta não encontrada" }, { status: 404 });
-    }
-
-    // A fatura so faz sentido num cartao, e o extrato da conta so fora dele:
-    // trocar os dois gravaria compras do cartao no saldo da conta corrente.
-    const ehCartao = conta.account_type === "credit_card";
-    if (origem === "c6_cartao" && !ehCartao) {
-      return NextResponse.json(
-        { error: "A fatura do cartão precisa ir para uma conta do tipo cartão de crédito" },
-        { status: 400 }
-      );
-    }
-    if ((origem === "c6_conta" || origem === "mercadopago_conta") && ehCartao) {
-      return NextResponse.json(
-        { error: "O extrato da conta não pode ir para um cartão de crédito" },
-        { status: 400 }
-      );
-    }
-
+    // O arquivo e lido ANTES de achar ou criar a conta: um arquivo sem
+    // lancamento nenhum nao pode deixar uma conta nova para tras.
     const resultado: Omit<ParseResult, "entries"> & { entries: Array<Partial<EntradaC6> & ParseResult["entries"][number]> } =
       origem === "auto"
         ? parseStatement(content)
@@ -225,6 +205,84 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { error: `Extrato com ${resultado.entries.length} lançamentos. Exporte um período menor.` },
         { status: 413 }
+      );
+    }
+
+    // A CONTA ACHADA OU CRIADA PELA ORIGEM (lib/conta-do-extrato.ts). So
+    // quando ninguem escolheu: a escolha do usuario sempre vale.
+    let contaCriada: { id: string; name: string; account_type: string } | null = null;
+    let contaAchada: { id: string; name: string } | null = null;
+    if (!accountId && origem !== "auto") {
+      const [{ data: contasDoUsuario, error: erroContas }, { data: ultimas }] = await Promise.all([
+        supabase
+          .from("financial_accounts")
+          .select("id, name, account_type, bank_name, is_active")
+          .eq("user_id", user.id),
+        supabase
+          .from("statement_imports")
+          .select("account_id")
+          .eq("source", origem)
+          .order("created_at", { ascending: false })
+          .limit(1),
+      ]);
+      if (erroContas) {
+        console.error("Erro ao ler as contas para o extrato:", erroContas);
+        return NextResponse.json({ error: "Não foi possível achar a conta do extrato" }, { status: 500 });
+      }
+      const decisao = contaParaOrigem({
+        origem,
+        contas: contasDoUsuario ?? [],
+        ultimaUsada: ultimas?.[0]?.account_id ?? null,
+        nomeDoArquivo: fileName ?? null,
+      });
+      if (decisao.acao === "usar") {
+        accountId = decisao.id;
+        const achada = (contasDoUsuario ?? []).find((c) => c.id === decisao.id);
+        contaAchada = achada ? { id: achada.id, name: achada.name } : null;
+      } else {
+        const { data: nova, error: erroNova } = await supabase
+          .from("financial_accounts")
+          .insert({ user_id: user.id, ...decisao.conta })
+          .select("id, name, account_type")
+          .single();
+        if (erroNova || !nova) {
+          console.error("Erro ao criar a conta do extrato:", erroNova);
+          return NextResponse.json(
+            { error: "Não consegui criar a conta deste extrato. Crie pela opção \"+ Criar conta ou cartão\"." },
+            { status: 500 }
+          );
+        }
+        accountId = nova.id;
+        contaCriada = nova;
+      }
+    }
+
+    // A conta tem que ser do proprio usuario. A RLS do 009 ja barraria, mas com
+    // um erro do Postgres; aqui o usuario le uma frase.
+    const { data: conta } = await supabase
+      .from("financial_accounts")
+      .select("id, name, account_type")
+      .eq("id", accountId)
+      .eq("user_id", user.id)
+      .single();
+
+    if (!conta) {
+      return NextResponse.json({ error: "Conta não encontrada" }, { status: 404 });
+    }
+
+    // A fatura so faz sentido num cartao, e o extrato da conta so fora dele:
+    // trocar os dois gravaria compras do cartao no saldo da conta corrente.
+    const ehCartao = conta.account_type === "credit_card";
+    if (origem === "c6_cartao" && !ehCartao) {
+      return NextResponse.json(
+        { error: "A fatura do cartão precisa ir para uma conta do tipo cartão de crédito" },
+        { status: 400 }
+      );
+    }
+    if ((origem === "c6_conta" || origem === "mercadopago_conta") && ehCartao) {
+      return NextResponse.json(
+        { error: "O extrato da conta não pode ir para um cartão de crédito" },
+        { status: 400 }
       );
     }
 
@@ -302,6 +360,7 @@ export async function POST(request: NextRequest) {
         duplicates: duplicadas,
         warnings: resultado.warnings,
         message: `Nada novo: as ${duplicadas} linha(s) deste arquivo já estavam importadas.`,
+        account_found: contaAchada,
       });
     }
 
@@ -319,6 +378,9 @@ export async function POST(request: NextRequest) {
         inserted: novas,
         duplicates: duplicadas,
         warnings: resultado.warnings,
+        // A conta que o envio achou ou criou sozinho, para a tela dizer qual.
+        account_created: contaCriada,
+        account_found: contaAchada,
       },
       { status: 201 }
     );
